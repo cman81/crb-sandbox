@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CRB Sandbox</title>    
+    <style>
+        body { 
+            margin: 0; 
+            background: #1a202c; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            overflow: hidden;
+        }
+
+        /* Target the Phaser container to prevent overflow layout clipping */
+        #phaser-game {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* Force the internal game canvas to scale safely within the screen bounds */
+        #phaser-game canvas {
+            max-width: 100% !important;
+            max-height: 100% !important;
+            object-fit: contain;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- THE CONTAINER: The target hook element for our game window -->
+    <div id="phaser-game"></div>
+
+    <!-- LOAD THE WEBSOCKET ENGINE CLIENT DEPENDENCY FIRST -->
+    <script src="vendor/socketio/socket.io.min.js"></script>
+
+    <!-- LOAD PHASER: Pull the game engine framework -->
+    <script src="vendor/phaserjs/phaser.min.js"></script>
+
+    <!-- Isolated Game Component Blueprints -->
+    <script src="DeveloperMode.js"></script>
+
+    <!-- Main Execution Engine Setup Layer -->
+    <script src="game.js"></script>
+
+</body>
+</html>
