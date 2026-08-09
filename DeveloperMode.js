@@ -17,6 +17,7 @@ class DeveloperMode extends Phaser.Scene {
         this.createConsoleLog();
         this.createLobbyTabPanel();     
         this.createDeckLoaderTabPanel(); 
+        this.createGameActionsTabPanel();
         this.createStateInspectorPanel(); 
         this.setupSocketListeners();
 
@@ -29,19 +30,30 @@ class DeveloperMode extends Phaser.Scene {
 
         this.tab2Btn = this.add.text(240, 110, '[ TAB 2: DECK LOADER ]', { fontSize: '18px', fontFamily: 'monospace', fill: '#ffffff', backgroundColor: '#111', padding: 8 })
             .setInteractive({ useHandCursor: true }).on('pointerdown', () => this.switchTab(2));
+
+        this.tab3Btn = this.add.text(490, 110, '[ TAB 3: ACTIONS ]', { fontSize: '18px', fontFamily: 'monospace', fill: '#ffffff', backgroundColor: '#111', padding: 8 })
+            .setInteractive({ useHandCursor: true }).on('pointerdown', () => this.switchTab(3));
     }
 
     switchTab(tabNum) {
+        // Set all buttons to default dark state
+        this.tab1Btn.setStyle({ fill: '#ffffff', backgroundColor: '#111' });
+        this.tab2Btn.setStyle({ fill: '#ffffff', backgroundColor: '#111' });
+        this.tab3Btn.setStyle({ fill: '#ffffff', backgroundColor: '#111' });
+        
+        if (this.domLobbyPanel) this.domLobbyPanel.setVisible(false);
+        if (this.domDeckLoaderPanel) this.domDeckLoaderPanel.setVisible(false);
+        if (this.domGameActionsPanel) this.domGameActionsPanel.setVisible(false);
+
         if (tabNum === 1) {
             this.tab1Btn.setStyle({ fill: '#00ff00', backgroundColor: '#222' });
-            this.tab2Btn.setStyle({ fill: '#ffffff', backgroundColor: '#111' });
             if (this.domLobbyPanel) this.domLobbyPanel.setVisible(true);
-            if (this.domDeckLoaderPanel) this.domDeckLoaderPanel.setVisible(false);
-        } else {
-            this.tab1Btn.setStyle({ fill: '#ffffff', backgroundColor: '#111' });
+        } else if (tabNum === 2) {
             this.tab2Btn.setStyle({ fill: '#00ff00', backgroundColor: '#222' });
-            if (this.domLobbyPanel) this.domLobbyPanel.setVisible(false);
             if (this.domDeckLoaderPanel) this.domDeckLoaderPanel.setVisible(true);
+        } else if (tabNum === 3) {
+            this.tab3Btn.setStyle({ fill: '#00ff00', backgroundColor: '#222' });
+            if (this.domGameActionsPanel) this.domGameActionsPanel.setVisible(true);
         }
     }
 
@@ -234,6 +246,47 @@ class DeveloperMode extends Phaser.Scene {
 
         this.logToConsole(`>> Emitting shuffleDeck: Table ${tableId} (${targetPlayer}) via unique UUID sort routine.`);
         this.socket.emit('shuffleDeck', { tableId: parseInt(tableId), targetPlayer });
+    }
+
+    createGameActionsTabPanel() {
+        const htmlContent = `
+            <div style="color: white; font-family: monospace; font-size: 16px; background: #222; padding: 25px; border-radius: 8px; width: 460px; height: 500px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box;">
+                <h3 style="margin-top:0; color:#00ff00; font-size: 22px; margin-bottom: 20px;">3. Game Actions</h3>
+                
+                <div style="margin-bottom: 25px; display: flex; justify-content: space-between;">
+                    <div>
+                        <label>Table:</label>
+                        <input type="number" id="actionTableId" min="1" max="8" value="1" style="width:45px; background:#333; color:#fff; border:1px solid #555; padding:4px; border-radius: 4px;">
+                    </div>
+                    <div>
+                        <label>Target Player:</label>
+                        <select id="actionTargetPlayer" style="width:105px; background:#333; color:#fff; border:1px solid #555; padding:4px; border-radius: 4px;">
+                            <option value="playerA">Player A</option>
+                            <option value="playerB">Player B</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div style="background: #1a1a1a; padding: 15px; border-radius: 6px; border: 1px solid #555;">
+                    <button id="actionDrawBtn" style="width:100%; background:#00ff00; color:#000; font-weight:bold; font-size:16px; padding:12px; border:none; border-radius:4px; cursor:pointer; box-shadow: 0px 0px 10px rgba(0,255,0,0.2);">🎴 DRAW 1 CARD</button>
+                </div>
+            </div>
+        `;
+        
+        this.domGameActionsPanel = this.add.dom(50, 170).createFromHTML(htmlContent).setOrigin(0, 0);
+        
+        this.domGameActionsPanel.addListener('click');
+        this.domGameActionsPanel.on('click', (event) => {
+            if (event.target.id === 'actionDrawBtn') this.handleDrawCard();
+        });
+    }
+
+    handleDrawCard() {
+        const tableId = document.getElementById('actionTableId').value;
+        const targetPlayer = document.getElementById('actionTargetPlayer').value;
+
+        this.logToConsole(`>> Emitting drawCard: Table ${tableId} for ${targetPlayer}`);
+        this.socket.emit('drawCard', { tableId: parseInt(tableId), targetPlayer });
     }
 
 }

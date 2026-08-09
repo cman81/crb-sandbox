@@ -129,6 +129,30 @@ io.on('connection', (socket) => {
 
     socket.emit('serverNotice', `Deck shuffled successfully using random UUID sort!`);
   });
+
+  socket.on('drawCard', ({ tableId, targetPlayer }) => {
+    const table = tables.find(t => t.id === parseInt(tableId));
+    if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+    const deck = table.gameState[targetPlayer]?.deck;
+    const hand = table.gameState[targetPlayer]?.hand;
+
+    if (!deck || deck.length === 0) {
+      return socket.emit('errorMsg', `${targetPlayer}'s deck is empty! Cannot draw.`);
+    }
+
+    // Remove the top card from the deck array (index 0)
+    const drawnCard = deck.shift();
+    
+    // Cards in hands are no longer face down to the owner
+    drawnCard.isFaceDown = false; 
+
+    // Push it straight into the player's hand array
+    hand.push(drawnCard);
+
+
+    socket.emit('serverNotice', `${targetPlayer} successfully drew 1 card.`);
+  });
 });
 
 console.log('TCG Server on 3000');
