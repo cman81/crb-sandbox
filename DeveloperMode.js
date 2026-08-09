@@ -2,6 +2,9 @@ class DeveloperMode extends Phaser.Scene {
     constructor() {
         super({ key: 'DeveloperMode' });
         this.socket = null;
+        
+        this.myActiveTable = null;
+        this.myActiveRole = null;
     }
 
     preload() {
@@ -129,7 +132,10 @@ class DeveloperMode extends Phaser.Scene {
     }
 
     createConsoleLog() {
-        this.add.text(550, 110, 'Server Response Stream (Sanitized Game State View)', { fontSize: '20px', fill: '#ffffff', fontFamily: 'monospace' });
+        // Change this to a class property so we can alter it dynamically later
+        this.logTitleText = this.add.text(550, 110, '📢 SERVER RESPONSE STREAM (PERSPECTIVE: UNBOUND LOBBY)', { 
+            fontSize: '18px', fill: '#00ff00', fontFamily: 'monospace', fontWeight: 'bold' 
+        });
         
         const logHtml = `
             <textarea id="devLog" readonly style="width: 1320px; height: 560px; background-color: #050505; color: #33ff33; font-family: 'Courier New', monospace; font-size: 16px; border: 1px solid #33ff33; padding: 15px; border-radius: 8px; resize: none; box-shadow: inset 0 0 10px #000; box-sizing: border-box;"></textarea>
@@ -166,13 +172,22 @@ class DeveloperMode extends Phaser.Scene {
     handleJoin() {
         const tableId = document.getElementById('devTableId').value;
         const role = document.getElementById('devRole').value;
+        
+        // Cache your current perspective locally on the scene object
+        this.myActiveTable = parseInt(tableId);
+        this.myActiveRole = role;
+
         this.logToConsole(`>> Emitting joinTable: Table ${tableId} as ${role}`);
-        this.socket.emit('joinTable', { tableId: parseInt(tableId), role });
+        this.socket.emit('joinTable', { tableId: this.myActiveTable, role });
     }
 
     handleLeave() {
         this.logToConsole(`>> Emitting leaveTable`);
         this.socket.emit('leaveTable');
+        
+        // Reset your cached tracking perspective
+        this.myActiveTable = null;
+        this.myActiveRole = null;
     }
 
     handleDeckLoad() {
@@ -213,13 +228,38 @@ class DeveloperMode extends Phaser.Scene {
         this.socket.on('stateUpdate', (sanitizedState) => {
             this.logToConsole(`[RECEIVED stateUpdate]:\n${JSON.stringify(sanitizedState, null, 2)}`);
         });
+        
         this.socket.on('errorMsg', (msg) => {
             this.logToConsole(`[SERVER ERROR]: ${msg}`);
         });
-        
-        // Add this new success tracking listener block:
+
         this.socket.on('serverNotice', (msg) => {
             this.logToConsole(`[SERVER SUCCESS]: ${msg}`);
+        });
+
+        // Update this event receiver block completely:
+        this.socket.on('cardDrawnUpdate', (drawEvent) => {
+            // Update the live title tracking label on the canvas
+            if (this.myActiveTable && this.myActiveRole) {
+                this.logTitleText.setText(`📢 SERVER RESPONSE STREAM (PERSPECTIVE: TABLE ${this.myActiveTable} AS ${this.myActiveRole.toUpperCase()})`);
+                this.logTitleText.setStyle({ fill: '#ffff00' });
+            } else {
+                this.logTitleText.setText('📢 SERVER RESPONSE STREAM (PERSPECTIVE: UNBOUND LOBBY)');
+                this.logTitleText.setStyle({ fill: '#00ff00' });
+            }
+
+            // Append specific descriptive logs based on your localized client position
+            const isOwner = this.myActiveRole === drawEvent.targetPlayer;
+            const isSpectator = this.myActiveRole === 'spectator';
+            
+            let perceptionTag = "[ENEMY VISION]";
+            if (isOwner) perceptionTag = "[YOUR HAND VISION]";
+            if (isSpectator) perceptionTag = "[SPECTATOR X-RAY VISION]";
+
+            this.logToConsole(`[LIVE DRAW EVENT] ${perceptionTag}
+Player ${drawEvent.targetPlayer} drew a card. 
+Your Visible Data payload: ${JSON.stringify(drawEvent.card)}
+Remaining Deck Count: ${drawEvent.deckCount}`);
         });
     }
 

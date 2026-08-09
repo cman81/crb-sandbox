@@ -141,15 +141,48 @@ io.on('connection', (socket) => {
       return socket.emit('errorMsg', `${targetPlayer}'s deck is empty! Cannot draw.`);
     }
 
-    // Remove the top card from the deck array (index 0)
+    // Process the physical card draw
     const drawnCard = deck.shift();
-    
-    // Cards in hands are no longer face down to the owner
     drawnCard.isFaceDown = false; 
-
-    // Push it straight into the player's hand array
     hand.push(drawnCard);
 
+    // --- Dynamic Network Notification Broadcasting ---
+    const maskCard = () => ({ name: "Card Back", isFaceDown: true });
+    
+    // 1. The Owner Payload (Full card identity data)
+    const ownerPayload = {
+      targetPlayer,
+      card: drawnCard,
+      deckCount: deck.length
+    };
+
+    // 2. The Opponent Payload (Masked card back identity data)
+    const opponentPayload = {
+      targetPlayer,
+      card: maskCard(),
+      deckCount: deck.length
+    };
+
+    // 3. The Spectator Payload (Full card identity data)
+    const spectatorPayload = {
+      targetPlayer,
+      card: drawnCard,
+      deckCount: deck.length
+    };
+
+    // Route notifications accurately based on the drawing player slot
+    if (targetPlayer === 'playerA') {
+      if (table.playerA) io.to(table.playerA).emit('cardDrawnUpdate', ownerPayload);
+      if (table.playerB) io.to(table.playerB).emit('cardDrawnUpdate', opponentPayload);
+    } else {
+      if (table.playerA) io.to(table.playerA).emit('cardDrawnUpdate', opponentPayload);
+      if (table.playerB) io.to(table.playerB).emit('cardDrawnUpdate', ownerPayload);
+    }
+
+    // Spectators always get full X-Ray data pushed directly
+    table.spectators.forEach(specId => {
+      io.to(specId).emit('cardDrawnUpdate', spectatorPayload);
+    });
 
     socket.emit('serverNotice', `${targetPlayer} successfully drew 1 card.`);
   });
