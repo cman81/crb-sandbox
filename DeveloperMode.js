@@ -81,20 +81,29 @@ class DeveloperMode extends Phaser.Scene {
         const htmlContent = `
             <div style="color: white; font-family: monospace; font-size: 16px; background: #222; padding: 25px; border-radius: 8px; width: 460px; height: 500px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box;">
                 <h3 style="margin-top:0; color:#00ff00; font-size: 22px; margin-bottom: 20px;">2. Decklist Processor</h3>
-                <div style="margin-bottom: 12px;">
-                    <label style="display:inline-block; width:150px;">Target Table:</label>
-                    <input type="number" id="deckTableId" min="1" max="8" value="1" style="width:60px; background:#333; color:#fff; border:1px solid #555; padding:6px; border-radius: 4px;">
+                
+                <div style="margin-bottom: 20px; display: flex; justify-content: space-between;">
+                    <div>
+                        <label>Table:</label>
+                        <input type="number" id="deckTableId" min="1" max="8" value="1" style="width:45px; background:#333; color:#fff; border:1px solid #555; padding:4px; border-radius: 4px;">
+                    </div>
+                    <div>
+                        <label>Slot:</label>
+                        <select id="deckTargetPlayer" style="width:105px; background:#333; color:#fff; border:1px solid #555; padding:4px; border-radius: 4px;">
+                            <option value="playerA">Player A</option>
+                            <option value="playerB">Player B</option>
+                        </select>
+                    </div>
                 </div>
-                <div style="margin-bottom: 15px;">
-                    <label style="display:inline-block; width:150px;">Target Slot:</label>
-                    <select id="deckTargetPlayer" style="width:110px; background:#333; color:#fff; border:1px solid #555; padding:6px; border-radius: 4px;">
-                        <option value="playerA">Player A</option>
-                        <option value="playerB">Player B</option>
-                    </select>
+
+                <!-- SIMPLIFIED INSTANT SHUFFLE -->
+                <div style="margin-bottom: 20px;">
+                    <button id="deckShuffleBtn" style="width:100%; background:#ffff00; color:#000; font-weight:bold; font-size:15px; padding:10px; border:none; border-radius:4px; cursor:pointer; box-shadow: 0px 0px 10px rgba(255,255,0,0.3);">⚡ INSTANT SHUFFLE DECK</button>
                 </div>
-                <label style="display:block; margin-bottom:8px;">Paste Raw Decklist Below:</label>
-                <textarea id="deckRawInput" placeholder="2 Adventurer Cookie [ST1-013]..." style="width:100%; height:200px; background:#111; color:#fff; font-family:monospace; font-size:13px; border:1px solid #555; padding:8px; box-sizing:border-box; resize:none; border-radius: 4px;"></textarea>
-                <button id="deckLoadBtn" style="margin-top:15px; width:100%; background:#00ff00; color:#000; font-weight:bold; font-size:16px; padding:12px; border:none; border-radius:4px; cursor:pointer;">LOAD DECKLIST</button>
+
+                <label style="display:block; margin-bottom:4px; font-size:14px;">Paste Raw Decklist Below:</label>
+                <textarea id="deckRawInput" placeholder="2 Adventurer Cookie [ST1-013]..." style="width:100%; height:180px; background:#111; color:#fff; font-family:monospace; font-size:13px; border:1px solid #555; padding:8px; box-sizing:border-box; resize:none; border-radius: 4px;"></textarea>
+                <button id="deckLoadBtn" style="margin-top:15px; width:100%; background:#00ff00; color:#000; font-weight:bold; font-size:15px; padding:12px; border:none; border-radius:4px; cursor:pointer;">LOAD DECKLIST</button>
             </div>
         `;
         
@@ -103,6 +112,7 @@ class DeveloperMode extends Phaser.Scene {
         this.domDeckLoaderPanel.addListener('click');
         this.domDeckLoaderPanel.on('click', (event) => {
             if (event.target.id === 'deckLoadBtn') this.handleDeckLoad();
+            if (event.target.id === 'deckShuffleBtn') this.handleDeckShuffle();
         });
     }
 
@@ -194,6 +204,11 @@ class DeveloperMode extends Phaser.Scene {
         this.socket.on('errorMsg', (msg) => {
             this.logToConsole(`[SERVER ERROR]: ${msg}`);
         });
+        
+        // Add this new success tracking listener block:
+        this.socket.on('serverNotice', (msg) => {
+            this.logToConsole(`[SERVER SUCCESS]: ${msg}`);
+        });
     }
 
     logToConsole(message) {
@@ -204,4 +219,21 @@ class DeveloperMode extends Phaser.Scene {
             textarea.scrollTop = textarea.scrollHeight;
         }
     }
+
+    handleInsertTimestamp() {
+        const seedInput = document.getElementById('shuffleSeed');
+        if (seedInput) {
+            seedInput.value = Date.now().toString();
+            this.logToConsole(`>> Generated millisecond seed timestamp: ${seedInput.value}`);
+        }
+    }
+
+    handleDeckShuffle() {
+        const tableId = document.getElementById('deckTableId').value;
+        const targetPlayer = document.getElementById('deckTargetPlayer').value;
+
+        this.logToConsole(`>> Emitting shuffleDeck: Table ${tableId} (${targetPlayer}) via unique UUID sort routine.`);
+        this.socket.emit('shuffleDeck', { tableId: parseInt(tableId), targetPlayer });
+    }
+
 }

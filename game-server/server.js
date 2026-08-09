@@ -1,4 +1,5 @@
 const io = require('socket.io')(3000, { cors: { origin: "*" } });
+const { v4: uuidv4 } = require('uuid');
 
 const tables = Array.from({ length: 8 }, (_, i) => ({
   id: i + 1, 
@@ -81,7 +82,6 @@ io.on('connection', (socket) => {
     else if (role === 'spectator') table.spectators.push(socket.id);
     else return socket.emit('errorMsg', 'Seat taken.');
     
-    // Broadcast completely removed
   });
 
   socket.on('leaveTable', () => leaveAll(socket.id));
@@ -92,21 +92,42 @@ io.on('connection', (socket) => {
     if (!table) return socket.emit('errorMsg', 'Table not found.');
     if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') return socket.emit('errorMsg', 'Invalid target player.');
 
-    table.gameState[targetPlayer].deck = deckList.map(code => ({
+    table.gameState[targetPlayer].deck = deckList.map((code) => ({
       id: code,
       name: `Card ${code}`,
       isFaceDown: true
     }));
-    
-    // Broadcast completely removed
+
+    socket.emit('serverNotice', `Deck loaded with ${deckList.length} uniquely indexed cards.`);
   });
 
-  // Dedicated single-client state polling engine
   socket.on('getGameState', ({ tableId, role }) => {
     const table = tables.find(t => t.id === parseInt(tableId));
     if (!table) return socket.emit('errorMsg', 'Table not found.');
     
     sendSanitizedState(socket, table, role);
+  });
+
+  socket.on('shuffleDeck', ({ tableId, targetPlayer }) => {
+    const table = tables.find(t => t.id === parseInt(tableId));
+    if (!table) return socket.emit('errorMsg', 'Table not found.');
+    
+    const deck = table.gameState[targetPlayer]?.deck;
+    if (!deck || deck.length === 0) {
+      return socket.emit('errorMsg', `No cards found in ${targetPlayer}'s deck to shuffle.`);
+    }
+
+    deck.forEach(card => {
+      card.shuffleId = uuidv4(); // Assign a random unique string identifier
+    });
+
+    deck.sort((a, b) => a.shuffleId.localeCompare(b.shuffleId));
+
+    deck.forEach((card) => {
+      delete card.shuffleId; // Keep the game state payload clean
+    });
+
+    socket.emit('serverNotice', `Deck shuffled successfully using random UUID sort!`);
   });
 });
 
