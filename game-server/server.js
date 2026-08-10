@@ -27,10 +27,9 @@ function sendSanitizedState(socket, table, role) {
     const isSpec = viewerRole === 'spectator';
     const isOwner = viewerRole === zoneOwner;
 
-    // Helper function to hide the card if it's face down and viewed by an opponent
+    // Helper function to hide a single card if it's face down and viewed by an opponent
     const maskIfHidden = (card) => {
       if (!card || Object.keys(card).length === 0) return null;
-      // If the card is face down, only the owner and spectators can see its true identity
       if (card.isFaceDown && !isOwner && !isSpec) return maskCard();
       return card;
     };
@@ -39,13 +38,16 @@ function sendSanitizedState(socket, table, role) {
       stage: battleZone.stage,
       fighterA: {
         card: maskIfHidden(battleZone.fighterA.card),
-        faceDownStack: (isOwner || isSpec) 
+        // CHANGE: Only spectators see the real cards inside the stack. 
+        // Players (even the owner) only see card backs!
+        faceDownStack: isSpec 
           ? battleZone.fighterA.faceDownStack 
           : battleZone.fighterA.faceDownStack.map(maskCard)
       },
       fighterB: {
         card: maskIfHidden(battleZone.fighterB.card),
-        faceDownStack: (isOwner || isSpec) 
+        // CHANGE: Applied identically to fighterB's stack
+        faceDownStack: isSpec 
           ? battleZone.fighterB.faceDownStack 
           : battleZone.fighterB.faceDownStack.map(maskCard)
       }
@@ -161,7 +163,7 @@ io.on('connection', (socket) => {
     }
 
     // Process the physical card draw
-    const drawnCard = deck.shift();
+    const drawnCard = deck.pop();
     drawnCard.isFaceDown = false; 
     hand.push(drawnCard);
 
@@ -206,7 +208,6 @@ io.on('connection', (socket) => {
     socket.emit('serverNotice', `${targetPlayer} successfully drew 1 card.`);
   });
 
-  // --- DRAW 6 CARDS ---
   socket.on('draw6Cards', ({ tableId, targetPlayer }) => {
     const table = tables.find(t => t.id === parseInt(tableId));
     if (!table) return socket.emit('errorMsg', 'Table not found.');
@@ -222,7 +223,7 @@ io.on('connection', (socket) => {
 
     // Loop exactly 6 times, replicating single-draw logic perfectly per iteration
     for (let i = 0; i < 6; i++) {
-      const drawnCard = deck.shift();
+      const drawnCard = deck.pop();
       drawnCard.isFaceDown = false; 
       hand.push(drawnCard);
 
@@ -248,7 +249,6 @@ io.on('connection', (socket) => {
     socket.emit('serverNotice', `${targetPlayer} successfully drew a 6-card opening hand.`);
   });
 
-  // --- PLAY CARD FACE DOWN ---
   socket.on('playCardFaceDown', ({ tableId, targetPlayer, handIndex }) => {
     const table = tables.find(t => t.id === parseInt(tableId));
     if (!table) return socket.emit('errorMsg', 'Table not found.');
@@ -274,7 +274,6 @@ io.on('connection', (socket) => {
     socket.emit('serverNotice', `Placed card from hand index ${idx} face down into ${targetPlayer}'s fighterA position.`);
   });
 
-  // --- FLIP CARD FACE UP ---
   socket.on('flipCardFaceUp', ({ tableId, targetPlayer }) => {
     const table = tables.find(t => t.id === parseInt(tableId));
     if (!table) return socket.emit('errorMsg', 'Table not found.');
@@ -288,6 +287,44 @@ io.on('connection', (socket) => {
     fighterACard.isFaceDown = false; // Reveal to all clients
 
     socket.emit('serverNotice', `Flipped ${targetPlayer}'s active fighterA card face up.`);
+  });
+
+  socket.on('placeDeckCardToStack', ({ tableId, targetPlayer, targetSlot }) => {
+    const table = tables.find(t => t.id === parseInt(tableId));
+    if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+    const deck = table.gameState[targetPlayer]?.deck;
+    const battleZone = table.gameState[targetPlayer]?.battleZone;
+
+    if (!deck || deck.length === 0) {
+      return socket.emit('errorMsg', `${targetPlayer}'s deck is empty!`);
+    }
+
+    if (targetSlot !== 'fighterA' && targetSlot !== 'fighterB') {
+      return socket.emit('errorMsg', 'Invalid target stack slot.');
+    }
+
+    // Standardized: Pull from the end (top) of the deck array using .pop()
+    const cardToStack = deck.pop(); 
+    cardToStack.isFaceDown = true; 
+
+    // Appends to the end (top) of the stack array
+    battleZone[targetSlot].faceDownStack.push(cardToStack);
+
+    // Dynamic notifications: Everyone gets a masked update except spectators
+    const maskCard = () => ({ name: "Card Back", isFaceDown: true });
+    
+    const standardPayload = { targetPlayer, targetSlot, card: maskCard(), stackCount: battleZone[targetSlot].faceDownStack.length, deckCount: deck.length };
+    const spectatorPayload = { targetPlayer, targetSlot, card: cardToStack, stackCount: battleZone[targetSlot].faceDownStack.length, deckCount: deck.length };
+
+    if (table.playerA) io.to(table.playerA).emit('cardStackedUpdate', standardPayload);
+    if (table.playerB) io.to(table.playerB).emit('cardStackedUpdate', standardPayload);
+    
+    table.spectators.forEach(specId => {
+      io.to(specId).emit('cardStackedUpdate', spectatorPayload);
+    });
+
+    socket.emit('serverNotice', `Moved card from deck to ${targetSlot}'s face-down stack.`);
   });
 });
 

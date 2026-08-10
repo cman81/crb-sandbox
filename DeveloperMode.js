@@ -111,8 +111,13 @@ class DeveloperMode extends Phaser.Scene {
                     </div>
                 </div>
 
+                <label style="display:block; margin-bottom:4px; font-size:14px;">Paste Raw Decklist Below:</label>
+                <textarea id="deckRawInput" placeholder="2 Adventurer Cookie [ST1-013]..." style="width:100%; height:140px; background:#111; color:#fff; font-family:monospace; font-size:13px; border:1px solid #555; padding:8px; box-sizing:border-box; resize:none; border-radius: 4px;"></textarea>
+                <button id="deckLoadBtn" style="margin-top:10px; width:100%; background:#00ff00; color:#000; font-weight:bold; font-size:15px; padding:10px; border:none; border-radius:4px; cursor:pointer;">LOAD DECKLIST</button>
+
+
                 <!-- SETUP & BOARD PREPARATION TRAY -->
-                <div style="margin-bottom: 15px; background: #1a1a1a; padding: 12px; border-radius: 6px; border: 1px solid #555; display: flex; flex-direction: column; gap: 8px;">
+                <div style="margin-top: 15px; background: #1a1a1a; padding: 12px; border-radius: 6px; border: 1px solid #555; display: flex; flex-direction: column; gap: 8px;">
                     <div style="display: flex; gap: 8px;">
                         <button id="deckShuffleBtn" style="flex: 1; background:#ffff00; color:#000; font-weight:bold; font-size:13px; padding:8px; border:none; border-radius:4px; cursor:pointer;">⚡ SHUFFLE</button>
                         <button id="setupDraw6Btn" style="flex: 1; background:#00ff88; color:#000; font-weight:bold; font-size:13px; padding:8px; border:none; border-radius:4px; cursor:pointer;">🎴 DRAW 6</button>
@@ -126,10 +131,6 @@ class DeveloperMode extends Phaser.Scene {
                         <button id="setupFlipUpBtn" style="width:100%; background:#ff00ea; color:#fff; font-weight:bold; font-size:12px; padding:8px; border:none; border-radius:4px; cursor:pointer;">👁️ FLIP FACE UP</button>
                     </div>
                 </div>
-
-                <label style="display:block; margin-bottom:4px; font-size:14px;">Paste Raw Decklist Below:</label>
-                <textarea id="deckRawInput" placeholder="2 Adventurer Cookie [ST1-013]..." style="width:100%; height:140px; background:#111; color:#fff; font-family:monospace; font-size:13px; border:1px solid #555; padding:8px; box-sizing:border-box; resize:none; border-radius: 4px;"></textarea>
-                <button id="deckLoadBtn" style="margin-top:10px; width:100%; background:#00ff00; color:#000; font-weight:bold; font-size:15px; padding:10px; border:none; border-radius:4px; cursor:pointer;">LOAD DECKLIST</button>
             </div>
         `;
         
@@ -251,7 +252,6 @@ class DeveloperMode extends Phaser.Scene {
             this.logToConsole(`[SERVER SUCCESS]: ${msg}`);
         });
 
-        // Update this event receiver block completely:
         this.socket.on('cardDrawnUpdate', (drawEvent) => {
             // Update the live title tracking label on the canvas
             if (this.myActiveTable && this.myActiveRole) {
@@ -274,6 +274,21 @@ class DeveloperMode extends Phaser.Scene {
 Player ${drawEvent.targetPlayer} drew a card. 
 Your Visible Data payload: ${JSON.stringify(drawEvent.card)}
 Remaining Deck Count: ${drawEvent.deckCount}`);
+        });
+
+        this.socket.on('cardStackedUpdate', (stackEvent) => {
+            const isOwner = this.myActiveRole === stackEvent.targetPlayer;
+            const isSpectator = this.myActiveRole === 'spectator';
+            
+            let perceptionTag = "[ENEMY VISION]";
+            if (isOwner) perceptionTag = "[YOUR STACK VISION]";
+            if (isSpectator) perceptionTag = "[SPECTATOR X-RAY VISION]";
+
+            this.logToConsole(`[LIVE STACK EVENT] ${perceptionTag}
+Player ${stackEvent.targetPlayer} added a card to the top of ${stackEvent.targetSlot}. 
+Your Visible Card Data: ${JSON.stringify(stackEvent.card)}
+Current Stack Total Count: ${stackEvent.stackCount}
+Remaining Deck Count: ${stackEvent.deckCount}`);
         });
     }
 
@@ -304,10 +319,10 @@ Remaining Deck Count: ${drawEvent.deckCount}`);
 
     createGameActionsTabPanel() {
         const htmlContent = `
-            <div style="color: white; font-family: monospace; font-size: 16px; background: #222; padding: 25px; border-radius: 8px; width: 460px; height: 500px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box;">
-                <h3 style="margin-top:0; color:#00ff00; font-size: 22px; margin-bottom: 20px;">3. Game Actions</h3>
+            <div style="color: white; font-family: monospace; font-size: 16px; background: #222; padding: 25px; border-radius: 8px; width: 460px; height: 600px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box;">
+                <h3 style="margin-top:0; color:#00ff00; font-size: 22px; margin-bottom: 15px;">3. Game Actions</h3>
                 
-                <div style="margin-bottom: 25px; display: flex; justify-content: space-between;">
+                <div style="margin-bottom: 15px; display: flex; justify-content: space-between;">
                     <div>
                         <label>Table:</label>
                         <input type="number" id="actionTableId" min="1" max="8" value="1" style="width:45px; background:#333; color:#fff; border:1px solid #555; padding:4px; border-radius: 4px;">
@@ -321,8 +336,22 @@ Remaining Deck Count: ${drawEvent.deckCount}`);
                     </div>
                 </div>
 
-                <div style="background: #1a1a1a; padding: 15px; border-radius: 6px; border: 1px solid #555;">
+                <!-- SINGLE CARD DRAW -->
+                <div style="background: #1a1a1a; padding: 12px; border-radius: 6px; border: 1px solid #555; margin-bottom: 15px;">
                     <button id="actionDrawBtn" style="width:100%; background:#00ff00; color:#000; font-weight:bold; font-size:16px; padding:12px; border:none; border-radius:4px; cursor:pointer; box-shadow: 0px 0px 10px rgba(0,255,0,0.2);">🎴 DRAW 1 CARD</button>
+                </div>
+
+                <!-- STACKING CONSOLE UTILITY -->
+                <div style="background: #1a1a1a; padding: 15px; border-radius: 6px; border: 1px solid #444; display: flex; flex-direction: column; gap: 10px;">
+                    <label style="color: #00ffff; font-size: 13px; font-weight: bold;">Face-Down Stacking System:</label>
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <label>Target Fighter Stack:</label>
+                        <select id="actionStackSlot" style="width:110px; background:#333; color:#fff; border:1px solid #555; padding:6px; border-radius: 4px;">
+                            <option value="fighterA">Fighter A</option>
+                            <option value="fighterB">Fighter B</option>
+                        </select>
+                    </div>
+                    <button id="actionStackTopDeckBtn" style="width:100%; background:#00ffff; color:#000; font-weight:bold; font-size:14px; padding:10px; border:none; border-radius:4px; cursor:pointer;">⬇️ STACK TOP DECK CARD</button>
                 </div>
             </div>
         `;
@@ -332,6 +361,7 @@ Remaining Deck Count: ${drawEvent.deckCount}`);
         this.domGameActionsPanel.addListener('click');
         this.domGameActionsPanel.on('click', (event) => {
             if (event.target.id === 'actionDrawBtn') this.handleDrawCard();
+            if (event.target.id === 'actionStackTopDeckBtn') this.handlePlaceDeckToStack();
         });
     }
 
@@ -364,6 +394,15 @@ Remaining Deck Count: ${drawEvent.deckCount}`);
         const targetPlayer = document.getElementById('deckTargetPlayer').value;
         this.logToConsole(`>> Emitting flipCardFaceUp: Table ${tableId} fighterA slot for ${targetPlayer}`);
         this.socket.emit('flipCardFaceUp', { tableId: parseInt(tableId), targetPlayer });
+    }
+
+    handlePlaceDeckToStack() {
+        const tableId = document.getElementById('actionTableId').value;
+        const targetPlayer = document.getElementById('actionTargetPlayer').value;
+        const targetSlot = document.getElementById('actionStackSlot').value;
+
+        this.logToConsole(`>> Emitting placeDeckCardToStack: Table ${tableId} moving top deck card to ${targetPlayer}'s ${targetSlot} stack.`);
+        this.socket.emit('placeDeckCardToStack', { tableId: parseInt(tableId), targetPlayer, targetSlot });
     }
 
 }
