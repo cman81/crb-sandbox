@@ -243,15 +243,26 @@ class DeveloperMode extends Phaser.Scene {
 
         const lines = rawText.split('\n');
         const processedDeck = [];
-        const regex = /^\s*(\d+)\s+.*?\[([A-Za-z0-9-]+)\]/;
+        
+        // Regex Breakdown:
+        // ^\s*(\d+)   -> Group 1: Captures the starting quantity number
+        // \s+(.*?)    -> Group 2: Captures the title text string lazily
+        // \s*\[([A-Za-z0-9-]+)\] -> Group 3: Captures the bracketed alphanumeric code
+        const regex = /^\s*(\d+)\s+(.*?)\s*\[([A-Za-z0-9-]+)\]/;
 
         lines.forEach(line => {
             const match = line.match(regex);
             if (match) {
                 const count = parseInt(match[1], 10);
-                const cardCode = match[2];
+                const cardTitle = match[2].trim(); // Clean trailing spaces from the title name
+                const cardCode = match[3];
+
                 for (let i = 0; i < count; i++) {
-                    processedDeck.push(cardCode);
+                    // Push an object holding both parameters instead of just a raw string ID primitive
+                    processedDeck.push({
+                        id: cardCode,
+                        title: cardTitle
+                    });
                 }
             }
         });
@@ -290,8 +301,13 @@ class DeveloperMode extends Phaser.Scene {
         // Loop and build fresh index elements sequentially
         handArray.forEach((card, index) => {
             // Check if card identity is protected under fog-of-war masking rules
-            const displayId = card.name === "Card Back" ? "🚫 [CARD BACK - HIDDEN]" : card.id;
+            let displayId = "🚫 [CARD BACK - HIDDEN]";
             const rowColor = card.name === "Card Back" ? "#ffaa00" : "#00ff88";
+
+            // If the card is unmasked and possesses a title string parameter, combine them cleanly!
+            if (card.name !== "Card Back") {
+                displayId = card.title ? `${card.title} [${card.id}]` : card.id;
+            }
 
             const rowHtml = `
                 <tr style="border-bottom: 1px solid #333; font-size: 13px;">

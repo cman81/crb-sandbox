@@ -129,14 +129,16 @@ io.on('connection', (socket) => {
     if (!table) return socket.emit('errorMsg', 'Table not found.');
     if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') return socket.emit('errorMsg', 'Invalid target player.');
 
-    table.gameState[targetPlayer].deck = deckList.map(code => ({
-      id: code,
-      name: `Card ${code}`,
+    // Map over the incoming array payload structures
+    table.gameState[targetPlayer].deck = deckList.map(cardObj => ({
+      id: cardObj.id,
+      title: cardObj.title, // Cache the clean captured title string safely
+      name: `Card ${cardObj.id}`, // Maintain previous placeholder legacy support compatibility
       isFaceDown: true,
       isTapped: false
     }));
 
-    socket.emit('serverNotice', `Deck loaded with ${deckList.length} uniquely indexed cards.`);
+    socket.emit('serverNotice', `Deck loaded with ${deckList.length} uniquely titled cards.`);
   });
 
   socket.on('getGameState', ({ tableId, role }) => {
