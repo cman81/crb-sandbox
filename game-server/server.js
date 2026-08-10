@@ -113,10 +113,11 @@ io.on('connection', (socket) => {
     if (!table) return socket.emit('errorMsg', 'Table not found.');
     if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') return socket.emit('errorMsg', 'Invalid target player.');
 
-    table.gameState[targetPlayer].deck = deckList.map((code) => ({
+    table.gameState[targetPlayer].deck = deckList.map(code => ({
       id: code,
       name: `Card ${code}`,
-      isFaceDown: true
+      isFaceDown: true,
+      isTapped: false
     }));
 
     socket.emit('serverNotice', `Deck loaded with ${deckList.length} uniquely indexed cards.`);
@@ -325,6 +326,92 @@ io.on('connection', (socket) => {
     });
 
     socket.emit('serverNotice', `Moved card from deck to ${targetSlot}'s face-down stack.`);
+  });
+
+  socket.on('playCardToSupport', ({ tableId, targetPlayer, handIndex }) => {
+    const table = tables.find(t => t.id === parseInt(tableId));
+    if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+    const hand = table.gameState[targetPlayer]?.hand;
+    const support = table.gameState[targetPlayer]?.support;
+
+    if (!hand || hand.length === 0) {
+      return socket.emit('errorMsg', `Hand is empty! No card to play.`);
+    }
+
+    const idx = parseInt(handIndex);
+    if (isNaN(idx) || idx < 0 || idx >= hand.length) {
+      return socket.emit('errorMsg', `Invalid hand position! Choose an index between 0 and ${hand.length - 1}.`);
+    }
+
+    // Explicitly remove the card at that index from the hand array
+    const [cardToPlay] = hand.splice(idx, 1);
+    
+    // Support cards are played face up on the table
+    cardToPlay.isFaceDown = false; 
+
+    // Append to the end of the support array lane
+    support.push(cardToPlay);
+
+    // Build the payload (since it's a public zone, everybody gets the raw card info)
+    const payload = {
+      targetPlayer,
+      card: cardToPlay,
+      supportCount: support.length,
+      handCount: hand.length
+    };
+
+    // Broadcast the live update instantly to all table positions
+    if (table.playerA) io.to(table.playerA).emit('cardPlayedToSupportUpdate', payload);
+    if (table.playerB) io.to(table.playerB).emit('cardPlayedToSupportUpdate', payload);
+    table.spectators.forEach(specId => {
+      io.to(specId).emit('cardPlayedToSupportUpdate', payload);
+    });
+
+    socket.emit('serverNotice', `Played card from hand index ${idx} face up into ${targetPlayer}'s support zone.`);
+  });
+
+  socket.on('toggleCardTap', ({ tableId, targetPlayer, zone, supportIndex }) => {
+    const table = tables.find(t => t.id === parseInt(tableId));
+    if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+    const battleZone = table.gameState[targetPlayer]?.battleZone;
+    const support = table.gameState[targetPlayer]?.support;
+    let targetCard = null;
+
+    // 1. Locate the physical target card based on the user's selected zone criteria
+    if (zone === 'fighterA') {
+      targetCard = battleZone?.fighterA?.card;
+    } else if (zone === 'fighterB') {
+      targetCard = battleZone?.fighterB?.card;
+    } else if (zone === 'support') {
+      const idx = parseInt(supportIndex);
+      if (!support || isNaN(idx) || idx < 0 || idx >= support.length) {
+        return socket.emit('errorMsg', 'Invalid support lane index.');
+      }
+      targetCard = support[idx];
+    }
+
+    if (!targetCard || Object.keys(targetCard).length === 0) {
+      return socket.emit('errorMsg', `No card found in ${zone} to tap/untap.`);
+    }
+
+    // 2. Flip the boolean value state parameter
+    targetCard.isTapped = !targetCard.isTapped;
+
+    // 3. Construct a public broadcast payload notice
+    const payload = {
+      targetPlayer,
+      zone,
+      supportIndex: zone === 'support' ? parseInt(supportIndex) : null,
+      isTapped: targetCard.isTapped
+    };
+
+    if (table.playerA) io.to(table.playerA).emit('cardTapUpdated', payload);
+    if (table.playerB) io.to(table.playerB).emit('cardTapUpdated', payload);
+    table.spectators.forEach(specId => io.to(specId).emit('cardTapUpdated', payload));
+
+    socket.emit('serverNotice', `Toggled tap state for card in ${zone} to: ${targetCard.isTapped}`);
   });
 });
 

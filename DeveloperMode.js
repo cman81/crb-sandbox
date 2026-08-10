@@ -290,6 +290,20 @@ Your Visible Card Data: ${JSON.stringify(stackEvent.card)}
 Current Stack Total Count: ${stackEvent.stackCount}
 Remaining Deck Count: ${stackEvent.deckCount}`);
         });
+
+        this.socket.on('cardPlayedToSupportUpdate', (playEvent) => {
+            this.logToConsole(`[LIVE FIELD EVENT] [PUBLIC ZONE REVEAL]
+Player ${playEvent.targetPlayer} played a card face up into the support lane!
+Card Data: ${JSON.stringify(playEvent.card)}
+Support Lane Total Count: ${playEvent.supportCount}
+Remaining Hand Count: ${playEvent.handCount}`);
+        });
+
+        this.socket.on('cardTapUpdated', (tapEvent) => {
+            const contextLoc = tapEvent.zone === 'support' ? `support lane position index ${tapEvent.supportIndex}` : `${tapEvent.zone} active slot`;
+            this.logToConsole(`[LIVE ORIENTATION EVENT]
+Player ${tapEvent.targetPlayer}'s card located in ${contextLoc} is now: ${tapEvent.isTapped ? '🚨 TAPPED (RESTING)' : '🟢 UNTAPPED (ACTIVE)'}`);
+        });
     }
 
     logToConsole(message) {
@@ -319,10 +333,10 @@ Remaining Deck Count: ${stackEvent.deckCount}`);
 
     createGameActionsTabPanel() {
         const htmlContent = `
-            <div style="color: white; font-family: monospace; font-size: 16px; background: #222; padding: 25px; border-radius: 8px; width: 460px; height: 600px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box;">
-                <h3 style="margin-top:0; color:#00ff00; font-size: 22px; margin-bottom: 15px;">3. Game Actions</h3>
+            <div style="color: white; font-family: monospace; font-size: 16px; background: #222; padding: 25px; border-radius: 8px; width: 460px; height: 600px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box; display: flex; flex-direction: column; gap: 15px;">
+                <h3 style="margin-top:0; color:#00ff00; font-size: 22px; margin-bottom: 5px;">3. Game Actions</h3>
                 
-                <div style="margin-bottom: 15px; display: flex; justify-content: space-between;">
+                <div style="display: flex; justify-content: space-between;">
                     <div>
                         <label>Table:</label>
                         <input type="number" id="actionTableId" min="1" max="8" value="1" style="width:45px; background:#333; color:#fff; border:1px solid #555; padding:4px; border-radius: 4px;">
@@ -336,22 +350,39 @@ Remaining Deck Count: ${stackEvent.deckCount}`);
                     </div>
                 </div>
 
-                <!-- SINGLE CARD DRAW -->
-                <div style="background: #1a1a1a; padding: 12px; border-radius: 6px; border: 1px solid #555; margin-bottom: 15px;">
-                    <button id="actionDrawBtn" style="width:100%; background:#00ff00; color:#000; font-weight:bold; font-size:16px; padding:12px; border:none; border-radius:4px; cursor:pointer; box-shadow: 0px 0px 10px rgba(0,255,0,0.2);">🎴 DRAW 1 CARD</button>
+                <!-- DRAWS & STACKS UTILITY PANELS -->
+                <div style="display: flex; gap: 8px;">
+                    <button id="actionDrawBtn" style="flex: 1; background:#00ff00; color:#000; font-weight:bold; font-size:13px; padding:8px; border:none; border-radius:4px; cursor:pointer;">🎴 DRAW 1</button>
+                    <button id="actionStackTopDeckBtn" style="flex: 1; background:#00ffff; color:#000; font-weight:bold; font-size:13px; padding:8px; border:none; border-radius:4px; cursor:pointer;">⬇️ STACK HP</button>
+                </div>
+                <input type="hidden" id="actionStackSlot" value="fighterA">
+
+                <!-- HAND CONTROLS -->
+                <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #444; display: flex; align-items: center; gap: 8px;">
+                    <label style="font-size:12px; color:#aaa;">Hand Pos:</label>
+                    <input type="number" id="actionHandIdx" min="0" value="0" style="width: 40px; background: #333; color: #fff; border: 1px solid #555; padding: 4px; border-radius: 4px;">
+                    <button id="actionPlaySupportBtn" style="flex: 1; background:#ffff00; color:#000; font-weight:bold; font-size:12px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🛡️ PLAY SUPPORT</button>
                 </div>
 
-                <!-- STACKING CONSOLE UTILITY -->
-                <div style="background: #1a1a1a; padding: 15px; border-radius: 6px; border: 1px solid #444; display: flex; flex-direction: column; gap: 10px;">
-                    <label style="color: #00ffff; font-size: 13px; font-weight: bold;">Face-Down Stacking System:</label>
-                    <div style="display: flex; align-items: center; justify-content: space-between;">
-                        <label>Target Fighter Stack:</label>
-                        <select id="actionStackSlot" style="width:110px; background:#333; color:#fff; border:1px solid #555; padding:6px; border-radius: 4px;">
-                            <option value="fighterA">Fighter A</option>
-                            <option value="fighterB">Fighter B</option>
+                <!-- TAPPING SYSTEM -->
+                <div style="background: #1a1a1a; padding: 12px; border-radius: 6px; border: 1px solid #ffff00; display: flex; flex-direction: column; gap: 8px;">
+                    <label style="color: #ffff00; font-size: 13px; font-weight: bold;">🔄 Card Orientation System:</label>
+                    
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <label style="font-size:13px;">Target Zone:</label>
+                        <select id="tapZoneSelect" style="width:130px; background:#333; color:#fff; border:1px solid #555; padding:4px; border-radius: 4px;">
+                            <option value="fighterA">Fighter A Slot</option>
+                            <option value="fighterB">Fighter B Slot</option>
+                            <option value="support">Support Lane</option>
                         </select>
                     </div>
-                    <button id="actionStackTopDeckBtn" style="width:100%; background:#00ffff; color:#000; font-weight:bold; font-size:14px; padding:10px; border:none; border-radius:4px; cursor:pointer;">⬇️ STACK TOP DECK CARD</button>
+
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <label style="font-size:13px;">Support Index (If lane):</label>
+                        <input type="number" id="tapSupportIdx" min="0" value="0" style="width: 50px; background: #333; color: #fff; border: 1px solid #555; padding: 4px; border-radius: 4px;">
+                    </div>
+
+                    <button id="actionToggleTapBtn" style="width:100%; background:#ffff00; color:#000; font-weight:bold; font-size:14px; padding:10px; border:none; border-radius:4px; cursor:pointer; box-shadow: 0px 0px 10px rgba(255,255,0,0.2);">🔄 TOGGLE TAP / UNTAP STATE</button>
                 </div>
             </div>
         `;
@@ -362,6 +393,8 @@ Remaining Deck Count: ${stackEvent.deckCount}`);
         this.domGameActionsPanel.on('click', (event) => {
             if (event.target.id === 'actionDrawBtn') this.handleDrawCard();
             if (event.target.id === 'actionStackTopDeckBtn') this.handlePlaceDeckToStack();
+            if (event.target.id === 'actionPlaySupportBtn') this.handlePlayToSupport();
+            if (event.target.id === 'actionToggleTapBtn') this.handleToggleTapEmit();
         });
     }
 
@@ -405,4 +438,22 @@ Remaining Deck Count: ${stackEvent.deckCount}`);
         this.socket.emit('placeDeckCardToStack', { tableId: parseInt(tableId), targetPlayer, targetSlot });
     }
 
+    handlePlayToSupport() {
+        const tableId = document.getElementById('actionTableId').value;
+        const targetPlayer = document.getElementById('actionTargetPlayer').value;
+        const handIndex = document.getElementById('actionHandIdx').value;
+
+        this.logToConsole(`>> Emitting playCardToSupport: Table ${tableId} moving card at hand index ${handIndex} to support lane for ${targetPlayer}.`);
+        this.socket.emit('playCardToSupport', { tableId: parseInt(tableId), targetPlayer, handIndex: parseInt(handIndex) });
+    }
+
+    handleToggleTapEmit() {
+        const tableId = document.getElementById('actionTableId').value;
+        const targetPlayer = document.getElementById('actionTargetPlayer').value;
+        const zone = document.getElementById('tapZoneSelect').value;
+        const supportIndex = document.getElementById('tapSupportIdx').value;
+
+        this.logToConsole(`>> Emitting toggleCardTap: Table ${tableId} shifting card state in ${zone} for ${targetPlayer}.`);
+        this.socket.emit('toggleCardTap', { tableId: parseInt(tableId), targetPlayer, zone, supportIndex: parseInt(supportIndex) });
+    }
 }
