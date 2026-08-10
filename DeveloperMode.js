@@ -94,10 +94,10 @@ class DeveloperMode extends Phaser.Scene {
 
     createDeckLoaderTabPanel() {
         const htmlContent = `
-            <div style="color: white; font-family: monospace; font-size: 16px; background: #222; padding: 25px; border-radius: 8px; width: 460px; height: 500px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box;">
-                <h3 style="margin-top:0; color:#00ff00; font-size: 22px; margin-bottom: 20px;">2. Decklist Processor</h3>
+            <div style="color: white; font-family: monospace; font-size: 16px; background: #222; padding: 25px; border-radius: 8px; width: 460px; height: 620px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box;">
+                <h3 style="margin-top:0; color:#00ff00; font-size: 22px; margin-bottom: 12px;">2. Game Setup Panel</h3>
                 
-                <div style="margin-bottom: 20px; display: flex; justify-content: space-between;">
+                <div style="margin-bottom: 15px; display: flex; justify-content: space-between;">
                     <div>
                         <label>Table:</label>
                         <input type="number" id="deckTableId" min="1" max="8" value="1" style="width:45px; background:#333; color:#fff; border:1px solid #555; padding:4px; border-radius: 4px;">
@@ -111,14 +111,25 @@ class DeveloperMode extends Phaser.Scene {
                     </div>
                 </div>
 
-                <!-- SIMPLIFIED INSTANT SHUFFLE -->
-                <div style="margin-bottom: 20px;">
-                    <button id="deckShuffleBtn" style="width:100%; background:#ffff00; color:#000; font-weight:bold; font-size:15px; padding:10px; border:none; border-radius:4px; cursor:pointer; box-shadow: 0px 0px 10px rgba(255,255,0,0.3);">⚡ INSTANT SHUFFLE DECK</button>
+                <!-- SETUP & BOARD PREPARATION TRAY -->
+                <div style="margin-bottom: 15px; background: #1a1a1a; padding: 12px; border-radius: 6px; border: 1px solid #555; display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display: flex; gap: 8px;">
+                        <button id="deckShuffleBtn" style="flex: 1; background:#ffff00; color:#000; font-weight:bold; font-size:13px; padding:8px; border:none; border-radius:4px; cursor:pointer;">⚡ SHUFFLE</button>
+                        <button id="setupDraw6Btn" style="flex: 1; background:#00ff88; color:#000; font-weight:bold; font-size:13px; padding:8px; border:none; border-radius:4px; cursor:pointer;">🎴 DRAW 6</button>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <label style="font-size: 12px; color: #aaa;">Hand Pos:</label>
+                        <input type="number" id="playHandIdx" min="0" value="0" style="width: 45px; background: #333; color: #fff; border: 1px solid #555; padding: 6px; border-radius: 4px;">
+                        <button id="setupPlayDownBtn" style="flex: 1; background:#00ffff; color:#000; font-weight:bold; font-size:12px; padding:8px; border:none; border-radius:4px; cursor:pointer;">⬇️ PLAY FACE DOWN</button>
+                    </div>
+                    <div>
+                        <button id="setupFlipUpBtn" style="width:100%; background:#ff00ea; color:#fff; font-weight:bold; font-size:12px; padding:8px; border:none; border-radius:4px; cursor:pointer;">👁️ FLIP FACE UP</button>
+                    </div>
                 </div>
 
                 <label style="display:block; margin-bottom:4px; font-size:14px;">Paste Raw Decklist Below:</label>
-                <textarea id="deckRawInput" placeholder="2 Adventurer Cookie [ST1-013]..." style="width:100%; height:180px; background:#111; color:#fff; font-family:monospace; font-size:13px; border:1px solid #555; padding:8px; box-sizing:border-box; resize:none; border-radius: 4px;"></textarea>
-                <button id="deckLoadBtn" style="margin-top:15px; width:100%; background:#00ff00; color:#000; font-weight:bold; font-size:15px; padding:12px; border:none; border-radius:4px; cursor:pointer;">LOAD DECKLIST</button>
+                <textarea id="deckRawInput" placeholder="2 Adventurer Cookie [ST1-013]..." style="width:100%; height:140px; background:#111; color:#fff; font-family:monospace; font-size:13px; border:1px solid #555; padding:8px; box-sizing:border-box; resize:none; border-radius: 4px;"></textarea>
+                <button id="deckLoadBtn" style="margin-top:10px; width:100%; background:#00ff00; color:#000; font-weight:bold; font-size:15px; padding:10px; border:none; border-radius:4px; cursor:pointer;">LOAD DECKLIST</button>
             </div>
         `;
         
@@ -128,6 +139,9 @@ class DeveloperMode extends Phaser.Scene {
         this.domDeckLoaderPanel.on('click', (event) => {
             if (event.target.id === 'deckLoadBtn') this.handleDeckLoad();
             if (event.target.id === 'deckShuffleBtn') this.handleDeckShuffle();
+            if (event.target.id === 'setupDraw6Btn') this.handleDraw6Cards();
+            if (event.target.id === 'setupPlayDownBtn') this.handlePlayCardFaceDown();
+            if (event.target.id === 'setupFlipUpBtn') this.handleFlipCardFaceUp();
         });
     }
 
@@ -327,6 +341,29 @@ Remaining Deck Count: ${drawEvent.deckCount}`);
 
         this.logToConsole(`>> Emitting drawCard: Table ${tableId} for ${targetPlayer}`);
         this.socket.emit('drawCard', { tableId: parseInt(tableId), targetPlayer });
+    }
+
+    handleDraw6Cards() {
+        const tableId = document.getElementById('deckTableId').value;
+        const targetPlayer = document.getElementById('deckTargetPlayer').value;
+        this.logToConsole(`>> Emitting draw6Cards: Table ${tableId} for ${targetPlayer}`);
+        this.socket.emit('draw6Cards', { tableId: parseInt(tableId), targetPlayer });
+    }
+
+    handlePlayCardFaceDown() {
+        const tableId = document.getElementById('deckTableId').value;
+        const targetPlayer = document.getElementById('deckTargetPlayer').value;
+        const handIndex = document.getElementById('playHandIdx').value;
+
+        this.logToConsole(`>> Emitting playCardFaceDown: Table ${tableId} to fighterA slot using card at hand index ${handIndex} for ${targetPlayer}`);
+        this.socket.emit('playCardFaceDown', { tableId: parseInt(tableId), targetPlayer, handIndex: parseInt(handIndex) });
+    }
+
+    handleFlipCardFaceUp() {
+        const tableId = document.getElementById('deckTableId').value;
+        const targetPlayer = document.getElementById('deckTargetPlayer').value;
+        this.logToConsole(`>> Emitting flipCardFaceUp: Table ${tableId} fighterA slot for ${targetPlayer}`);
+        this.socket.emit('flipCardFaceUp', { tableId: parseInt(tableId), targetPlayer });
     }
 
 }
