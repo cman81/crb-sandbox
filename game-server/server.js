@@ -413,6 +413,57 @@ io.on('connection', (socket) => {
 
     socket.emit('serverNotice', `Toggled tap state for card in ${zone} to: ${targetCard.isTapped}`);
   });
+
+  socket.on('playCardToFighter', ({ tableId, targetPlayer, handIndex, targetSlot }) => {
+    const table = tables.find(t => t.id === parseInt(tableId));
+    if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+    const hand = table.gameState[targetPlayer]?.hand;
+    const battleZone = table.gameState[targetPlayer]?.battleZone;
+
+    if (!hand || hand.length === 0) {
+      return socket.emit('errorMsg', `Hand is empty! No card to play.`);
+    }
+
+    const idx = parseInt(handIndex);
+    if (isNaN(idx) || idx < 0 || idx >= hand.length) {
+      return socket.emit('errorMsg', `Invalid hand position! Choose an index between 0 and ${hand.length - 1}.`);
+    }
+
+    if (targetSlot !== 'fighterA' && targetSlot !== 'fighterB') {
+      return socket.emit('errorMsg', 'Invalid fighter target slot.');
+    }
+
+    // Check if slot is already occupied
+    if (battleZone[targetSlot].card && Object.keys(battleZone[targetSlot].card).length > 0) {
+      return socket.emit('errorMsg', `${targetSlot} is already occupied! Move or discard the current card first.`);
+    }
+
+    // Extract card from hand array
+    const [cardToPlay] = hand.splice(idx, 1);
+    
+    // Normal mid-game plays from hand onto the field are face-up
+    cardToPlay.isFaceDown = false; 
+    cardToPlay.isTapped = false; // Freshly played cards start untapped
+
+    // Commit to the target battle slot object
+    battleZone[targetSlot].card = cardToPlay;
+
+    // Public zone payload data
+    const payload = {
+      targetPlayer,
+      targetSlot,
+      card: cardToPlay,
+      handCount: hand.length
+    };
+
+    // Broadcast update across the room
+    if (table.playerA) io.to(table.playerA).emit('cardPlayedToFighterUpdate', payload);
+    if (table.playerB) io.to(table.playerB).emit('cardPlayedToFighterUpdate', payload);
+    table.spectators.forEach(specId => io.to(specId).emit('cardPlayedToFighterUpdate', payload));
+
+    socket.emit('serverNotice', `Played card from hand index ${idx} face up into ${targetPlayer}'s ${targetSlot} slot.`);
+  });
 });
 
 console.log('TCG Server on 3000');

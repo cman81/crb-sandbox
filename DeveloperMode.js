@@ -304,6 +304,13 @@ Remaining Hand Count: ${playEvent.handCount}`);
             this.logToConsole(`[LIVE ORIENTATION EVENT]
 Player ${tapEvent.targetPlayer}'s card located in ${contextLoc} is now: ${tapEvent.isTapped ? '🚨 TAPPED (RESTING)' : '🟢 UNTAPPED (ACTIVE)'}`);
         });
+
+        this.socket.on('cardPlayedToFighterUpdate', (playEvent) => {
+            this.logToConsole(`[LIVE FIELD EVENT] [PUBLIC SLOT REVEAL]
+Player ${playEvent.targetPlayer} played a card face up into active field position: ${playEvent.targetSlot}!
+Card Data: ${JSON.stringify(playEvent.card)}
+Remaining Hand Count: ${playEvent.handCount}`);
+        });
     }
 
     logToConsole(message) {
@@ -357,17 +364,23 @@ Player ${tapEvent.targetPlayer}'s card located in ${contextLoc} is now: ${tapEve
                 </div>
                 <input type="hidden" id="actionStackSlot" value="fighterA">
 
-                <!-- HAND CONTROLS -->
-                <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #444; display: flex; align-items: center; gap: 8px;">
-                    <label style="font-size:12px; color:#aaa;">Hand Pos:</label>
-                    <input type="number" id="actionHandIdx" min="0" value="0" style="width: 40px; background: #333; color: #fff; border: 1px solid #555; padding: 4px; border-radius: 4px;">
-                    <button id="actionPlaySupportBtn" style="flex: 1; background:#ffff00; color:#000; font-weight:bold; font-size:12px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🛡️ PLAY SUPPORT</button>
+                <!-- EXTENDED HAND CONTROLS ZONE -->
+                <div style="background: #1a1a1a; padding: 12px; border-radius: 6px; border: 1px solid #444; display: flex; flex-direction: column; gap: 10px;">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                        <label style="font-size:13px; color:#ffff00; font-weight:bold; flex: 1;">Play From Hand:</label>
+                        <label style="font-size:12px; color:#aaa;">Hand Pos:</label>
+                        <input type="number" id="actionHandIdx" min="0" value="0" style="width: 45px; background: #333; color: #fff; border: 1px solid #555; padding: 4px; border-radius: 4px;">
+                    </div>
+                    <button id="actionPlaySupportBtn" style="width:100%; background:#ffff00; color:#000; font-weight:bold; font-size:13px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🛡️ PLAY TO SUPPORT</button>
+                    <div style="display: flex; gap: 8px;">
+                        <button id="actionPlayFighterABtn" style="flex:1; background:#ff8800; color:#000; font-weight:bold; font-size:12px; padding:6px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHTER A</button>
+                        <button id="actionPlayFighterBBtn" style="flex:1; background:#ff5500; color:#fff; font-weight:bold; font-size:12px; padding:6px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHTER B</button>
+                    </div>
                 </div>
 
                 <!-- TAPPING SYSTEM -->
                 <div style="background: #1a1a1a; padding: 12px; border-radius: 6px; border: 1px solid #ffff00; display: flex; flex-direction: column; gap: 8px;">
                     <label style="color: #ffff00; font-size: 13px; font-weight: bold;">🔄 Card Orientation System:</label>
-                    
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <label style="font-size:13px;">Target Zone:</label>
                         <select id="tapZoneSelect" style="width:130px; background:#333; color:#fff; border:1px solid #555; padding:4px; border-radius: 4px;">
@@ -376,13 +389,11 @@ Player ${tapEvent.targetPlayer}'s card located in ${contextLoc} is now: ${tapEve
                             <option value="support">Support Lane</option>
                         </select>
                     </div>
-
                     <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <label style="font-size:13px;">Support Index (If lane):</label>
+                        <label style="font-size:13px;">Support Index:</label>
                         <input type="number" id="tapSupportIdx" min="0" value="0" style="width: 50px; background: #333; color: #fff; border: 1px solid #555; padding: 4px; border-radius: 4px;">
                     </div>
-
-                    <button id="actionToggleTapBtn" style="width:100%; background:#ffff00; color:#000; font-weight:bold; font-size:14px; padding:10px; border:none; border-radius:4px; cursor:pointer; box-shadow: 0px 0px 10px rgba(255,255,0,0.2);">🔄 TOGGLE TAP / UNTAP STATE</button>
+                    <button id="actionToggleTapBtn" style="width:100%; background:#ffff00; color:#000; font-weight:bold; font-size:14px; padding:10px; border:none; border-radius:4px; cursor:pointer;">🔄 TOGGLE TAP / UNTAP STATE</button>
                 </div>
             </div>
         `;
@@ -394,6 +405,8 @@ Player ${tapEvent.targetPlayer}'s card located in ${contextLoc} is now: ${tapEve
             if (event.target.id === 'actionDrawBtn') this.handleDrawCard();
             if (event.target.id === 'actionStackTopDeckBtn') this.handlePlaceDeckToStack();
             if (event.target.id === 'actionPlaySupportBtn') this.handlePlayToSupport();
+            if (event.target.id === 'actionPlayFighterABtn') this.handlePlayToFighter('fighterA');
+            if (event.target.id === 'actionPlayFighterBBtn') this.handlePlayToFighter('fighterB');
             if (event.target.id === 'actionToggleTapBtn') this.handleToggleTapEmit();
         });
     }
@@ -455,5 +468,14 @@ Player ${tapEvent.targetPlayer}'s card located in ${contextLoc} is now: ${tapEve
 
         this.logToConsole(`>> Emitting toggleCardTap: Table ${tableId} shifting card state in ${zone} for ${targetPlayer}.`);
         this.socket.emit('toggleCardTap', { tableId: parseInt(tableId), targetPlayer, zone, supportIndex: parseInt(supportIndex) });
+    }
+
+    handlePlayToFighter(slotName) {
+        const tableId = document.getElementById('actionTableId').value;
+        const targetPlayer = document.getElementById('actionTargetPlayer').value;
+        const handIndex = document.getElementById('actionHandIdx').value;
+
+        this.logToConsole(`>> Emitting playCardToFighter: Table ${tableId} moving card at hand index ${handIndex} to ${slotName} for ${targetPlayer}.`);
+        this.socket.emit('playCardToFighter', { tableId: parseInt(tableId), targetPlayer, handIndex: parseInt(handIndex), targetSlot: slotName });
     }
 }
