@@ -148,14 +148,14 @@ class DeveloperMode extends Phaser.Scene {
 
     createConsoleLog() {
         // Change this to a class property so we can alter it dynamically later
-        this.logTitleText = this.add.text(550, 110, '📢 SERVER RESPONSE STREAM (PERSPECTIVE: UNBOUND LOBBY)', { 
+        this.logTitleText = this.add.text(550, 170, '📢 SERVER RESPONSE STREAM (PERSPECTIVE: UNBOUND LOBBY)', { 
             fontSize: '18px', fill: '#00ff00', fontFamily: 'monospace', fontWeight: 'bold' 
         });
         
         const logHtml = `
             <textarea id="devLog" readonly style="width: 1320px; height: 560px; background-color: #050505; color: #33ff33; font-family: 'Courier New', monospace; font-size: 16px; border: 1px solid #33ff33; padding: 15px; border-radius: 8px; resize: none; box-shadow: inset 0 0 10px #000; box-sizing: border-box;"></textarea>
         `;
-        this.domLog = this.add.dom(550, 140).createFromHTML(logHtml).setOrigin(0, 0);
+        this.domLog = this.add.dom(550, 200).createFromHTML(logHtml).setOrigin(0, 0);
     }
 
     createStateInspectorPanel() {
@@ -176,7 +176,7 @@ class DeveloperMode extends Phaser.Scene {
             </div>
         `;
 
-        this.domInspectorPanel = this.add.dom(550, 720).createFromHTML(htmlContent).setOrigin(0, 0);
+        this.domInspectorPanel = this.add.dom(550, 780).createFromHTML(htmlContent).setOrigin(0, 0);
 
         this.domInspectorPanel.addListener('click');
         this.domInspectorPanel.on('click', (event) => {
@@ -328,6 +328,14 @@ Defeated Pile Total Count: ${moveEvent.defeatedCount}`);
 Player ${scoreEvent.targetPlayer}'s Defeated Points level updated!
 Current Total: ${scoreEvent.totalDefeatedPoints} / 10 pts${limitNotice}`);
         });
+
+        this.socket.on('cardDiscardedUpdate', (discardEvent) => {
+            this.logToConsole(`[LIVE DISCARD EVENT] [PUBLIC PILE REVEAL]
+Player ${discardEvent.targetPlayer} discarded a card from their hand!
+Card Details: ${JSON.stringify(discardEvent.card)}
+Discard Pile Total Count: ${discardEvent.discardCount}
+Remaining Hand Count: ${discardEvent.handCount}`);
+        });
     }
 
     logToConsole(message) {
@@ -381,33 +389,32 @@ Current Total: ${scoreEvent.totalDefeatedPoints} / 10 pts${limitNotice}`);
                 </div>
                 <input type="hidden" id="actionStackSlot" value="fighterA">
 
-                <!-- DEPLOYMENT CARDS -->
-                <div style="background: #1a1a1a; padding: 8px; border-radius: 6px; border: 1px solid #444; display: flex; flex-direction: column; gap: 6px;">
-                    <div style="display: flex; align-items: center; gap: 6px;">
-                        <label style="font-size:12px; color:#ffff00; font-weight:bold; flex: 1;">Play Hand:</label>
+                <!-- INTEGRATED HAND ACTIONS CONTROLS ZONE -->
+                <div style="background: #1a1a1a; padding: 12px; border-radius: 6px; border: 1px solid #444; display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 2px;">
+                        <label style="font-size:13px; color:#ffff00; font-weight:bold; flex: 1;">Hand Operations:</label>
+                        <label style="font-size:12px; color:#aaa;">Hand Pos:</label>
                         <input type="number" id="actionHandIdx" min="0" value="0" style="width: 44px; background: #333; color: #fff; border: 1px solid #555; padding: 4px; border-radius: 4px;">
                     </div>
                     <div style="display: flex; gap: 6px;">
-                        <button id="actionPlaySupportBtn" style="flex:1; background:#ffff00; color:#000; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">🛡️ SUPPORT</button>
-                        <button id="actionPlayFighterABtn" style="flex:1; background:#ff8800; color:#000; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHT A</button>
-                        <button id="actionPlayFighterBBtn" style="flex:1; background:#ff5500; color:#fff; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHT B</button>
+                        <button id="actionPlaySupportBtn" style="flex:1; background:#ffff00; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🛡️ SUPPORT</button>
+                        <button id="actionDiscardBtn" style="flex:1; background:#aaaaaa; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🗑️ DISCARD</button>
+                    </div>
+                    <div style="display: flex; gap: 6px;">
+                        <button id="actionPlayFighterABtn" style="flex:1; background:#ff8800; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHTER A</button>
+                        <button id="actionPlayFighterBBtn" style="flex:1; background:#ff5500; color:#fff; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHTER B</button>
                     </div>
                 </div>
 
-                <!-- DECOUPLED DEFEATED OPERATIONS CONTROLLER -->
-                <div style="background: #1a1a1a; padding: 12px; border-radius: 6px; border: 1px solid #ff3333; display: flex; flex-direction: column; gap: 10px;">
-                    <label style="color: #ff3333; font-size: 13px; font-weight: bold;">💀 Defeated Area & Scoring (Decoupled):</label>
-                    
-                    <!-- Card Movements -->
+                <!-- DECOUPLING CONTROLLERS -->
+                <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #ff3333; display: flex; flex-direction: column; gap: 8px;">
                     <div style="display: flex; gap: 8px;">
-                        <button id="actionDefeatABtn" style="flex: 1; background:#ff3333; color:#fff; font-weight:bold; font-size:12px; padding:8px; border:none; border-radius:4px; cursor:pointer;">DEFEAT A</button>
-                        <button id="actionDefeatBBtn" style="flex: 1; background:#ff3333; color:#fff; font-weight:bold; font-size:12px; padding:8px; border:none; border-radius:4px; cursor:pointer;">DEFEAT B</button>
+                        <button id="actionDefeatABtn" style="flex: 1; background:#ff3333; color:#fff; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">DEFEAT A</button>
+                        <button id="actionDefeatBBtn" style="flex: 1; background:#ff3333; color:#fff; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">DEFEAT B</button>
                     </div>
-                    
-                    <!-- Score Ticking -->
                     <div style="display: flex; gap: 8px;">
-                        <button id="actionDefeatPlus1Btn" style="flex: 1; background:#00ff88; color:#000; font-weight:bold; font-size:12px; padding:8px; border:none; border-radius:4px; cursor:pointer;">DEFEAT +1</button>
-                        <button id="actionDefeatMinus1Btn" style="flex: 1; background:#ffaa00; color:#000; font-weight:bold; font-size:12px; padding:8px; border:none; border-radius:4px; cursor:pointer;">DEFEAT -1</button>
+                        <button id="actionDefeatPlus1Btn" style="flex: 1; background:#00ff88; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">DEFEAT +1</button>
+                        <button id="actionDefeatMinus1Btn" style="flex: 1; background:#ffaa00; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">DEFEAT -1</button>
                     </div>
                 </div>
 
@@ -434,11 +441,10 @@ Current Total: ${scoreEvent.totalDefeatedPoints} / 10 pts${limitNotice}`);
             if (event.target.id === 'actionDrawBtn') this.handleDrawCard();
             if (event.target.id === 'actionStackTopDeckBtn') this.handlePlaceDeckToStack();
             if (event.target.id === 'actionPlaySupportBtn') this.handlePlayToSupport();
+            if (event.target.id === 'actionDiscardBtn') this.handleDiscardFromHand(); // New click intercept
             if (event.target.id === 'actionPlayFighterABtn') this.handlePlayToFighter('fighterA');
             if (event.target.id === 'actionPlayFighterBBtn') this.handlePlayToFighter('fighterB');
             if (event.target.id === 'actionToggleTapBtn') this.handleToggleTapEmit();
-            
-            // Wire up the 4 decoupled buttons
             if (event.target.id === 'actionDefeatABtn') this.handleMoveToDefeatedEmit('fighterA');
             if (event.target.id === 'actionDefeatBBtn') this.handleMoveToDefeatedEmit('fighterB');
             if (event.target.id === 'actionDefeatPlus1Btn') this.handleScoreAdjustmentEmit(1);
@@ -528,5 +534,14 @@ Current Total: ${scoreEvent.totalDefeatedPoints} / 10 pts${limitNotice}`);
 
         this.logToConsole(`>> Emitting adjustDefeatedPoints: Table ${tableId} shifting ${targetPlayer}'s points value by: ${pointDelta}.`);
         this.socket.emit('adjustDefeatedPoints', { tableId: parseInt(tableId), targetPlayer, amount: pointDelta });
+    }
+
+    handleDiscardFromHand() {
+        const tableId = document.getElementById('actionTableId').value;
+        const targetPlayer = document.getElementById('actionTargetPlayer').value;
+        const handIndex = document.getElementById('actionHandIdx').value;
+
+        this.logToConsole(`>> Emitting discardCardFromHand: Table ${tableId} shifting card at hand index ${handIndex} to discard pile for ${targetPlayer}.`);
+        this.socket.emit('discardCardFromHand', { tableId: parseInt(tableId), targetPlayer, handIndex: parseInt(handIndex) });
     }
 }

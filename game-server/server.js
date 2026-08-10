@@ -520,7 +520,6 @@ io.on('connection', (socket) => {
     socket.emit('serverNotice', `Moved card from ${slot} to ${targetPlayer}'s defeated zone pile.`);
   });
 
-  // --- ACTION 2: INDEPENDENT DEFEATED POINTS ADJUSTMENT ENGINE ---
   socket.on('adjustDefeatedPoints', ({ tableId, targetPlayer, amount }) => {
     const table = tables.find(t => t.id === parseInt(tableId));
     if (!table) return socket.emit('errorMsg', 'Table not found.');
@@ -544,6 +543,47 @@ io.on('connection', (socket) => {
     let notice = `${targetPlayer}'s Defeated Points updated to: ${playerState.defeatedPoints}`;
     if (playerState.defeatedPoints >= 10) notice += " 🚨 CRITICAL LIMIT HIT! Player Loses!";
     socket.emit('serverNotice', notice);
+  });
+
+  socket.on('discardCardFromHand', ({ tableId, targetPlayer, handIndex }) => {
+    const table = tables.find(t => t.id === parseInt(tableId));
+    if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+    const hand = table.gameState[targetPlayer]?.hand;
+    const discard = table.gameState[targetPlayer]?.discard;
+
+    if (!hand || hand.length === 0) {
+      return socket.emit('errorMsg', `Hand is empty! No card to discard.`);
+    }
+
+    const idx = parseInt(handIndex);
+    if (isNaN(idx) || idx < 0 || idx >= hand.length) {
+      return socket.emit('errorMsg', `Invalid hand position! Choose an index between 0 and ${hand.length - 1}.`);
+    }
+
+    // Extract the card from the hand array
+    const [cardToDiscard] = hand.splice(idx, 1);
+    
+    // Cards in the discard pile are public and face up
+    cardToDiscard.isFaceDown = false; 
+    cardToDiscard.isTapped = false; // Reset orientation when discarded
+
+    // Append to the end of the public discard pile array stack
+    discard.push(cardToDiscard);
+
+    // Build public payload broadcast
+    const payload = {
+      targetPlayer,
+      card: cardToDiscard,
+      discardCount: discard.length,
+      handCount: hand.length
+    };
+
+    if (table.playerA) io.to(table.playerA).emit('cardDiscardedUpdate', payload);
+    if (table.playerB) io.to(table.playerB).emit('cardDiscardedUpdate', payload);
+    table.spectators.forEach(specId => io.to(specId).emit('cardDiscardedUpdate', payload));
+
+    socket.emit('serverNotice', `Discarded card from hand index ${idx} to ${targetPlayer}'s discard pile.`);
   });
 });
 
