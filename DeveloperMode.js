@@ -336,6 +336,14 @@ Card Details: ${JSON.stringify(discardEvent.card)}
 Discard Pile Total Count: ${discardEvent.discardCount}
 Remaining Hand Count: ${discardEvent.handCount}`);
         });
+
+        this.socket.on('handToDeckUpdate', (deckEvent) => {
+            this.logToConsole(`[LIVE RECYCLE EVENT] [BLIND TRACK DEPLOY]
+Player ${deckEvent.targetPlayer} put a card face down back into their deck at the ${deckEvent.location.toUpperCase()} position!
+Your Visible Card Data: ${JSON.stringify(deckEvent.card)}
+Deck Pile Total Count: ${deckEvent.deckCount}
+Remaining Hand Count: ${deckEvent.handCount}`);
+        });
     }
 
     logToConsole(message) {
@@ -365,7 +373,7 @@ Remaining Hand Count: ${discardEvent.handCount}`);
 
     createGameActionsTabPanel() {
         const htmlContent = `
-            <div style="color: white; font-family: monospace; font-size: 16px; background: #222; padding: 25px; border-radius: 8px; width: 460px; height: 600px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box; display: flex; flex-direction: column; gap: 12px;">
+            <div style="color: white; font-family: monospace; font-size: 16px; background: #222; padding: 25px; border-radius: 8px; width: 460px; height: 600px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box; display: flex; flex-direction: column; gap: 10px;">
                 <h3 style="margin-top:0; color:#00ff00; font-size: 22px; margin-bottom: 2px;">3. Game Actions</h3>
                 
                 <div style="display: flex; justify-content: space-between;">
@@ -389,46 +397,51 @@ Remaining Hand Count: ${discardEvent.handCount}`);
                 </div>
                 <input type="hidden" id="actionStackSlot" value="fighterA">
 
-                <!-- INTEGRATED HAND ACTIONS CONTROLS ZONE -->
-                <div style="background: #1a1a1a; padding: 12px; border-radius: 6px; border: 1px solid #444; display: flex; flex-direction: column; gap: 8px;">
+                <!-- EXTENDED HAND OPERATIONS TRYS -->
+                <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #444; display: flex; flex-direction: column; gap: 6px;">
                     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 2px;">
-                        <label style="font-size:13px; color:#ffff00; font-weight:bold; flex: 1;">Hand Operations:</label>
-                        <label style="font-size:12px; color:#aaa;">Hand Pos:</label>
+                        <label style="font-size:12px; color:#ffff00; font-weight:bold; flex: 1;">Hand Operations:</label>
+                        <label style="font-size:11px; color:#aaa;">Pos:</label>
                         <input type="number" id="actionHandIdx" min="0" value="0" style="width: 44px; background: #333; color: #fff; border: 1px solid #555; padding: 4px; border-radius: 4px;">
                     </div>
                     <div style="display: flex; gap: 6px;">
-                        <button id="actionPlaySupportBtn" style="flex:1; background:#ffff00; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🛡️ SUPPORT</button>
-                        <button id="actionDiscardBtn" style="flex:1; background:#aaaaaa; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🗑️ DISCARD</button>
+                        <button id="actionPlaySupportBtn" style="flex:1; background:#ffff00; color:#000; font-weight:bold; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">🛡️ SUPPORT</button>
+                        <button id="actionDiscardBtn" style="flex:1; background:#aaaaaa; color:#000; font-weight:bold; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">🗑️ DISCARD</button>
                     </div>
                     <div style="display: flex; gap: 6px;">
-                        <button id="actionPlayFighterABtn" style="flex:1; background:#ff8800; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHTER A</button>
-                        <button id="actionPlayFighterBBtn" style="flex:1; background:#ff5500; color:#fff; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHTER B</button>
+                        <button id="actionPlayFighterABtn" style="flex:1; background:#ff8800; color:#000; font-weight:bold; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHT A</button>
+                        <button id="actionPlayFighterBBtn" style="flex:1; background:#ff5500; color:#fff; font-weight:bold; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHT B</button>
+                    </div>
+                    <!-- NEW DECK RECYCLING BUTTONS -->
+                    <div style="display: flex; gap: 6px;">
+                        <button id="actionToTopDeckBtn" style="flex:1; background:#00ff88; color:#000; font-weight:bold; font-size:10px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🔝 TO TOP DECK</button>
+                        <button id="actionToBottomDeckBtn" style="flex:1; background:#00aa66; color:#fff; font-weight:bold; font-size:10px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🔙 TO BOT DECK</button>
                     </div>
                 </div>
 
                 <!-- DECOUPLING CONTROLLERS -->
-                <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #ff3333; display: flex; flex-direction: column; gap: 8px;">
-                    <div style="display: flex; gap: 8px;">
-                        <button id="actionDefeatABtn" style="flex: 1; background:#ff3333; color:#fff; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">DEFEAT A</button>
-                        <button id="actionDefeatBBtn" style="flex: 1; background:#ff3333; color:#fff; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">DEFEAT B</button>
+                <div style="background: #1a1a1a; padding: 8px; border-radius: 6px; border: 1px solid #ff3333; display: flex; flex-direction: column; gap: 6px;">
+                    <div style="display: flex; gap: 6px;">
+                        <button id="actionDefeatABtn" style="flex: 1; background:#ff3333; color:#fff; font-weight:bold; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">DEFEAT A</button>
+                        <button id="actionDefeatBBtn" style="flex: 1; background:#ff3333; color:#fff; font-weight:bold; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">DEFEAT B</button>
                     </div>
-                    <div style="display: flex; gap: 8px;">
-                        <button id="actionDefeatPlus1Btn" style="flex: 1; background:#00ff88; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">DEFEAT +1</button>
-                        <button id="actionDefeatMinus1Btn" style="flex: 1; background:#ffaa00; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">DEFEAT -1</button>
+                    <div style="display: flex; gap: 6px;">
+                        <button id="actionDefeatPlus1Btn" style="flex: 1; background:#00ff88; color:#000; font-weight:bold; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">DEFEAT +1</button>
+                        <button id="actionDefeatMinus1Btn" style="flex: 1; background:#ffaa00; color:#000; font-weight:bold; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">DEFEAT -1</button>
                     </div>
                 </div>
 
                 <!-- TAPPING SYSTEM -->
-                <div style="background: #1a1a1a; padding: 8px; border-radius: 6px; border: 1px solid #ffff00; display: flex; flex-direction: column; gap: 6px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; font-size:12px;">
-                        <select id="tapZoneSelect" style="width:110px; background:#333; color:#fff; border:1px solid #555; padding:4px; border-radius: 4px;">
+                <div style="background: #1a1a1a; padding: 6px; border-radius: 6px; border: 1px solid #ffff00; display: flex; flex-direction: column; gap: 4px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; font-size:11px;">
+                        <select id="tapZoneSelect" style="width:100px; background:#333; color:#fff; border:1px solid #555; padding:3px; border-radius: 4px;">
                             <option value="fighterA">Fighter A</option>
                             <option value="fighterB">Fighter B</option>
                             <option value="support">Support</option>
                         </select>
                         <label>Idx:</label>
-                        <input type="number" id="tapSupportIdx" min="0" value="0" style="width: 40px; background: #333; color: #fff; border: 1px solid #555; padding: 4px; border-radius: 4px;">
-                        <button id="actionToggleTapBtn" style="background:#ffff00; color:#000; font-weight:bold; padding:5px 10px; border:none; border-radius:4px; cursor:pointer;">🔄 TAP</button>
+                        <input type="number" id="tapSupportIdx" min="0" value="0" style="width: 35px; background: #333; color: #fff; border: 1px solid #555; padding: 3px; border-radius: 4px;">
+                        <button id="actionToggleTapBtn" style="background:#ffff00; color:#000; font-weight:bold; padding:4px 8px; border:none; border-radius:4px; cursor:pointer;">🔄 TAP</button>
                     </div>
                 </div>
             </div>
@@ -441,7 +454,7 @@ Remaining Hand Count: ${discardEvent.handCount}`);
             if (event.target.id === 'actionDrawBtn') this.handleDrawCard();
             if (event.target.id === 'actionStackTopDeckBtn') this.handlePlaceDeckToStack();
             if (event.target.id === 'actionPlaySupportBtn') this.handlePlayToSupport();
-            if (event.target.id === 'actionDiscardBtn') this.handleDiscardFromHand(); // New click intercept
+            if (event.target.id === 'actionDiscardBtn') this.handleDiscardFromHand();
             if (event.target.id === 'actionPlayFighterABtn') this.handlePlayToFighter('fighterA');
             if (event.target.id === 'actionPlayFighterBBtn') this.handlePlayToFighter('fighterB');
             if (event.target.id === 'actionToggleTapBtn') this.handleToggleTapEmit();
@@ -449,6 +462,10 @@ Remaining Hand Count: ${discardEvent.handCount}`);
             if (event.target.id === 'actionDefeatBBtn') this.handleMoveToDefeatedEmit('fighterB');
             if (event.target.id === 'actionDefeatPlus1Btn') this.handleScoreAdjustmentEmit(1);
             if (event.target.id === 'actionDefeatMinus1Btn') this.handleScoreAdjustmentEmit(-1);
+            
+            // Wire up the new deck targets
+            if (event.target.id === 'actionToTopDeckBtn') this.handlePlayToDeckEmit('top');
+            if (event.target.id === 'actionToBottomDeckBtn') this.handlePlayToDeckEmit('bottom');
         });
     }
 
@@ -543,5 +560,15 @@ Remaining Hand Count: ${discardEvent.handCount}`);
 
         this.logToConsole(`>> Emitting discardCardFromHand: Table ${tableId} shifting card at hand index ${handIndex} to discard pile for ${targetPlayer}.`);
         this.socket.emit('discardCardFromHand', { tableId: parseInt(tableId), targetPlayer, handIndex: parseInt(handIndex) });
+    }
+
+    handlePlayToDeckEmit(deckLocation) {
+        const tableId = document.getElementById('actionTableId').value;
+        const targetPlayer = document.getElementById('actionTargetPlayer').value;
+        const handIndex = document.getElementById('actionHandIdx').value;
+
+        const eventName = deckLocation === 'top' ? 'playHandToTopDeck' : 'playHandToBottomDeck';
+        this.logToConsole(`>> Emitting ${eventName}: Table ${tableId} recycling card at hand index ${handIndex} to deck ${deckLocation}.`);
+        this.socket.emit(eventName, { tableId: parseInt(tableId), targetPlayer, handIndex: parseInt(handIndex) });
     }
 }

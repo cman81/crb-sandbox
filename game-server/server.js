@@ -585,6 +585,70 @@ io.on('connection', (socket) => {
 
     socket.emit('serverNotice', `Discarded card from hand index ${idx} to ${targetPlayer}'s discard pile.`);
   });
+
+  socket.on('playHandToTopDeck', ({ tableId, targetPlayer, handIndex }) => {
+    const table = tables.find(t => t.id === parseInt(tableId));
+    if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+    const hand = table.gameState[targetPlayer]?.hand;
+    const deck = table.gameState[targetPlayer]?.deck;
+
+    if (!hand || hand.length === 0) return socket.emit('errorMsg', 'Hand is empty!');
+
+    const idx = parseInt(handIndex);
+    if (isNaN(idx) || idx < 0 || idx >= hand.length) {
+      return socket.emit('errorMsg', 'Invalid hand position.');
+    }
+
+    // Splice the card from the hand array
+    const [cardToDeck] = hand.splice(idx, 1);
+    cardToDeck.isFaceDown = true; // Enforce face down parameter
+
+    // Standardized: Top of the deck stack is the END of the array
+    deck.push(cardToDeck);
+
+    // Emit minimal targeted layout notifications
+    const maskCard = () => ({ name: "Card Back", isFaceDown: true });
+    const standardPayload = { targetPlayer, card: maskCard(), deckCount: deck.length, handCount: hand.length, location: 'top' };
+    const spectatorPayload = { targetPlayer, card: cardToDeck, deckCount: deck.length, handCount: hand.length, location: 'top' };
+
+    if (table.playerA) io.to(table.playerA).emit('handToDeckUpdate', standardPayload);
+    if (table.playerB) io.to(table.playerB).emit('handToDeckUpdate', standardPayload);
+    table.spectators.forEach(id => io.to(id).emit('handToDeckUpdate', spectatorPayload));
+
+    socket.emit('serverNotice', `Moved card from hand index ${idx} face down to the TOP of the deck.`);
+  });
+
+  socket.on('playHandToBottomDeck', ({ tableId, targetPlayer, handIndex }) => {
+    const table = tables.find(t => t.id === parseInt(tableId));
+    if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+    const hand = table.gameState[targetPlayer]?.hand;
+    const deck = table.gameState[targetPlayer]?.deck;
+
+    if (!hand || hand.length === 0) return socket.emit('errorMsg', 'Hand is empty!');
+
+    const idx = parseInt(handIndex);
+    if (isNaN(idx) || idx < 0 || idx >= hand.length) {
+      return socket.emit('errorMsg', 'Invalid hand position.');
+    }
+
+    const [cardToDeck] = hand.splice(idx, 1);
+    cardToDeck.isFaceDown = true;
+
+    // Standardized: Bottom of the deck stack is index 0 (the BEGINNING) of the array
+    deck.unshift(cardToDeck);
+
+    const maskCard = () => ({ name: "Card Back", isFaceDown: true });
+    const standardPayload = { targetPlayer, card: maskCard(), deckCount: deck.length, handCount: hand.length, location: 'bottom' };
+    const spectatorPayload = { targetPlayer, card: cardToDeck, deckCount: deck.length, handCount: hand.length, location: 'bottom' };
+
+    if (table.playerA) io.to(table.playerA).emit('handToDeckUpdate', standardPayload);
+    if (table.playerB) io.to(table.playerB).emit('handToDeckUpdate', standardPayload);
+    table.spectators.forEach(id => io.to(id).emit('handToDeckUpdate', spectatorPayload));
+
+    socket.emit('serverNotice', `Moved card from hand index ${idx} face down to the BOTTOM of the deck.`);
+  });
 });
 
 console.log('TCG Server on 3000');
