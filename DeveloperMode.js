@@ -285,7 +285,7 @@ Remaining Deck Count: ${drawEvent.deckCount}`);
             if (isSpectator) perceptionTag = "[SPECTATOR X-RAY VISION]";
 
             this.logToConsole(`[LIVE STACK EVENT] ${perceptionTag}
-Player ${stackEvent.targetPlayer} added a card to the top of ${stackEvent.targetSlot}. 
+Player ${stackEvent.targetPlayer} added a card to the stack next to ${stackEvent.targetSlot}. 
 Your Visible Card Data: ${JSON.stringify(stackEvent.card)}
 Current Stack Total Count: ${stackEvent.stackCount}
 Remaining Deck Count: ${stackEvent.deckCount}`);
@@ -344,6 +344,14 @@ Your Visible Card Data: ${JSON.stringify(deckEvent.card)}
 Deck Pile Total Count: ${deckEvent.deckCount}
 Remaining Hand Count: ${deckEvent.handCount}`);
         });
+
+        this.socket.on('stackFlippedAndDiscardedUpdate', (discardEvent) => {
+            this.logToConsole(`[LIVE REVEAL EVENT] [PUBLIC PILE REVEAL]
+Player ${discardEvent.targetPlayer} peeled the top card off their ${discardEvent.targetSlot} stack and flipped it face up into the discard pile!
+Revealed Card Data: ${JSON.stringify(discardEvent.card)}
+Current Remaining Stack Count: ${discardEvent.stackCount}
+Discard Pile Total Count: ${discardEvent.discardCount}`);
+        });
     }
 
     logToConsole(message) {
@@ -390,14 +398,24 @@ Remaining Hand Count: ${deckEvent.handCount}`);
                     </div>
                 </div>
 
-                <!-- DRAWS & HP STACKS -->
-                <div style="display: flex; gap: 8px;">
-                    <button id="actionDrawBtn" style="flex: 1; background:#00ff00; color:#000; font-weight:bold; font-size:12px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🎴 DRAW 1</button>
-                    <button id="actionStackTopDeckBtn" style="flex: 1; background:#00ffff; color:#000; font-weight:bold; font-size:12px; padding:6px; border:none; border-radius:4px; cursor:pointer;">⬇️ STACK HP</button>
+                <!-- DECK & STACK INTERACTION ROW -->
+                <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #444; display: flex; flex-direction: column; gap: 8px;">
+                    <button id="actionDrawBtn" style="width:100%; background:#00ff00; color:#000; font-weight:bold; font-size:13px; padding:8px; border:none; border-radius:4px; cursor:pointer;">🎴 DRAW 1 CARD</button>
+                    
+                    <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 2px;">
+                        <label style="font-size:12px; color:#00ffff; font-weight:bold;">Target Stack:</label>
+                        <select id="actionStackSlot" style="width:110px; background:#333; color:#fff; border:1px solid #555; padding:5px; border-radius: 4px; font-size:12px;">
+                            <option value="fighterA">Fighter A</option>
+                            <option value="fighterB">Fighter B</option>
+                        </select>
+                    </div>
+                    <div style="display: flex; gap: 6px;">
+                        <button id="actionStackTopDeckBtn" style="flex: 1; background:#00ffff; color:#000; font-weight:bold; font-size:11px; padding:8px; border:none; border-radius:4px; cursor:pointer;">⬇️ STACK CARD</button>
+                        <button id="actionFlipDiscardBtn" style="flex: 1; background:#ffaa00; color:#000; font-weight:bold; font-size:11px; padding:8px; border:none; border-radius:4px; cursor:pointer;">🔥 FLIP & DISCARD</button>
+                    </div>
                 </div>
-                <input type="hidden" id="actionStackSlot" value="fighterA">
 
-                <!-- EXTENDED HAND OPERATIONS TRYS -->
+                <!-- HAND OPERATIONS -->
                 <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #444; display: flex; flex-direction: column; gap: 6px;">
                     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 2px;">
                         <label style="font-size:12px; color:#ffff00; font-weight:bold; flex: 1;">Hand Operations:</label>
@@ -409,10 +427,9 @@ Remaining Hand Count: ${deckEvent.handCount}`);
                         <button id="actionDiscardBtn" style="flex:1; background:#aaaaaa; color:#000; font-weight:bold; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">🗑️ DISCARD</button>
                     </div>
                     <div style="display: flex; gap: 6px;">
-                        <button id="actionPlayFighterABtn" style="flex:1; background:#ff8800; color:#000; font-weight:bold; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHT A</button>
-                        <button id="actionPlayFighterBBtn" style="flex:1; background:#ff5500; color:#fff; font-weight:bold; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHT B</button>
+                        <button id="actionPlayFighterABtn" style="flex:1; background:#ff8800; color:#000; font-weight:bold; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHTER A</button>
+                        <button id="actionPlayFighterBBtn" style="flex:1; background:#ff5500; color:#fff; font-weight:bold; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHTER B</button>
                     </div>
-                    <!-- NEW DECK RECYCLING BUTTONS -->
                     <div style="display: flex; gap: 6px;">
                         <button id="actionToTopDeckBtn" style="flex:1; background:#00ff88; color:#000; font-weight:bold; font-size:10px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🔝 TO TOP DECK</button>
                         <button id="actionToBottomDeckBtn" style="flex:1; background:#00aa66; color:#fff; font-weight:bold; font-size:10px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🔙 TO BOT DECK</button>
@@ -453,6 +470,7 @@ Remaining Hand Count: ${deckEvent.handCount}`);
         this.domGameActionsPanel.on('click', (event) => {
             if (event.target.id === 'actionDrawBtn') this.handleDrawCard();
             if (event.target.id === 'actionStackTopDeckBtn') this.handlePlaceDeckToStack();
+            if (event.target.id === 'actionFlipDiscardBtn') this.handleFlipAndDiscardFromStack(); // New click listener
             if (event.target.id === 'actionPlaySupportBtn') this.handlePlayToSupport();
             if (event.target.id === 'actionDiscardBtn') this.handleDiscardFromHand();
             if (event.target.id === 'actionPlayFighterABtn') this.handlePlayToFighter('fighterA');
@@ -462,8 +480,6 @@ Remaining Hand Count: ${deckEvent.handCount}`);
             if (event.target.id === 'actionDefeatBBtn') this.handleMoveToDefeatedEmit('fighterB');
             if (event.target.id === 'actionDefeatPlus1Btn') this.handleScoreAdjustmentEmit(1);
             if (event.target.id === 'actionDefeatMinus1Btn') this.handleScoreAdjustmentEmit(-1);
-            
-            // Wire up the new deck targets
             if (event.target.id === 'actionToTopDeckBtn') this.handlePlayToDeckEmit('top');
             if (event.target.id === 'actionToBottomDeckBtn') this.handlePlayToDeckEmit('bottom');
         });
@@ -570,5 +586,14 @@ Remaining Hand Count: ${deckEvent.handCount}`);
         const eventName = deckLocation === 'top' ? 'playHandToTopDeck' : 'playHandToBottomDeck';
         this.logToConsole(`>> Emitting ${eventName}: Table ${tableId} recycling card at hand index ${handIndex} to deck ${deckLocation}.`);
         this.socket.emit(eventName, { tableId: parseInt(tableId), targetPlayer, handIndex: parseInt(handIndex) });
+    }
+
+    handleFlipAndDiscardFromStack() {
+        const tableId = document.getElementById('actionTableId').value;
+        const targetPlayer = document.getElementById('actionTargetPlayer').value;
+        const targetSlot = document.getElementById('actionStackSlot').value;
+
+        this.logToConsole(`>> Emitting flipAndDiscardFromStack: Table ${tableId} peeling top card from ${targetPlayer}'s ${targetSlot} stack.`);
+        this.socket.emit('flipAndDiscardFromStack', { tableId: parseInt(tableId), targetPlayer, targetSlot });
     }
 }

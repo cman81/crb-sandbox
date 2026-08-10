@@ -649,6 +649,48 @@ io.on('connection', (socket) => {
 
     socket.emit('serverNotice', `Moved card from hand index ${idx} face down to the BOTTOM of the deck.`);
   });
+
+  socket.on('flipAndDiscardFromStack', ({ tableId, targetPlayer, targetSlot }) => {
+    const table = tables.find(t => t.id === parseInt(tableId));
+    if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+    const battleZone = table.gameState[targetPlayer]?.battleZone;
+    const discard = table.gameState[targetPlayer]?.discard;
+
+    if (targetSlot !== 'fighterA' && targetSlot !== 'fighterB') {
+      return socket.emit('errorMsg', 'Invalid stack slot selection.');
+    }
+
+    const stack = battleZone[targetSlot]?.faceDownStack;
+    if (!stack || stack.length === 0) {
+      return socket.emit('errorMsg', `The face-down stack next to ${targetSlot} is completely empty!`);
+    }
+
+    // Standardized: Peel the true topmost item off the end of the array using .pop()
+    const poppedCard = stack.pop();
+
+    // Flip the card face up and reset any tapped orientations before moving it to discard
+    poppedCard.isFaceDown = false;
+    poppedCard.isTapped = false;
+
+    // Append directly onto the public discard pile stack
+    discard.push(poppedCard);
+
+    // Build the payload (discard is a completely public zone, so everyone gets unmasked card details)
+    const payload = {
+      targetPlayer,
+      targetSlot,
+      card: poppedCard,
+      stackCount: stack.length,
+      discardCount: discard.length
+    };
+
+    if (table.playerA) io.to(table.playerA).emit('stackFlippedAndDiscardedUpdate', payload);
+    if (table.playerB) io.to(table.playerB).emit('stackFlippedAndDiscardedUpdate', payload);
+    table.spectators.forEach(specId => io.to(specId).emit('stackFlippedAndDiscardedUpdate', payload));
+
+    socket.emit('serverNotice', `Peeled top card from ${targetPlayer}'s ${targetSlot} stack and flipped it face up into the discard pile.`);
+  });
 });
 
 console.log('TCG Server on 3000');
