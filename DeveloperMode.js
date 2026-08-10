@@ -20,9 +20,11 @@ class DeveloperMode extends Phaser.Scene {
         this.createConsoleLog();
         this.createLobbyTabPanel();     
         this.createDeckLoaderTabPanel(); 
-        this.createGameActionsTabPanel();
+        this.createGameActionsTabPanel(); 
         this.createStateInspectorPanel(); 
         this.setupSocketListeners();
+
+        this.setupCrossTabSynchronizer();
 
         this.switchTab(1);
     }
@@ -596,4 +598,51 @@ Discard Pile Total Count: ${discardEvent.discardCount}`);
         this.logToConsole(`>> Emitting flipAndDiscardFromStack: Table ${tableId} peeling top card from ${targetPlayer}'s ${targetSlot} stack.`);
         this.socket.emit('flipAndDiscardFromStack', { tableId: parseInt(tableId), targetPlayer, targetSlot });
     }
+
+    setupCrossTabSynchronizer() {
+        // Collect all Table ID input references across your panels
+        const tableInputs = ['devTableId', 'deckTableId', 'actionTableId', 'inspectTableId'];
+        
+        // Loop through each element ID and bind real-time input mirroring listeners
+        tableInputs.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.addEventListener('input', (event) => {
+                    const newValue = event.target.value;
+                    tableInputs.forEach(targetId => {
+                        const targetEl = document.getElementById(targetId);
+                        if (targetEl && targetEl.value !== newValue) {
+                            targetEl.value = newValue;
+                        }
+                    });
+                });
+            }
+        });
+
+        // Sync logic for Player A / Player B roles and targeting slots
+        const roleSelectors = ['devRole', 'deckTargetPlayer', 'actionTargetPlayer', 'inspectRole'];
+
+        roleSelectors.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.addEventListener('change', (event) => {
+                    const chosenRole = event.target.value;
+                    
+                    // If Spectator is selected on Tab 1 or the Inspector, ignore the player slot sync
+                    if (chosenRole === 'spectator') return;
+
+                    roleSelectors.forEach(targetId => {
+                        const targetEl = document.getElementById(targetId);
+                        if (targetEl) {
+                            // Map 'playerA' or 'playerB' choices uniformly across all select boxes
+                            if (targetEl.querySelector(`option[value="${chosenRole}"]`)) {
+                                targetEl.value = chosenRole;
+                            }
+                        }
+                    });
+                });
+            }
+        });
+    }
+    
 }
