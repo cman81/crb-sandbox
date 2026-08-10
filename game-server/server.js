@@ -693,6 +693,91 @@ io.on('connection', (socket) => {
 
     socket.emit('serverNotice', `Peeled top card from ${targetPlayer}'s ${targetSlot} stack and flipped it face up into the discard pile.`);
   });
+
+  socket.on('recycleDiscardToDeck', ({ tableId, targetPlayer }) => {
+    const table = tables.find(t => t.id === parseInt(tableId));
+    if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+    const deck = table.gameState[targetPlayer]?.deck;
+    const discard = table.gameState[targetPlayer]?.discard;
+
+    if (!discard || discard.length === 0) {
+      return socket.emit('errorMsg', `Discard pile is empty! Nothing to recycle.`);
+    }
+
+    const recycledCount = discard.length;
+
+    // 1. Empty out the entire discard array right onto the deck pile
+    while (discard.length > 0) {
+      const card = discard.pop(); // Pop from the top of discard
+      card.isFaceDown = true;     // Turn face down
+      card.isTapped = false;       // Reset tap orientations
+      deck.push(card);            // Append onto the deck array
+    }
+
+    // 2. Execute automated UUID-based shuffle layout scramble on the updated deck
+    deck.forEach(card => {
+      card.shuffleId = uuidv4(); 
+    });
+    deck.sort((a, b) => a.shuffleId.localeCompare(b.shuffleId));
+    deck.forEach(card => {
+      delete card.shuffleId; // Wipe temporary property tags
+    });
+
+    // 3. Broadcast targeted updates across rooms
+    const payload = {
+      targetPlayer,
+      deckCount: deck.length,
+      discardCount: discard.length
+    };
+
+    if (table.playerA) io.to(table.playerA).emit('discardRecycledUpdate', payload);
+    if (table.playerB) io.to(table.playerB).emit('discardRecycledUpdate', payload);
+    table.spectators.forEach(id => io.to(id).emit('discardRecycledUpdate', payload));
+
+    socket.emit('serverNotice', `Recycled all ${recycledCount} cards from discard to deck face down, and fully shuffled the deck!`);
+  });
+
+  socket.on('moveDiscardToDefeated', ({ tableId, targetPlayer, discardIndex }) => {
+    const table = tables.find(t => t.id === parseInt(tableId));
+    if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+    const discard = table.gameState[targetPlayer]?.discard;
+    const defeated = table.gameState[targetPlayer]?.defeated;
+
+    if (!discard || discard.length === 0) {
+      return socket.emit('errorMsg', 'Discard pile is completely empty!');
+    }
+
+    const idx = parseInt(discardIndex);
+    if (isNaN(idx) || idx < 0 || idx >= discard.length) {
+      return socket.emit('errorMsg', `Invalid discard index selection! Choose between 0 and ${discard.length - 1}.`);
+    }
+
+    // Extract the exact chosen card index from the discard pile array
+    const [retiredCard] = discard.splice(idx, 1);
+    
+    // Ensure properties remain face up and untapped inside the defeated lane
+    retiredCard.isFaceDown = false;
+    retiredCard.isTapped = false;
+
+    // Append to the end of the public defeated pile
+    defeated.push(retiredCard);
+
+    // Build the public broadcast notice payload
+    const payload = {
+      targetPlayer,
+      card: retiredCard,
+      discardCount: discard.length,
+      defeatedCount: defeated.length
+    };
+
+    if (table.playerA) io.to(table.playerA).emit('discardToDefeatedUpdate', payload);
+    if (table.playerB) io.to(table.playerB).emit('discardToDefeatedUpdate', payload);
+    table.spectators.forEach(id => io.to(id).emit('discardToDefeatedUpdate', payload));
+
+    socket.emit('serverNotice', `Moved card at discard index ${idx} to ${targetPlayer}'s defeated zone.`);
+  });
 });
 
 console.log('TCG Server on 3000');

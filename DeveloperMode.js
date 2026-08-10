@@ -444,6 +444,21 @@ Revealed Card Data: ${JSON.stringify(discardEvent.card)}
 Current Remaining Stack Count: ${discardEvent.stackCount}
 Discard Pile Total Count: ${discardEvent.discardCount}`);
         });
+
+        this.socket.on('discardRecycledUpdate', (recycleEvent) => {
+            this.logToConsole(`[LIVE FIELD EVENT] [PILE RECOVERY COMPLETE]
+Player ${recycleEvent.targetPlayer} moved ALL cards from their discard pile face down back into their deck, and the deck was fully reshuilled!
+Current Deck Pile Total Count: ${recycleEvent.deckCount}
+Remaining Discard Pile Count: ${recycleEvent.discardCount}`);
+        });
+
+        this.socket.on('discardToDefeatedUpdate', (defeatEvent) => {
+            this.logToConsole(`[LIVE FIELD EVENT] [DISCARD RETIRED]
+Player ${defeatEvent.targetPlayer} retired a card directly out of their discard pile into the defeated zone!
+Retired Card details: ${JSON.stringify(defeatEvent.card)}
+Remaining Discard Pile Count: ${defeatEvent.discardCount}
+Defeated Pile Total Count: ${defeatEvent.defeatedCount}`);
+        });
     }
 
     logToConsole(message) {
@@ -490,9 +505,9 @@ Discard Pile Total Count: ${discardEvent.discardCount}`);
                     </div>
                 </div>
 
-                <!-- DECK & STACK INTERACTION ROW -->
+                <!-- DRAWS & DECK STACKING -->
                 <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #444; display: flex; flex-direction: column; gap: 8px;">
-                    <button id="actionDrawBtn" style="width:100%; background:#00ff00; color:#000; font-weight:bold; font-size:13px; padding:8px; border:none; border-radius:4px; cursor:pointer;">🎴 DRAW 1 CARD</button>
+                    <button id="actionDrawBtn" style="width:100%; background:#00ff00; color:#000; font-weight:bold; font-size:12px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🎴 DRAW 1 CARD</button>
                     
                     <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 2px;">
                         <label style="font-size:12px; color:#00ffff; font-weight:bold;">Target Stack:</label>
@@ -503,16 +518,16 @@ Discard Pile Total Count: ${discardEvent.discardCount}`);
                     </div>
                     <div style="display: flex; gap: 6px;">
                         <button id="actionStackTopDeckBtn" style="flex: 1; background:#00ffff; color:#000; font-weight:bold; font-size:11px; padding:8px; border:none; border-radius:4px; cursor:pointer;">⬇️ STACK CARD</button>
-                        <button id="actionFlipDiscardBtn" style="flex: 1; background:#ffaa00; color:#000; font-weight:bold; font-size:11px; padding:8px; border:none; border-radius:4px; cursor:pointer;">🔥 FLIP & DISCARD</button>
+                        <button id="actionFlipDiscardBtn" style="flex: 1; background:#ffaa00; color:#000; font-weight:bold; font-size:11px; padding:8px; border:none; border-radius:4px; cursor:pointer;">🔥 FLIP & DISC</button>
                     </div>
                 </div>
 
                 <!-- HAND OPERATIONS -->
-                <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #444; display: flex; flex-direction: column; gap: 6px;">
-                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 2px;">
-                        <label style="font-size:12px; color:#ffff00; font-weight:bold; flex: 1;">Hand Operations:</label>
+                <div style="background: #1a1a1a; padding: 8px; border-radius: 6px; border: 1px solid #444; display: flex; flex-direction: column; gap: 6px;">
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <label style="font-size:11px; color:#ffff00; font-weight:bold; flex: 1;">Hand Operations:</label>
                         <label style="font-size:11px; color:#aaa;">Pos:</label>
-                        <input type="number" id="actionHandIdx" min="0" value="0" style="width: 44px; background: #333; color: #fff; border: 1px solid #555; padding: 4px; border-radius: 4px;">
+                        <input type="number" id="actionHandIdx" min="0" value="0" style="width: 40px; background: #333; color: #fff; border: 1px solid #555; padding: 4px; border-radius: 4px;">
                     </div>
                     <div style="display: flex; gap: 6px;">
                         <button id="actionPlaySupportBtn" style="flex:1; background:#ffff00; color:#000; font-weight:bold; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">🛡️ SUPPORT</button>
@@ -523,8 +538,21 @@ Discard Pile Total Count: ${discardEvent.discardCount}`);
                         <button id="actionPlayFighterBBtn" style="flex:1; background:#ff5500; color:#fff; font-weight:bold; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHTER B</button>
                     </div>
                     <div style="display: flex; gap: 6px;">
-                        <button id="actionToTopDeckBtn" style="flex:1; background:#00ff88; color:#000; font-weight:bold; font-size:10px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🔝 TO TOP DECK</button>
-                        <button id="actionToBottomDeckBtn" style="flex:1; background:#00aa66; color:#fff; font-weight:bold; font-size:10px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🔙 TO BOT DECK</button>
+                        <button id="actionToTopDeckBtn" style="flex:1; background:#00ff88; color:#000; font-weight:bold; font-size:10px; padding:5px; border:none; border-radius:4px; cursor:pointer;">🔝 TO TOP DECK</button>
+                        <button id="actionToBottomDeckBtn" style="flex:1; background:#00aa66; color:#fff; font-weight:bold; font-size:10px; padding:5px; border:none; border-radius:4px; cursor:pointer;">🔙 TO BOT DECK</button>
+                    </div>
+                </div>
+
+                <!-- DISCARD OPERATIONAL CONTROLLER PANELS -->
+                <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #00ffcc; display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <label style="font-size:12px; color:#00ffcc; font-weight:bold; flex: 1;">Discard Operations:</label>
+                        <label style="font-size:11px; color:#aaa;">Pos:</label>
+                        <input type="number" id="actionDiscardIdx" min="0" value="0" style="width: 44px; background: #333; color: #fff; border: 1px solid #555; padding: 4px; border-radius: 4px;">
+                    </div>
+                    <div style="display: flex; gap: 6px;">
+                        <button id="actionDiscardToDefeatedBtn" style="flex:1; background:#ff3333; color:#fff; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">❌ DISC TO DEFEATED</button>
+                        <button id="actionRecycleDiscardBtn" style="flex:1; background:#00ffcc; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">♻️ DISC TO DECK</button>
                     </div>
                 </div>
 
@@ -555,14 +583,16 @@ Discard Pile Total Count: ${discardEvent.discardCount}`);
                 </div>
             </div>
         `;
-        
+
         this.domGameActionsPanel = this.add.dom(50, 170).createFromHTML(htmlContent).setOrigin(0, 0);
         
         this.domGameActionsPanel.addListener('click');
         this.domGameActionsPanel.on('click', (event) => {
             if (event.target.id === 'actionDrawBtn') this.handleDrawCard();
+            if (event.target.id === 'actionRecycleDiscardBtn') this.handleRecycleDiscard();
+            if (event.target.id === 'actionDiscardToDefeatedBtn') this.handleDiscardToDefeated();
             if (event.target.id === 'actionStackTopDeckBtn') this.handlePlaceDeckToStack();
-            if (event.target.id === 'actionFlipDiscardBtn') this.handleFlipAndDiscardFromStack(); // New click listener
+            if (event.target.id === 'actionFlipDiscardBtn') this.handleFlipAndDiscardFromStack();
             if (event.target.id === 'actionPlaySupportBtn') this.handlePlayToSupport();
             if (event.target.id === 'actionDiscardBtn') this.handleDiscardFromHand();
             if (event.target.id === 'actionPlayFighterABtn') this.handlePlayToFighter('fighterA');
@@ -687,6 +717,22 @@ Discard Pile Total Count: ${discardEvent.discardCount}`);
 
         this.logToConsole(`>> Emitting flipAndDiscardFromStack: Table ${tableId} peeling top card from ${targetPlayer}'s ${targetSlot} stack.`);
         this.socket.emit('flipAndDiscardFromStack', { tableId: parseInt(tableId), targetPlayer, targetSlot });
+    }
+
+    handleRecycleDiscard() {
+        const tableId = document.getElementById('actionTableId').value;
+        const targetPlayer = document.getElementById('actionTargetPlayer').value;
+        this.logToConsole(`>> Emitting recycleDiscardToDeck: Table ${tableId} recycling discard pile for ${targetPlayer}.`);
+        this.socket.emit('recycleDiscardToDeck', { tableId: parseInt(tableId), targetPlayer });
+    }
+
+    handleDiscardToDefeated() {
+        const tableId = document.getElementById('actionTableId').value;
+        const targetPlayer = document.getElementById('actionTargetPlayer').value;
+        const discardIndex = document.getElementById('actionDiscardIdx').value;
+
+        this.logToConsole(`>> Emitting moveDiscardToDefeated: Table ${tableId} moving card at discard index ${discardIndex} to defeated zone for ${targetPlayer}.`);
+        this.socket.emit('moveDiscardToDefeated', { tableId: parseInt(tableId), targetPlayer, discardIndex: parseInt(discardIndex) });
     }
 
     setupCrossTabSynchronizer() {
