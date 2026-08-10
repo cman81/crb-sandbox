@@ -22,8 +22,10 @@ class DeveloperMode extends Phaser.Scene {
         this.createDeckLoaderTabPanel(); 
         this.createGameActionsTabPanel(); 
         this.createStateInspectorPanel(); 
-        this.setupSocketListeners();
+        
+        this.createHandMappingTablePanel();
 
+        this.setupSocketListeners();
         this.setupCrossTabSynchronizer();
 
         this.switchTab(1);
@@ -149,20 +151,19 @@ class DeveloperMode extends Phaser.Scene {
     }
 
     createConsoleLog() {
-        // Change this to a class property so we can alter it dynamically later
         this.logTitleText = this.add.text(550, 170, '📢 SERVER RESPONSE STREAM (PERSPECTIVE: UNBOUND LOBBY)', { 
             fontSize: '18px', fill: '#00ff00', fontFamily: 'monospace', fontWeight: 'bold' 
         });
         
         const logHtml = `
-            <textarea id="devLog" readonly style="width: 1320px; height: 560px; background-color: #050505; color: #33ff33; font-family: 'Courier New', monospace; font-size: 16px; border: 1px solid #33ff33; padding: 15px; border-radius: 8px; resize: none; box-shadow: inset 0 0 10px #000; box-sizing: border-box;"></textarea>
+            <textarea id="devLog" readonly style="width: 960px; height: 560px; background-color: #050505; color: #33ff33; font-family: 'Courier New', monospace; font-size: 16px; border: 1px solid #33ff33; padding: 15px; border-radius: 8px; resize: none; box-shadow: inset 0 0 10px #000; box-sizing: border-box;"></textarea>
         `;
         this.domLog = this.add.dom(550, 200).createFromHTML(logHtml).setOrigin(0, 0);
     }
 
     createStateInspectorPanel() {
         const htmlContent = `
-            <div style="color: white; font-family: monospace; font-size: 16px; background: #151c24; padding: 20px; border-radius: 8px; width: 1320px; border: 1px solid #00ff00; box-shadow: 0px 4px 15px rgba(0,0,0,0.7); box-sizing: border-box; display: flex; align-items: center; justify-content: space-between;">
+            <div style="color: white; font-family: monospace; font-size: 16px; background: #151c24; padding: 20px; border-radius: 8px; width: 960px; border: 1px solid #00ff00; box-shadow: 0px 4px 15px rgba(0,0,0,0.7); box-sizing: border-box; display: flex; align-items: center; justify-content: space-between;">
                 <div style="display: flex; align-items: center; gap: 20px;">
                     <span style="color: #00ff00; font-weight: bold; font-size: 18px;">🔎 State Inspector Loop:</span>
                     <label>Table ID (1-8):</label>
@@ -184,6 +185,32 @@ class DeveloperMode extends Phaser.Scene {
         this.domInspectorPanel.on('click', (event) => {
             if (event.target.id === 'inspectGetStateBtn') this.handleGetGameState();
         });
+    }
+
+    createHandMappingTablePanel() {
+        // Render a dedicated label anchor directly above Column 3
+        this.add.text(1550, 170, '📋 HAND MATRIX', {
+            fontSize: '18px', fill: '#ffff00', fontFamily: 'monospace', fontWeight: 'bold'
+        });
+
+        const htmlContent = `
+            <div style="color: white; font-family: monospace; font-size: 14px; background: #1a1a1a; padding: 20px; border-radius: 8px; width: 320px; height: 640px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box; overflow-y: auto;">
+                <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                    <thead>
+                        <tr style="border-bottom: 2px solid #555; color: #aaa; font-size: 12px;">
+                            <th style="padding: 6px; width: 90px;">POSITION</th>
+                            <th style="padding: 6px;">CARD ID</th>
+                        </tr>
+                    </thead>
+                    <tbody id="handMatrixBody">
+                        <tr><td colspan="2" style="padding: 20px; text-align: center; color: #666; font-style: italic;">[No Hand Data Loaded]</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        `;
+
+        // Placed as the third column (X: 1550, Y: 200) running flush with the main response log box height bounds
+        this.domHandMatrixPanel = this.add.dom(1550, 200).createFromHTML(htmlContent).setOrigin(0, 0);
     }
 
     handleJoin() {
@@ -241,9 +268,49 @@ class DeveloperMode extends Phaser.Scene {
         this.socket.emit('getGameState', { tableId: parseInt(tableId), role });
     }
 
+    refreshHandMatrixTable(handArray) {
+        const tbody = document.getElementById('handMatrixBody');
+        if (!tbody) return;
+
+        // Clear previous rows completely
+        tbody.innerHTML = "";
+
+        // Account for an empty set safely
+        if (!handArray || handArray.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="2" style="padding: 20px; text-align: center; color: #ff3333; font-weight: bold; background: rgba(255,0,0,0.05);">
+                        ⚠️ [HAND IS COMPLETELY EMPTY]
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        // Loop and build fresh index elements sequentially
+        handArray.forEach((card, index) => {
+            // Check if card identity is protected under fog-of-war masking rules
+            const displayId = card.name === "Card Back" ? "🚫 [CARD BACK - HIDDEN]" : card.id;
+            const rowColor = card.name === "Card Back" ? "#ffaa00" : "#00ff88";
+
+            const rowHtml = `
+                <tr style="border-bottom: 1px solid #333; font-size: 13px;">
+                    <td style="padding: 6px 4px; font-weight: bold; color: #aaa;">Index ${index}</td>
+                    <td style="padding: 6px 4px; color: ${rowColor}; font-weight: bold;">${displayId}</td>
+                </tr>
+            `;
+            tbody.innerHTML += rowHtml;
+        });
+    }
+
     setupSocketListeners() {
         this.socket.on('stateUpdate', (sanitizedState) => {
             this.logToConsole(`[RECEIVED stateUpdate]:\n${JSON.stringify(sanitizedState, null, 2)}`);
+            
+            // ADD THESE LINES: Identify who we are looking at to populate the matrix table dynamically
+            const activeTargetPlayer = document.getElementById('actionTargetPlayer')?.value || 'playerA';
+            const handData = sanitizedState[activeTargetPlayer]?.hand || [];
+            this.refreshHandMatrixTable(handData);
         });
         
         this.socket.on('errorMsg', (msg) => {
@@ -252,6 +319,13 @@ class DeveloperMode extends Phaser.Scene {
 
         this.socket.on('serverNotice', (msg) => {
             this.logToConsole(`[SERVER SUCCESS]: ${msg}`);
+            
+            // ADD THESE LINES: Automatically pull fresh state after a draw/discard to sync matrix view
+            const tableId = document.getElementById('actionTableId')?.value;
+            const targetPlayer = document.getElementById('actionTargetPlayer')?.value;
+            if (tableId && targetPlayer) {
+                this.socket.emit('getGameState', { tableId: parseInt(tableId), role: targetPlayer });
+            }
         });
 
         this.socket.on('cardDrawnUpdate', (drawEvent) => {
@@ -643,6 +717,23 @@ Discard Pile Total Count: ${discardEvent.discardCount}`);
                 });
             }
         });
+
+        // Append this inside the very bottom of your setupCrossTabSynchronizer() method:
+        const masterTableInput = document.getElementById('actionTableId');
+        const masterPlayerDropdown = document.getElementById('actionTargetPlayer');
+
+        const forceMatrixSync = () => {
+            if (masterTableInput && masterPlayerDropdown && masterTableInput.value) {
+                // Silently request a localized update from the server to refresh your matrix rows
+                this.socket.emit('getGameState', { 
+                    tableId: parseInt(masterTableInput.value), 
+                    role: masterPlayerDropdown.value 
+                });
+            }
+        };
+
+        if (masterTableInput) masterTableInput.addEventListener('input', forceMatrixSync);
+        if (masterPlayerDropdown) masterPlayerDropdown.addEventListener('change', forceMatrixSync);
     }
-    
+
 }
