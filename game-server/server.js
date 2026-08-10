@@ -7,8 +7,24 @@ const tables = Array.from({ length: 8 }, (_, i) => ({
   playerB: null, 
   spectators: [],
   gameState: {
-    playerA: { hand: [], deck: [], extraDeck: [], discard: [], support: [], defeated: [], battleZone: { fighterA: { card: null, faceDownStack: [] }, fighterB: { card: null, faceDownStack: [] }, stage: null } },
-    playerB: { hand: [], deck: [], extraDeck: [], discard: [], support: [], defeated: [], battleZone: { fighterA: { card: null, faceDownStack: [] }, fighterB: { card: null, faceDownStack: [] }, stage: null } }
+    playerA: {
+      hand: [], deck: [], extraDeck: [], discard: [], support: [], defeated: [],
+      defeatedPoints: 0,
+      battleZone: {
+        fighterA: { card: null, faceDownStack: [] },
+        fighterB: { card: null, faceDownStack: [] },
+        stage: null
+      }
+    },
+    playerB: {
+      hand: [], deck: [], extraDeck: [], discard: [], support: [], defeated: [],
+      defeatedPoints: 0,
+      battleZone: {
+        fighterA: { card: null, faceDownStack: [] },
+        fighterB: { card: null, faceDownStack: [] },
+        stage: null
+      }
+    }
   }
 }));
 
@@ -463,6 +479,71 @@ io.on('connection', (socket) => {
     table.spectators.forEach(specId => io.to(specId).emit('cardPlayedToFighterUpdate', payload));
 
     socket.emit('serverNotice', `Played card from hand index ${idx} face up into ${targetPlayer}'s ${targetSlot} slot.`);
+  });
+
+  socket.on('moveFighterToDefeated', ({ tableId, targetPlayer, slot }) => {
+    const table = tables.find(t => t.id === parseInt(tableId));
+    if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+    const playerState = table.gameState[targetPlayer];
+    if (!playerState) return socket.emit('errorMsg', 'Player state not found.');
+
+    const battleZone = playerState.battleZone;
+    const defeatedZone = playerState.defeated;
+
+    if (slot !== 'fighterA' && slot !== 'fighterB') {
+      return socket.emit('errorMsg', 'Invalid fighter slot selection.');
+    }
+
+    const targetCard = battleZone[slot].card;
+    if (!targetCard || Object.keys(targetCard).length === 0) {
+      return socket.emit('errorMsg', `No card found in ${slot} to move to defeated.`);
+    }
+
+    // Shift card off the battle field slot out into public defeated pile lane
+    battleZone[slot].card = null;
+    targetCard.isFaceDown = false;
+    targetCard.isTapped = false;
+    defeatedZone.push(targetCard);
+
+    const payload = {
+      targetPlayer,
+      slot,
+      card: targetCard,
+      defeatedCount: defeatedZone.length
+    };
+
+    if (table.playerA) io.to(table.playerA).emit('cardMovedToDefeatedZone', payload);
+    if (table.playerB) io.to(table.playerB).emit('cardMovedToDefeatedZone', payload);
+    table.spectators.forEach(specId => io.to(specId).emit('cardMovedToDefeatedZone', payload));
+
+    socket.emit('serverNotice', `Moved card from ${slot} to ${targetPlayer}'s defeated zone pile.`);
+  });
+
+  // --- ACTION 2: INDEPENDENT DEFEATED POINTS ADJUSTMENT ENGINE ---
+  socket.on('adjustDefeatedPoints', ({ tableId, targetPlayer, amount }) => {
+    const table = tables.find(t => t.id === parseInt(tableId));
+    if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+    const playerState = table.gameState[targetPlayer];
+    if (!playerState) return socket.emit('errorMsg', 'Player state not found.');
+
+    // Adjust points, ensuring they never drop below zero
+    playerState.defeatedPoints = Math.max(0, playerState.defeatedPoints + parseInt(amount));
+
+    const payload = {
+      targetPlayer,
+      totalDefeatedPoints: playerState.defeatedPoints,
+      isEliminated: playerState.defeatedPoints >= 10
+    };
+
+    if (table.playerA) io.to(table.playerA).emit('defeatedPointsTickedUpdate', payload);
+    if (table.playerB) io.to(table.playerB).emit('defeatedPointsTickedUpdate', payload);
+    table.spectators.forEach(specId => io.to(specId).emit('defeatedPointsTickedUpdate', payload));
+
+    let notice = `${targetPlayer}'s Defeated Points updated to: ${playerState.defeatedPoints}`;
+    if (playerState.defeatedPoints >= 10) notice += " 🚨 CRITICAL LIMIT HIT! Player Loses!";
+    socket.emit('serverNotice', notice);
   });
 });
 

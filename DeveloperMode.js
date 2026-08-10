@@ -311,6 +311,23 @@ Player ${playEvent.targetPlayer} played a card face up into active field positio
 Card Data: ${JSON.stringify(playEvent.card)}
 Remaining Hand Count: ${playEvent.handCount}`);
         });
+
+        this.socket.on('cardMovedToDefeatedZone', (moveEvent) => {
+            this.logToConsole(`[LIVE FIELD EVENT] [CARD RETIRED]
+Player ${moveEvent.targetPlayer}'s fighter card in ${moveEvent.slot} has been moved to the public Defeated Area!
+Retired Card details: ${JSON.stringify(moveEvent.card)}
+Defeated Pile Total Count: ${moveEvent.defeatedCount}`);
+        });
+
+        this.socket.on('defeatedPointsTickedUpdate', (scoreEvent) => {
+            let limitNotice = "";
+            if (scoreEvent.isEliminated) {
+                limitNotice = `\n⚠️ ELIMINATION MARGIN REACHED: PLAYER ${scoreEvent.targetPlayer.toUpperCase()} HAS HIT 10+ DEFEATED POINTS AND LOSE!`;
+            }
+            this.logToConsole(`[LIVE METRIC EVENT] [SCORE TICKED]
+Player ${scoreEvent.targetPlayer}'s Defeated Points level updated!
+Current Total: ${scoreEvent.totalDefeatedPoints} / 10 pts${limitNotice}`);
+        });
     }
 
     logToConsole(message) {
@@ -340,8 +357,8 @@ Remaining Hand Count: ${playEvent.handCount}`);
 
     createGameActionsTabPanel() {
         const htmlContent = `
-            <div style="color: white; font-family: monospace; font-size: 16px; background: #222; padding: 25px; border-radius: 8px; width: 460px; height: 600px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box; display: flex; flex-direction: column; gap: 15px;">
-                <h3 style="margin-top:0; color:#00ff00; font-size: 22px; margin-bottom: 5px;">3. Game Actions</h3>
+            <div style="color: white; font-family: monospace; font-size: 16px; background: #222; padding: 25px; border-radius: 8px; width: 460px; height: 600px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box; display: flex; flex-direction: column; gap: 12px;">
+                <h3 style="margin-top:0; color:#00ff00; font-size: 22px; margin-bottom: 2px;">3. Game Actions</h3>
                 
                 <div style="display: flex; justify-content: space-between;">
                     <div>
@@ -357,43 +374,55 @@ Remaining Hand Count: ${playEvent.handCount}`);
                     </div>
                 </div>
 
-                <!-- DRAWS & STACKS UTILITY PANELS -->
+                <!-- DRAWS & HP STACKS -->
                 <div style="display: flex; gap: 8px;">
-                    <button id="actionDrawBtn" style="flex: 1; background:#00ff00; color:#000; font-weight:bold; font-size:13px; padding:8px; border:none; border-radius:4px; cursor:pointer;">🎴 DRAW 1</button>
-                    <button id="actionStackTopDeckBtn" style="flex: 1; background:#00ffff; color:#000; font-weight:bold; font-size:13px; padding:8px; border:none; border-radius:4px; cursor:pointer;">⬇️ STACK HP</button>
+                    <button id="actionDrawBtn" style="flex: 1; background:#00ff00; color:#000; font-weight:bold; font-size:12px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🎴 DRAW 1</button>
+                    <button id="actionStackTopDeckBtn" style="flex: 1; background:#00ffff; color:#000; font-weight:bold; font-size:12px; padding:6px; border:none; border-radius:4px; cursor:pointer;">⬇️ STACK HP</button>
                 </div>
                 <input type="hidden" id="actionStackSlot" value="fighterA">
 
-                <!-- EXTENDED HAND CONTROLS ZONE -->
-                <div style="background: #1a1a1a; padding: 12px; border-radius: 6px; border: 1px solid #444; display: flex; flex-direction: column; gap: 10px;">
-                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                        <label style="font-size:13px; color:#ffff00; font-weight:bold; flex: 1;">Play From Hand:</label>
-                        <label style="font-size:12px; color:#aaa;">Hand Pos:</label>
-                        <input type="number" id="actionHandIdx" min="0" value="0" style="width: 45px; background: #333; color: #fff; border: 1px solid #555; padding: 4px; border-radius: 4px;">
+                <!-- DEPLOYMENT CARDS -->
+                <div style="background: #1a1a1a; padding: 8px; border-radius: 6px; border: 1px solid #444; display: flex; flex-direction: column; gap: 6px;">
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <label style="font-size:12px; color:#ffff00; font-weight:bold; flex: 1;">Play Hand:</label>
+                        <input type="number" id="actionHandIdx" min="0" value="0" style="width: 44px; background: #333; color: #fff; border: 1px solid #555; padding: 4px; border-radius: 4px;">
                     </div>
-                    <button id="actionPlaySupportBtn" style="width:100%; background:#ffff00; color:#000; font-weight:bold; font-size:13px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🛡️ PLAY TO SUPPORT</button>
+                    <div style="display: flex; gap: 6px;">
+                        <button id="actionPlaySupportBtn" style="flex:1; background:#ffff00; color:#000; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">🛡️ SUPPORT</button>
+                        <button id="actionPlayFighterABtn" style="flex:1; background:#ff8800; color:#000; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHT A</button>
+                        <button id="actionPlayFighterBBtn" style="flex:1; background:#ff5500; color:#fff; font-size:11px; padding:5px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHT B</button>
+                    </div>
+                </div>
+
+                <!-- DECOUPLED DEFEATED OPERATIONS CONTROLLER -->
+                <div style="background: #1a1a1a; padding: 12px; border-radius: 6px; border: 1px solid #ff3333; display: flex; flex-direction: column; gap: 10px;">
+                    <label style="color: #ff3333; font-size: 13px; font-weight: bold;">💀 Defeated Area & Scoring (Decoupled):</label>
+                    
+                    <!-- Card Movements -->
                     <div style="display: flex; gap: 8px;">
-                        <button id="actionPlayFighterABtn" style="flex:1; background:#ff8800; color:#000; font-weight:bold; font-size:12px; padding:6px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHTER A</button>
-                        <button id="actionPlayFighterBBtn" style="flex:1; background:#ff5500; color:#fff; font-weight:bold; font-size:12px; padding:6px; border:none; border-radius:4px; cursor:pointer;">⚔️ FIGHTER B</button>
+                        <button id="actionDefeatABtn" style="flex: 1; background:#ff3333; color:#fff; font-weight:bold; font-size:12px; padding:8px; border:none; border-radius:4px; cursor:pointer;">DEFEAT A</button>
+                        <button id="actionDefeatBBtn" style="flex: 1; background:#ff3333; color:#fff; font-weight:bold; font-size:12px; padding:8px; border:none; border-radius:4px; cursor:pointer;">DEFEAT B</button>
+                    </div>
+                    
+                    <!-- Score Ticking -->
+                    <div style="display: flex; gap: 8px;">
+                        <button id="actionDefeatPlus1Btn" style="flex: 1; background:#00ff88; color:#000; font-weight:bold; font-size:12px; padding:8px; border:none; border-radius:4px; cursor:pointer;">DEFEAT +1</button>
+                        <button id="actionDefeatMinus1Btn" style="flex: 1; background:#ffaa00; color:#000; font-weight:bold; font-size:12px; padding:8px; border:none; border-radius:4px; cursor:pointer;">DEFEAT -1</button>
                     </div>
                 </div>
 
                 <!-- TAPPING SYSTEM -->
-                <div style="background: #1a1a1a; padding: 12px; border-radius: 6px; border: 1px solid #ffff00; display: flex; flex-direction: column; gap: 8px;">
-                    <label style="color: #ffff00; font-size: 13px; font-weight: bold;">🔄 Card Orientation System:</label>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <label style="font-size:13px;">Target Zone:</label>
-                        <select id="tapZoneSelect" style="width:130px; background:#333; color:#fff; border:1px solid #555; padding:4px; border-radius: 4px;">
-                            <option value="fighterA">Fighter A Slot</option>
-                            <option value="fighterB">Fighter B Slot</option>
-                            <option value="support">Support Lane</option>
+                <div style="background: #1a1a1a; padding: 8px; border-radius: 6px; border: 1px solid #ffff00; display: flex; flex-direction: column; gap: 6px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; font-size:12px;">
+                        <select id="tapZoneSelect" style="width:110px; background:#333; color:#fff; border:1px solid #555; padding:4px; border-radius: 4px;">
+                            <option value="fighterA">Fighter A</option>
+                            <option value="fighterB">Fighter B</option>
+                            <option value="support">Support</option>
                         </select>
+                        <label>Idx:</label>
+                        <input type="number" id="tapSupportIdx" min="0" value="0" style="width: 40px; background: #333; color: #fff; border: 1px solid #555; padding: 4px; border-radius: 4px;">
+                        <button id="actionToggleTapBtn" style="background:#ffff00; color:#000; font-weight:bold; padding:5px 10px; border:none; border-radius:4px; cursor:pointer;">🔄 TAP</button>
                     </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <label style="font-size:13px;">Support Index:</label>
-                        <input type="number" id="tapSupportIdx" min="0" value="0" style="width: 50px; background: #333; color: #fff; border: 1px solid #555; padding: 4px; border-radius: 4px;">
-                    </div>
-                    <button id="actionToggleTapBtn" style="width:100%; background:#ffff00; color:#000; font-weight:bold; font-size:14px; padding:10px; border:none; border-radius:4px; cursor:pointer;">🔄 TOGGLE TAP / UNTAP STATE</button>
                 </div>
             </div>
         `;
@@ -408,6 +437,12 @@ Remaining Hand Count: ${playEvent.handCount}`);
             if (event.target.id === 'actionPlayFighterABtn') this.handlePlayToFighter('fighterA');
             if (event.target.id === 'actionPlayFighterBBtn') this.handlePlayToFighter('fighterB');
             if (event.target.id === 'actionToggleTapBtn') this.handleToggleTapEmit();
+            
+            // Wire up the 4 decoupled buttons
+            if (event.target.id === 'actionDefeatABtn') this.handleMoveToDefeatedEmit('fighterA');
+            if (event.target.id === 'actionDefeatBBtn') this.handleMoveToDefeatedEmit('fighterB');
+            if (event.target.id === 'actionDefeatPlus1Btn') this.handleScoreAdjustmentEmit(1);
+            if (event.target.id === 'actionDefeatMinus1Btn') this.handleScoreAdjustmentEmit(-1);
         });
     }
 
@@ -477,5 +512,21 @@ Remaining Hand Count: ${playEvent.handCount}`);
 
         this.logToConsole(`>> Emitting playCardToFighter: Table ${tableId} moving card at hand index ${handIndex} to ${slotName} for ${targetPlayer}.`);
         this.socket.emit('playCardToFighter', { tableId: parseInt(tableId), targetPlayer, handIndex: parseInt(handIndex), targetSlot: slotName });
+    }
+
+    handleMoveToDefeatedEmit(slotName) {
+        const tableId = document.getElementById('actionTableId').value;
+        const targetPlayer = document.getElementById('actionTargetPlayer').value;
+
+        this.logToConsole(`>> Emitting moveFighterToDefeated: Table ${tableId} moving card in ${slotName} for ${targetPlayer} to defeated pile zone.`);
+        this.socket.emit('moveFighterToDefeated', { tableId: parseInt(tableId), targetPlayer, slot: slotName });
+    }
+
+    handleScoreAdjustmentEmit(pointDelta) {
+        const tableId = document.getElementById('actionTableId').value;
+        const targetPlayer = document.getElementById('actionTargetPlayer').value;
+
+        this.logToConsole(`>> Emitting adjustDefeatedPoints: Table ${tableId} shifting ${targetPlayer}'s points value by: ${pointDelta}.`);
+        this.socket.emit('adjustDefeatedPoints', { tableId: parseInt(tableId), targetPlayer, amount: pointDelta });
     }
 }
