@@ -115,6 +115,17 @@ class GameScene extends Phaser.Scene {
                 this.handleStateRenderingLoop(this.lastReceivedState);
             }
         });
+        
+        this.socket.on('cardPlayedToSupportUpdate', (playEvent) => {
+            console.log(`📡 [NETWORK]: Received cardPlayedToSupportUpdate for ${playEvent.targetPlayer}`);
+            // Force a full table re-query or update local snapshot reference to redraw everything cleanly
+            this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
+        });
+
+        this.socket.on('cardPlayedToFighterUpdate', (playEvent) => {
+            console.log(`📡 [NETWORK]: Received cardPlayedToFighterUpdate for ${playEvent.targetPlayer}`);
+            this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
+        });
 
         this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
 
@@ -128,6 +139,64 @@ class GameScene extends Phaser.Scene {
             
             this.scanCardHitboxesForPreview(mouseX, mouseY);
         });
+        
+        // Enable global drag-and-drop listener hooks inside the Phaser 4 input tree
+        this.input.on('drag', (pointer, gameObject, dragX, dragY) => {
+            // Keep the card tracking directly underneath the user's cursor position mid-flight
+            gameObject.x = dragX;
+            gameObject.y = dragY;
+            gameObject.setDepth(1000); // Force the moving card above all board dividers
+        });
+
+        this.input.on('dragend', (pointer, gameObject, dropped) => {
+            // If the card was let go in open dead-space (not on a zone), snap it back to its seat
+            if (!dropped) {
+                if (gameObject.data && gameObject.data.has('originalX')) {
+                    gameObject.x = gameObject.data.get('originalX');
+                    gameObject.y = gameObject.data.get('originalY');
+                    gameObject.setDepth(0);
+                }
+            }
+        });
+
+        this.input.on('drop', (pointer, gameObject, dropZone) => {
+            const handIndex = gameObject.data.get('handIndex');
+            const zoneKey = dropZone.data.get('zoneKey');
+
+            console.log(`🎯 [DRAG DROP]: Card index ${handIndex} dropped onto target zone: ${zoneKey}`);
+
+            if (this.role === 'spectator') {
+                // Instantly bounce the card back if a spectator tries to manipulate objects
+                gameObject.x = gameObject.data.get('originalX');
+                gameObject.y = gameObject.data.get('originalY');
+                gameObject.setDepth(0);
+                return;
+            }
+
+            // Route network communications seamlessly depending on which drop zone was targeted
+            if (zoneKey === 'support') {
+                this.socket.emit('playCardToSupport', { 
+                    tableId: this.tableId, 
+                    targetPlayer: this.role, 
+                    handIndex: handIndex 
+                });
+                gameObject.destroy(); 
+            } else if (zoneKey === 'fighterA' || zoneKey === 'fighterB') {
+                this.socket.emit('playCardToFighter', {
+                    tableId: this.tableId,
+                    targetPlayer: this.role,
+                    handIndex: handIndex,
+                    targetSlot: zoneKey
+                });
+                gameObject.destroy(); 
+            } else {
+                // If unknown drop layout, fail-safe snap back
+                gameObject.x = gameObject.data.get('originalX');
+                gameObject.y = gameObject.data.get('originalY');
+                gameObject.setDepth(0);
+            }
+        });
+
     }
 
     // --- HELPER ROUTINE: CARD SPRITE FACTORY ---
@@ -175,13 +244,25 @@ class GameScene extends Phaser.Scene {
             this.fieldGraphics = this.add.graphics();
         }
 
-        // Flush previous text objects safely
+        // Safe cleanup iteration avoiding array modification side-effects
+        const childrenToDestroy = [];
         this.children.list.forEach(child => {
+            // Flush all old text layouts
             if (child.type === 'Text') {
-                child.destroy();
+                childrenToDestroy.push(child);
+            }
+            
+            // --- FLUSH OLD HAND/FIELD SPRITES ---
+            // If it is an Image component, mark it for garbage collection 
+            // so our upcoming render matrix can spawn clean, newly positioned assets.
+            if (child.type === 'Image') {
+                childrenToDestroy.push(child);
             }
         });
+        
+        childrenToDestroy.forEach(child => child.destroy());
     }
+
 
     // --- SUB-ROUTINE 2: DIVIDER DRAW PASS ---
     drawPanelDividers() {
@@ -231,6 +312,15 @@ class GameScene extends Phaser.Scene {
             this.fieldGraphics.strokeRect(point.x - this.cardWidth/2, point.y - this.cardHeight/2, this.cardWidth, this.cardHeight);
             this.add.text(point.x, point.y, label, { fontSize: '10px', fontFamily: 'monospace', color: '#64748b' }).setOrigin(0.5);
 
+            if (c === this.fieldCoordinates.local && (zoneKey === 'fighterA' || zoneKey === 'fighterB')) {
+                // Re-instantiate dedicated localized hitbox target properties
+                const propName = `localDrop_${zoneKey}`;
+                if (this[propName]) this[propName].destroy();
+
+                this[propName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
+                this[propName].setRectangleDropZone(this.cardWidth, this.cardHeight);
+                this[propName].setData('zoneKey', zoneKey);
+            }
             // 2. --- DYNAMIC RENDER LINK: FIGHTER SLOTS REVEAL ---
             if (zoneKey === 'fighterA' || zoneKey === 'fighterB') {
                 const fighterSlot = bZone[zoneKey]; // Reads fighterA or fighterB from state
@@ -288,18 +378,27 @@ class GameScene extends Phaser.Scene {
         this.fieldGraphics.lineStyle(2, 0xffffff, 0.08);
         this.fieldGraphics.strokeRoundedRect(trayX, trayY, c.trayWidth, c.trayHeight, borderRadiusRadius);
 
+        // --- NEW DROPAZONE ATTACHMENT FOR LOCAL PLAYER ---
+        if (c === this.fieldCoordinates.local) {
+            if (this.localSupportDropZone) this.localSupportDropZone.destroy();
+            
+            // Create a matching physical zone bounding box covering the entire support shelf shape
+            this.localSupportDropZone = this.add.zone(trayX + c.trayWidth/2, trayY + c.trayHeight/2, c.trayWidth, c.trayHeight);
+            this.localSupportDropZone.setRectangleDropZone(c.trayWidth, c.trayHeight);
+            this.localSupportDropZone.setData('zoneKey', 'support');
+        }
+
         supportCards.forEach((card, index) => {
             const shiftX = c.supportStart.x + (index * c.supportOverlap);
             const shiftY = c.supportStart.y;
-
-            // DYNAMIC UPDATE: Replaces the rectangle graphics blocks with true textures!
             this.renderCardSprite(shiftX, shiftY, card, card.isTapped);
         });
 
         this.add.text(trayX + 10, trayY - 14, `SUPPORT ZONE COUNT: ${supportCards.length}`, {
-            fontSize: '11px', fontFamily: 'monospace', fill: '#38bdf8', fontWeight: 'bold'
+            fontSize: '11px', fontFamily: 'monospace', color: '#38bdf8', fontWeight: 'bold'
         }).setOrigin(0, 0.5);
     }
+
 
     // --- SUB-ROUTINE 6: HAND COLUMN MATRIX MATRIX RENDERER ---
     drawHandColumn(c, pData) {
@@ -312,10 +411,41 @@ class GameScene extends Phaser.Scene {
             const cardX = c.handStart.x + (col * c.handSpacingX);
             const cardY = c.handStart.y + (row * c.handSpacingY);
 
-            // DYNAMIC UPDATE: Replaces the green green outline boxes with true card images!
-            this.renderCardSprite(cardX, cardY, card, false);
+            // Check if this is the active user's local hand perspective
+            if (c === this.fieldCoordinates.local) {
+                let bundleKey = 'system_ui';
+                let frameKey = 'card_back';
+
+                if (card && card.name !== "Card Back") {
+                    const cardId = card.id || "";
+                    frameKey = cardId;
+                    if (cardId.startsWith('BS1-')) bundleKey = 'BS01_cards';
+                    else if (cardId.startsWith('BS2-')) bundleKey = 'BS02_cards';
+                    else if (cardId.startsWith('BS3-')) bundleKey = 'BS03_cards';
+                    else if (cardId.startsWith('BS10-')) bundleKey = 'BS10_cards';
+                }
+
+                // Spawn an explicit image instead of a flat proxy to allow drag injection
+                const interactiveCard = this.add.image(cardX, cardY, bundleKey, frameKey);
+                interactiveCard.setDisplaySize(this.cardWidth, this.cardHeight);
+                interactiveCard.setAngle(card?.isTapped ? 90 : 0);
+
+                // Cache spatial positioning meta-tags onto the Phaser data storage container
+                interactiveCard.setData('originalX', cardX);
+                interactiveCard.setData('originalY', cardY);
+                interactiveCard.setData('handIndex', index);
+
+                // Activate modern Phaser interactive drag state loops
+                interactiveCard.setInteractive({ useHandCursor: true });
+                this.input.setDraggable(interactiveCard);
+
+            } else {
+                // If it is the opponent's hand, keep rendering normal non-interactive sprites
+                this.renderCardSprite(cardX, cardY, card, false);
+            }
         });
     }
+
 
 
     // --- SUB-ROUTINE 7: CARD INSPECTOR WRAPPER ---
