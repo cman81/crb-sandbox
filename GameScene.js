@@ -1,0 +1,366 @@
+class GameScene extends Phaser.Scene {
+    constructor() {
+        super({ key: 'GameScene' });
+        this.socket = null;
+        this.tableId = null;
+        this.role = null;
+        this.fieldGraphics = null;
+    }
+
+    init(data) {
+        this.tableId = data.tableId || 1;
+        this.role = data.role || 'spectator';
+
+        const roomColors = [
+            0x1a2238, 0x1b3a2b, 0x3d1414, 0x2d1a3a, 
+            0x133337, 0x422815, 0x2c3531, 0x1a1c1e
+        ];
+        this.backgroundColor = roomColors[(this.tableId - 1) % roomColors.length];
+    }
+
+    preload() {
+        this.load.atlasPCT('BS01_cards', 'assets/BS01.pct', 'assets');
+        this.load.atlasPCT('BS02_cards', 'assets/BS02.pct', 'assets');
+        this.load.atlasPCT('BS03_cards', 'assets/BS03.pct', 'assets');
+        this.load.atlasPCT('BS10_cards', 'assets/atlas.pct', 'assets');
+    }
+
+    create() {
+        // 1. Paint the entire 1920x1080 canvas viewport window space with this table's flat arena color
+        const bgFill = this.add.graphics();
+        bgFill.fillStyle(this.backgroundColor, 1);
+        bgFill.fillRect(0, 0, 1920, 1080);
+        bgFill.setDepth(-200);
+
+        // 2. Define Card Dimensions (Standard Field size)
+        this.cardWidth = 110;
+        this.cardHeight = 154;
+
+        // 3. THREE-COLUMN HORIZONTAL GRID MATRIX COORDINATES WITH ADJUSTED TRAYS
+        this.fieldCoordinates = {
+            local: {
+                deck:        { x: 1450, y: 700 }, 
+                discard:     { x: 1450, y: 880 }, 
+                defeated:    { x: 470,  y: 700 }, 
+                stage:       { x: 1310, y: 700 }, 
+                fighterA:    { x: 760,  y: 700 }, 
+                fighterB:    { x: 1160, y: 700 },
+                
+                // Bottom tray layout specs
+                supportStart:   { x: 600,  y: 920 }, // Starts left (600), cascades right
+                supportOverlap: 25,                  // Cascades left-to-right (+25)
+                trayWidth:      730,                 
+                trayHeight:     166,                 
+                
+                handStart:   { x: 80,   y: 650 },
+                handSpacingX: 115,
+                handSpacingY: 170
+            },
+            remote: {
+                deck:        { x: 470,  y: 380 }, 
+                discard:     { x: 470,  y: 200 }, 
+                defeated:    { x: 1450, y: 380 }, 
+                stage:       { x: 610,  y: 380 }, 
+                fighterA:    { x: 1160, y: 380 }, 
+                fighterB:    { x: 760,  y: 380 }, 
+                
+                // FIXED TOP TRAY REALIGNMENT:
+                // Changed supportStart.x from 1320 (right side) to 600 (left side)
+                // Changed supportOverlap from -25 (leftward) to +25 (rightward)
+                supportStart:   { x: 600,  y: 160 }, // Starts left (600) like the bottom tray
+                supportOverlap: 25,                  // Cascades left-to-right (+25)
+                trayWidth:      730,
+                trayHeight:     166,
+                
+                handStart:   { x: 80,   y: 120 },
+                handSpacingX: 115,
+                handSpacingY: 170
+            },
+            previewAnchor: { x: 1728, y: 540 }
+        };
+
+        // 4. WebSocket Sync Handshakes: Reuse the persistent global socket instance
+        this.socket = globalSocket;
+        this.socket.emit('joinTable', { tableId: this.tableId, role: this.role });
+
+        // --- Inside your create() method, replace the stateUpdate block with this: ---
+        this.socket.on('stateUpdate', (sanitizedState) => {
+            this.lastReceivedState = sanitizedState; // Keep an active local data reference copy
+            this.handleStateRenderingLoop(sanitizedState);
+        });
+
+        this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
+
+        this.selectedPreviewCard = null; // Caches the active card loaded into Column 3
+
+        // Bind the spacebar key to a clean input tracker callback routine
+        this.input.keyboard.on('keydown-SPACE', () => {
+            // Grab the current viewport coordinates of the mouse cursor pointer
+            const mouseX = this.input.activePointer.x;
+            const mouseY = this.input.activePointer.y;
+            
+            this.scanCardHitboxesForPreview(mouseX, mouseY);
+        });
+    }
+
+    // --- HELPER ROUTINE: CARD SPRITE FACTORY ---
+    // Renders either the high-fidelity card graphic or a face-down card back
+    renderCardSprite(x, y, card, isTapped) {
+        let bundleKey = 'system_ui';
+        let frameKey = 'card_back'; // Change this string to match your official card back frame ID inside atlas.pct
+
+        if (card && card.name !== "Card Back") {
+            const cardId = card.id || "";
+            frameKey = cardId;
+
+            // Automatically route the card to the correct loaded asset texture bundle
+            if (cardId.startsWith('BS1-')) bundleKey = 'BS01_cards';
+            else if (cardId.startsWith('BS2-')) bundleKey = 'BS02_cards';
+            else if (cardId.startsWith('BS3-')) bundleKey = 'BS03_cards';
+            else if (cardId.startsWith('BS10-')) bundleKey = 'BS10_cards';
+        }
+
+        // Add the native Phaser image sprite element using the custom plugin cache frame
+        const cardSprite = this.add.image(x, y, bundleKey, frameKey);
+        cardSprite.setDisplaySize(this.cardWidth, this.cardHeight);
+
+        // Manage tapped orientation angle changes graphically
+        if (isTapped || card?.isTapped) {
+            cardSprite.setAngle(90); // Rests the card 90-degrees sideways
+        } else {
+            cardSprite.setAngle(0);
+        }
+    }
+
+
+    handleStateRenderingLoop(state) {
+        this.resetRenderLayer();
+        this.drawPanelDividers();
+        this.drawFieldBoard(state);
+        this.drawPreviewPanel();
+    }
+
+    // --- SUB-ROUTINE 1: LAYER RESET ---
+    resetRenderLayer() {
+        if (this.fieldGraphics) {
+            this.fieldGraphics.clear();
+        } else {
+            this.fieldGraphics = this.add.graphics();
+        }
+
+        // Flush previous text objects safely
+        this.children.list.forEach(child => {
+            if (child.type === 'Text') {
+                child.destroy();
+            }
+        });
+    }
+
+    // --- SUB-ROUTINE 2: DIVIDER DRAW PASS ---
+    drawPanelDividers() {
+        this.fieldGraphics.lineStyle(4, 0x334155, 1);
+        this.fieldGraphics.lineBetween(384, 0, 384, 1080);  // Column 1 | Column 2 Boundary Line
+        this.fieldGraphics.lineBetween(1536, 0, 1536, 1080); // Column 2 | Column 3 Boundary Line
+        
+        this.fieldGraphics.lineStyle(2, 0x334155, 0.5);
+        this.fieldGraphics.lineBetween(0, 540, 1536, 540);   // Center Divide
+
+        const headerStyle = { fontSize: '14px', fontFamily: 'monospace', fill: '#64748b', fontWeight: 'bold' };
+        this.add.text(20, 20, '🗂️ OPPONENT HAND', headerStyle);
+        this.add.text(20, 560, '🗂️ PLAYER HAND', headerStyle);
+        this.add.text(404, 20, `🎮 ARENA ZONE (FIELD TERMINAL ${this.tableId})`, headerStyle);
+        this.add.text(1556, 20, '🔍 CARD INSPECTION PREVIEW', headerStyle);
+    }
+
+    // --- SUB-ROUTINE 3: FIELD BOARD COORDINATOR ---
+    drawFieldBoard(state) {
+        this.fieldGraphics.lineStyle(2, 0xffffff, 0.15);
+        
+        const isPlayerB = this.role === 'playerB';
+        const perspectiveMap = [
+            { stateKey: isPlayerB ? 'playerB' : 'playerA', coordKey: 'local' },
+            { stateKey: isPlayerB ? 'playerA' : 'playerB', coordKey: 'remote' }
+        ];
+
+        perspectiveMap.forEach(p => {
+            const c = this.fieldCoordinates[p.coordKey];
+            const pData = state[p.stateKey] || {};
+
+            this.drawStaticSlots(c, pData);
+            this.drawSupportTray(c, pData);
+            this.drawHandColumn(c, pData);
+        });
+    }
+
+    // --- SUB-ROUTINE 4: STATIC SLOTS COMPILER ---
+    drawStaticSlots(c, pData) {
+        const drawZoneBox = (point, label) => {
+            this.fieldGraphics.fillStyle(0x000000, 0.2);
+            this.fieldGraphics.fillRect(point.x - this.cardWidth/2, point.y - this.cardHeight/2, this.cardWidth, this.cardHeight);
+            this.fieldGraphics.strokeRect(point.x - this.cardWidth/2, point.y - this.cardHeight/2, this.cardWidth, this.cardHeight);
+            this.add.text(point.x, point.y, label, { fontSize: '10px', fontFamily: 'monospace', fill: '#64748b' }).setOrigin(0.5);
+        };
+
+        drawZoneBox(c.deck, 'DECK');
+        drawZoneBox(c.discard, 'DISCARD');
+        drawZoneBox(c.defeated, 'DEFEATED');
+        drawZoneBox(c.stage, 'STAGE');
+        drawZoneBox(c.fighterA, 'FIGHTER A');
+        drawZoneBox(c.fighterB, 'FIGHTER B');
+
+        const breakPts = pData.defeatedPoints || 0;
+        this.add.text(c.defeated.x, c.defeated.y + this.cardHeight/2 + 15, `BREAK POINTS: ${breakPts} / 10`, {
+            fontSize: '12px', fontFamily: 'monospace', fill: breakPts >= 7 ? '#ff3333' : '#e2e8f0', fontWeight: 'bold'
+        }).setOrigin(0.5);
+    }
+
+    // --- SUB-ROUTINE 5: SUPPORT TRAY CASCADER ---
+    drawSupportTray(c, pData) {
+        const supportCards = pData.support || [];
+        const borderRadiusRadius = 12;
+
+        const trayX = c.supportStart.x - this.cardWidth / 2 - 6;
+        const trayY = c.supportStart.y - c.trayHeight / 2;
+
+        this.fieldGraphics.fillStyle(0x000000, 0.35);
+        this.fieldGraphics.fillRoundedRect(trayX, trayY, c.trayWidth, c.trayHeight, borderRadiusRadius);
+        this.fieldGraphics.lineStyle(2, 0xffffff, 0.08);
+        this.fieldGraphics.strokeRoundedRect(trayX, trayY, c.trayWidth, c.trayHeight, borderRadiusRadius);
+
+        supportCards.forEach((card, index) => {
+            const shiftX = c.supportStart.x + (index * c.supportOverlap);
+            const shiftY = c.supportStart.y;
+
+            // DYNAMIC UPDATE: Replaces the rectangle graphics blocks with true textures!
+            this.renderCardSprite(shiftX, shiftY, card, card.isTapped);
+        });
+
+        this.add.text(trayX + 10, trayY - 14, `SUPPORT ZONE COUNT: ${supportCards.length}`, {
+            fontSize: '11px', fontFamily: 'monospace', fill: '#38bdf8', fontWeight: 'bold'
+        }).setOrigin(0, 0.5);
+    }
+
+    // --- SUB-ROUTINE 6: HAND COLUMN MATRIX MATRIX RENDERER ---
+    drawHandColumn(c, pData) {
+        const hand = pData.hand || [];
+        
+        hand.forEach((card, index) => {
+            const col = index % 3;
+            const row = Math.floor(index / 3);
+
+            const cardX = c.handStart.x + (col * c.handSpacingX);
+            const cardY = c.handStart.y + (row * c.handSpacingY);
+
+            // DYNAMIC UPDATE: Replaces the green green outline boxes with true card images!
+            this.renderCardSprite(cardX, cardY, card, false);
+        });
+    }
+
+
+    // --- SUB-ROUTINE 7: CARD INSPECTOR WRAPPER ---
+    drawPreviewPanel() {
+        const preview = this.fieldCoordinates.previewAnchor;
+        const bigWidth = 260;
+        const bigHeight = 364;
+
+        // Draw solid dark background shell plate container
+        this.fieldGraphics.fillStyle(0x020617, 1);
+        this.fieldGraphics.fillRect(preview.x - bigWidth/2, preview.y - bigHeight/2, bigWidth, bigHeight);
+        
+        // Glow cyan if a card is selected, keep slate grey if empty
+        this.fieldGraphics.lineStyle(3, this.selectedPreviewCard ? 0x38bdf8 : 0x334155, 1);
+        this.fieldGraphics.strokeRect(preview.x - bigWidth/2, preview.y - bigHeight/2, bigWidth, bigHeight);
+        
+        if (this.selectedPreviewCard) {
+            const card = this.selectedPreviewCard;
+            
+            let bundleKey = 'system_ui';
+            let frameKey = 'card_back'; // Generic card back fallback
+
+            if (card.name !== "Card Back") {
+                const cardId = card.id || "";
+                frameKey = cardId;
+
+                // Match the ID code to its proper high-res .pct asset bundle key
+                if (cardId.startsWith('BS1-')) bundleKey = 'BS01_cards';
+                else if (cardId.startsWith('BS2-')) bundleKey = 'BS02_cards';
+                else if (cardId.startsWith('BS3-')) bundleKey = 'BS03_cards';
+                else if (cardId.startsWith('BS10-')) bundleKey = 'BS10_cards';
+            }
+
+            // Render the high-res texture image crop inside the Column 3 placeholder bounds
+            const bigPreviewImage = this.add.image(preview.x, preview.y, bundleKey, frameKey);
+            bigPreviewImage.setDisplaySize(bigWidth, bigHeight);
+
+            // Print the unmasked metadata details directly underneath the image frame block
+            this.add.text(preview.x, preview.y + bigHeight/2 + 20, `CODE: ${card.name === 'Card Back' ? 'UNKNOWN' : card.id}`, {
+                fontSize: '13px', fontFamily: 'monospace', fill: '#38bdf8', fontWeight: 'bold'
+            }).setOrigin(0.5);
+
+        } else {
+            this.add.text(preview.x, preview.y, "[ HOVER CURSOR OVER A CARD\n& PRESS SPACEBAR TO INSPECT ]", {
+                fontSize: '12px', fontFamily: 'monospace', fill: '#64748b', align: 'center'
+            }).setOrigin(0.5);
+        }
+    }
+
+    // --- HELPER METHOD: MOUSE VECTOR SCANNER ---
+    scanCardHitboxesForPreview(mouseX, mouseY) {
+        if (!this.lastReceivedState) return;
+
+        const state = this.lastReceivedState;
+        const isPlayerB = this.role === 'playerB';
+        const perspectiveMap = [
+            { stateKey: isPlayerB ? 'playerB' : 'playerA', coordKey: 'local' },
+            { stateKey: isPlayerB ? 'playerA' : 'playerB', coordKey: 'remote' }
+        ];
+
+        for (const p of perspectiveMap) {
+            const c = this.fieldCoordinates[p.coordKey];
+            
+            // 1. SCAN THE HAND REGION (COLUMN 1)
+            const hand = state[p.stateKey]?.hand || [];
+            for (let index = 0; index < hand.length; index++) {
+                const card = hand[index];
+                const col = index % 3;
+                const row = Math.floor(index / 3);
+                const cardX = c.handStart.x + (col * c.handSpacingX);
+                const cardY = c.handStart.y + (row * c.handSpacingY);
+
+                if (mouseX >= cardX - this.cardWidth/2 && mouseX <= cardX + this.cardWidth/2 &&
+                    mouseY >= cardY - this.cardHeight/2 && mouseY <= cardY + this.cardHeight/2) {
+                    
+                    console.log(`🎯 [ISOLATED PREVIEW TARGET]: Hand card locked: ${card.id}`);
+                    this.selectedPreviewCard = card;
+                    
+                    // PERFORMANCE FIXED: Only redraw the preview section, skipping full board overhaul loops
+                    this.drawPreviewPanel();
+                    return; 
+                }
+            }
+
+            // 2. SCAN THE SUPPORT AREA TRAY (COLUMN 2)
+            const support = state[p.stateKey]?.support || [];
+            const reversedSupport = support.slice().reverse();
+
+            for (let reversedIndex = 0; reversedIndex < reversedSupport.length; reversedIndex++) {
+                const card = reversedSupport[reversedIndex];
+                const originalIndex = (support.length - 1) - reversedIndex;
+                
+                const shiftX = c.supportStart.x + (originalIndex * c.supportOverlap);
+                const shiftY = c.supportStart.y;
+
+                if (mouseX >= shiftX - this.cardWidth/2 && mouseX <= shiftX + this.cardWidth/2 &&
+                    mouseY >= shiftY - this.cardHeight/2 && mouseY <= shiftY + this.cardHeight/2) {
+                    
+                    console.log(`🎯 [ISOLATED PREVIEW TARGET]: Top support card locked: ${card.id}`);
+                    this.selectedPreviewCard = card;
+                    
+                    // PERFORMANCE FIXED: Isolated redraw call
+                    this.drawPreviewPanel();
+                    return; 
+                }
+            }
+        }
+    }
+}

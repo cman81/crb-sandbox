@@ -36,16 +36,16 @@
     <!-- THE CONTAINER: The target hook element for our game window -->
     <div id="phaser-game"></div>
 
-    <!-- LOAD THE WEBSOCKET ENGINE CLIENT DEPENDENCY FIRST -->
+    <!-- 1. LOAD EXTERNAL ENGINES & LIBRARIES FIRST -->
     <script src="vendor/socketio/socket.io.min.js"></script>
-
-    <!-- LOAD PHASER: Pull the game engine framework -->
     <script src="vendor/phaserjs/phaser.min.js"></script>
 
-    <!-- Isolated Game Component Blueprints -->
+    <!-- 2. LOAD COMPONENT SCENE BLUEPRINTS (ORDER INDEPENDENT BUT MUST BE BEFORE GAME.JS) -->
+    <script src="LobbyScene.js"></script>
+    <script src="GameScene.js"></script>
     <script src="DeveloperMode.js"></script>
 
-    <!-- Main Execution Engine Setup Layer -->
+    <!-- 3. MAIN EXECUTION ENGINE CONFIGURATION AND CORE BOOT LAYER -->
     <script src="game.js"></script>
 
 </body>

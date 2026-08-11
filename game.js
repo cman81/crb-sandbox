@@ -1,11 +1,14 @@
+// 1. Establish the single, global network connection first
+const globalSocket = io('http://localhost:3000');
+
+// 2. Standard game configuration object
 const config = {
     type: Phaser.AUTO,
-    parent: 'phaser-game',
     width: 1920,
     height: 1080,
-    dom: {
-        createContainer: true // Required for HTML inputs
-    },
-    scene: [ DeveloperMode ]
+    parent: 'phaser-game',
+    dom: { createContainer: true },
+    scene: [LobbyScene, GameScene, DeveloperMode]
 };
+
 const game = new Phaser.Game(config);

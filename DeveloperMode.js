@@ -8,7 +8,7 @@ class DeveloperMode extends Phaser.Scene {
     }
 
     preload() {
-        this.socket = io('http://localhost:3000');
+        this.socket = globalSocket;
     }
 
     create() {
