@@ -37,16 +37,30 @@ class LobbyScene extends Phaser.Scene {
                 const tableId = parseInt(document.getElementById('lobbyTableId').value, 10);
                 const role = document.getElementById('lobbyRole').value;
 
-                // --- SMART SCENE ROUTING REDIRECT LOOP ---
                 if (role === 'spectator') {
-                    // Spectators bypass asset loading rooms entirely
+                    // Spectators don't own decks; route them straight to the arena view map
                     this.scene.start('GameScene', { tableId, role });
                 } else {
-                    // Competitors must process and register their deck text lists first!
-                    this.scene.start('DeckPrepScene', { tableId, role });
+                    // 🚨 TARGETED CHECK: Ask server if THIS SPECIFIC PLAYER SLOT already has a loaded deck array
+                    this.socket.emit('checkTableStatus', { tableId, role });
+
+                    // Set up a clean, one-time structural network interceptor handler
+                    this.socket.once('tableStatusResponse', (status) => {
+                        // Ensure the server response explicitly matches our active table and seat intent
+                        if (status.tableId === tableId && status.role === role) {
+                            if (status.hasDeckLoaded) {
+                                console.log(`🎮 Seat ${role} at Table ${tableId} already has a loaded deck. Routing straight to GameScene.`);
+                                this.scene.start('GameScene', { tableId, role });
+                            } else {
+                                console.log(`🎴 Seat ${role} at Table ${tableId} has no deck data. Routing to DeckPrepScene.`);
+                                this.scene.start('DeckPrepScene', { tableId, role });
+                            }
+                        }
+                    });
                 }
             }
         });
+
 
         // CHEAT CODE ENGINE: Hidden door that triggers DeveloperMode only while inside Lobby
         let inputSequenceBuffer = '';

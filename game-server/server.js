@@ -778,6 +778,23 @@ io.on('connection', (socket) => {
 
     socket.emit('serverNotice', `Moved card at discard index ${idx} to ${targetPlayer}'s defeated zone.`);
   });
+
+  socket.on('checkTableStatus', ({ tableId, role }) => {
+    const table = tables.find(t => t.id === parseInt(tableId));
+    if (!table) return socket.emit('errorMsg', 'Table not found.');
+    
+    // Safe reference evaluation: check if the targeted seat has an initialized deck array with elements
+    const targetPlayerState = table.gameState[role];
+    const hasDeckLoaded = !!(targetPlayerState && targetPlayerState.deck && targetPlayerState.deck.length > 0);
+
+    // Send back the precise localized seat evaluation payload
+    socket.emit('tableStatusResponse', {
+      tableId: table.id,
+      role: role,
+      hasDeckLoaded: hasDeckLoaded
+    });
+  });
+
 });
 
 console.log('TCG Server on 3000');
