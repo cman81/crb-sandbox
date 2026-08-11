@@ -263,7 +263,6 @@ class GameScene extends Phaser.Scene {
         childrenToDestroy.forEach(child => child.destroy());
     }
 
-
     // --- SUB-ROUTINE 2: DIVIDER DRAW PASS ---
     drawPanelDividers() {
         this.fieldGraphics.lineStyle(4, 0x334155, 1);
@@ -445,8 +444,6 @@ class GameScene extends Phaser.Scene {
             }
         });
     }
-
-
 
     // --- SUB-ROUTINE 7: CARD INSPECTOR WRAPPER ---
     drawPreviewPanel() {
