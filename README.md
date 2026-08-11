@@ -36,7 +36,9 @@ The project splits state preservation and client-side view logic across two deco
 * **`game.js`**: Core Phaser configuration file defining viewport dimensions, renderer modes, and scene order.
 * **`LobbyScene.js`**: Initial interaction layer handling server table discovery, matchmaking, and role registration.
 * **`GameScene.js`**: The main field rendering suite mapping interactive board zones, localized visual components, high-fidelity card inspection mechanics, and mouse interactions.
+* **`DeckPrepScene.js`**: Loaded via direct global script reference. Interfaces between Lobby and Match rooms. Employs embedded HTML textareas to extract text deck lists, parses cards natively via regex formatting, displays a responsive visual miniature thumbnail preview matrix grid, and pushes sequential outbound events (`loadDeck` and `shuffleDeck`) to server.js before migrating view targets cleanly over into `GameScene`.
 * **`DeveloperMode.js`**: An extensive testing overlay running HTML DOM panels that simulate deck layouts, inspect hidden states, and track raw structural network interactions.
+* **`server.js`**: Headless backend server tracking active room matrix arrays, handling secure role masking, and executing state mutation payloads.
 
 ---
 
@@ -53,7 +55,7 @@ The `DeveloperMode` scene operates as an administrative overlay split into three
 ### 2. `GameScene.js` Render Matrix & Visual Columns
 The main arena runs at a fixed canvas resolution of **1920x1080** pixels, mapped out across three distinct operational grid columns divided by bounding vectors.
 * **Column 1 (`x: 0` to `384`)**: Dedicated Hand Management Workspace. Renders local cards inside an auto-wrapping 3-column mathematical grid (Width step: 115px, Height step: 170px). Opponent hand cards render as static, unmovable face-down arrays.
-* **Column 2 (`x: 384` to `1536`)**: Core Arena Layout. Divided horizontally at `y: 540` to cleanly mirror `local` and `remote` perspectives based on role assignments (`playerA` vs `playerB`). Holds static drop hitboxes for `fighterA`, `fighterB`, `stage`, `discard`, and `defeated` areas, alongside a horizontal cascading `support` tray.
+* **Column 2 (`x: 384` to `1536`)**: Core Arena Layout. Divided horizontally at `y: 540` to cleanly mirror `local` and `remote` perspectives based on role assignments (`playerA` vs `playerB`). Holds static drop hitboxes for `fighterA`, `fighterB`, `stage`, `discard`, and `defeated` areas, alongside a horizontal cascading `support` tray (Width step: +25px per card).
 * **Column 3 (`x: 1536` to `1920`)**: Full-scale Card Inspection Preview Panel. Uses an explicit bounds-sweeper step (`x > 1536`) to clean old imagery and prevent memory leaks. Renders hovered card components at a scale of `260x364` pixels centered at `x: 1728, y: 540`.
 
 ### 3. Mouse Vectors & Spacebar Hit-Test Mechanics
@@ -61,16 +63,13 @@ Card selection does not track active mouse hover states globally to preserve ren
 1. **Hand Matrix**: Evaluates column/row offsets in Column 1.
 2. **Support Area Tray**: Slices and reverses the lane array to prioritize overlapping cards on top. If a bounding match is found, the engine updates `this.selectedPreviewCard` and executes an isolated redraw restricted to Column 3, leaving the main board unaffected.
 
-### 4. Interactive Drag-and-Drop Loop
-The local player's hand components have physics-based dragging injected via `this.input.setDraggable`. Elements follow the active cursor at a prioritized height layer (`setDepth(1000)`). Dropping an element outside an active zone triggers an auto-snap routing method that snaps it back to its cached coordinates (`originalX`, `originalY`). Dropping onto a designated zone targets network emission events (`playCardToSupport` or `playCardToFighter`), dissolving the local asset upon completion. Spectators can visually move components, but drop interactions instantly flag a role constraint and reject changes before emitting payloads to the network.
-
-### 5. Texture Bundle Prefix Routing Table
-The internal card factory uses custom cache schemas (`this.load.atlasPCT`) rather than typical Phaser loaders. It matches asset codes to their respective high-resolution `.pct` sheet packs using specific string prefix keys:
-*   `BS1-` strings match texture bundle `BS01_cards`
-*   `BS2-` strings match texture bundle `BS02_cards`
-*   `BS3-` strings match texture bundle `BS03_cards`
-*   `BS10-` strings match texture bundle `BS10_cards`
-*   All unrecognized tags or objects containing a `"Card Back"` property route natively to the generic `system_ui` package via frame `card_back`. Tapped orientation shifts are hardcoded to a horizontal alignment of `setAngle(90)`.
+### 4. Authoritative State & Masking Model (`server.js`)
+The backend orchestrates structural consistency across 8 independent sandbox rooms. It features role-aware masking routines designed to protect data privacy while enforcing physical sandbox bounds:
+* **Zone Visibility Flags**: The `discard`, `support`, and `defeated` zones are transparently sent unmasked to all roles. Hands filter automatically to their respective seats.
+* **X-Ray Spectator Lens**: Decks are completely concealed from active competitors. Spectators bypass these masking boundaries, acquiring full visibility into player deck stacks.
+* **Face-Down Stack Obfuscation**: The `faceDownStack` sub-arrays nested underneath combat positions strip metadata values automatically—broadcasting uniform `Card Back` placeholders to *both* the zone owner and the opponent. Only spectators can inspect these hidden stacks natively.
+* **Array Coordinate Protocol**: Top-of-deck mutations utilize `.push()` and `.pop()` array methods (operating on the tail of the array). Bottom-of-deck insertions are unshifted explicitly to index `0` via `.unshift()`.
+* **Cryptographic UUID Sort**: Deck shuffles inject temporary `uuidv4` parameters onto each card block, sort using a structural `.localeCompare()` evaluation string loop, and delete the transient tokens before broadcasting.
 
 ---
 
@@ -87,10 +86,10 @@ The client connects through a global Socket instance (`globalSocket`) using the 
 | `loadDeck` | `{ tableId: Number, targetPlayer: String, deckList: Array }` | Sends a flattened array of parsed card items (`{ id, title }`) to build a deck. |
 | `getGameState`| `{ tableId: Number, role: String }` | Queries a complete room state snapshot evaluated under a specific view lens. |
 | `drawCard` | `{ tableId: Number, targetPlayer: String }` | Draws exactly 1 card from the deck to the hand. |
-| `draw6Cards` | `{ tableId: Number, targetPlayer: String }` | Setup utility drawing a complete starting hand. |
+| `draw6Cards` | `{ tableId: Number, targetPlayer: String }` | Setup utility drawing a complete 6-card starting hand. |
 | `shuffleDeck` | `{ tableId: Number, targetPlayer: String }` | Triggers a server-side randomize routine on the specified deck array. |
-| `playCardFaceDown`| `{ tableId: Number, targetPlayer: String, handIndex: Number }` | Deploys a hidden token to a primary zone. |
-| `flipCardFaceUp`| `{ tableId: Number, targetPlayer: String }` | Exposes a face-down item on the board. |
+| `playCardFaceDown`| `{ tableId: Number, targetPlayer: String, handIndex: Number }` | Deploys a hidden token out of hand to a primary fighterA zone. |
+| `flipCardFaceUp`| `{ tableId: Number, targetPlayer: String }` | Exposes a face-down item on the fighterA board position. |
 | `placeDeckCardToStack`| `{ tableId: Number, targetPlayer: String, targetSlot: String }` | Layers the top card of the deck underneath a target slot. |
 | `flipAndDiscardFromStack`| `{ tableId: Number, targetPlayer: String, targetSlot: String }` | Peels the top card from a stack and sends it face-up to the discard pile. |
 | `playCardToSupport`| `{ tableId: Number, targetPlayer: String, handIndex: Number }` | Commits a card from hand to the public support lane array. |
@@ -107,13 +106,14 @@ The client connects through a global Socket instance (`globalSocket`) using the 
 *   **`stateUpdate`**: Delivers a sanitized game state snapshot. Re-renders the **Hand Matrix** view using specific criteria based on role visibility.
 *   **`errorMsg`**: Receives server-side exception logs and prints them to the terminal console view.
 *   **`serverNotice`**: Confirms valid operations and triggers an immediate `getGameState` loop to sync client records.
-*   **`cardDrawnUpdate`**: Fired on active deck interactions. Triggers an optimized standalone local mutate path on `this.lastReceivedState`, updating element counts and re-rendering instantly without waiting for global server confirmation loops.
+*   **`cardDrawnUpdate`**: Asymmetric routing loops dispatch tailored payloads: Owner receives full stats, Opponent receives `maskCard()` blocks, and Spectators capture unmasked telemetry. Triggers an optimized standalone local path on `this.lastReceivedState` to update hand layouts instantly.
 *   **`cardStackedUpdate`**: Tracks layer counts when cards are added to field piles.
 *   **`cardPlayedToSupportUpdate` / `cardPlayedToFighterUpdate`**: Syncs visible field changes when cards enter public view lanes.
 *   **`cardTapUpdated`**: Coordinates rotation alignments based on tap conditions across lanes.
 *   **`cardMovedToDefeatedZone` / `defeatedPointsTickedUpdate`**: Updates win/loss scoring values (`BREAK POINTS: X / 10`). Changes text color to alert red (`#ff3333`) at 7+ points, and outputs an elimination warning notice if a total hits 10.
 *   **`cardDiscardedUpdate` / `stackFlippedAndDiscardedUpdate`**: Tracks changes to the public discard pile.
 *   **`handToDeckUpdate` / `discardRecycledUpdate`**: Synchronizes card totals when cards are recycled back into the deck.
+*   **`discardToDefeatedUpdate`**: Confirms a card from the discard heap was retired to the scoring zone.
 
 ---
 
@@ -121,9 +121,23 @@ The client connects through a global Socket instance (`globalSocket`) using the 
 
 When designing new features, expanding layouts, or fixing bugs, remember:
 *   **No Logic in Phaser**: All positional arrays, deck item lists, and scoreboard ticks are managed by `server.js`. Phaser is just a visual terminal.
-*   **Fog of War Protection**: Cards labeled `"Card Back"` must remain hidden. They do not reveal item properties unless the server sends a specific disclosure event payload.
+*   **Collision Detection Constraints**: The `playCardToFighter` event enforces a structural validation step—rejecting the inbound payload if a slot already holds an active asset reference.
 *   **Garbage Collection Pattern**: The canvas re-render flow operates by completely deleting and re-spawning all text and image structures (`resetRenderLayer`) rather than moving existing card objects across coordinates.
 *   **IP Constraint**: Completely rule-agnostic, generic TCG mechanics only. Avoid any direct references to specific card franchises or proprietary branding to prevent intellectual property issues.
+
+---
+
+## 🔐 System Controls & Hidden Dev Overrides
+
+### 1. Lobby Router Interceptors
+The initial screen manages connection parameters via `LobbyScene.js`. When a connection request executes, the system analyzes target seat payloads to prevent unauthorized field collisions and route workflows optimally:
+*   **Spectator View Route**: Skips initialization arrays entirely and transitions straight to the rendering pipelines inside `GameScene.js` as an observer.
+*   **Competitor View Route**: Redirects users directly into `DeckPrepScene.js` to parse text deck inputs before authorizing field instance initialization.
+
+### 2. Easter Egg Keyboard Telemetry Overrides
+The engine monitors background keyboard sequences inside the main menu lobby area. It uses a clean character collection index buffer to capture specialized codes without conflicting with browser navigation controls:
+*   **Activation Sequence**: Typing `d` ➔ `e` ➔ `v` sequentially anywhere on the page instantly drops the UI layer.
+*   **Behavioral Trigger**: Clears memory reference buffers, kills active menus, and fires an instantaneous hard context shift forcing the engine directly into the full admin array panel view (`DeveloperMode.js`).
 
 ---
 
@@ -131,15 +145,31 @@ When designing new features, expanding layouts, or fixing bugs, remember:
 <!-- PASTE THIS ENTIRE SECTION INTO A NEW AI SESSION TO INSTANTLY BOOTSTRAP CONTEXT -->
 *   **Project Name:** crb-sandbox
 *   **Tech Stack:** Phaser 4 (Beta/Esm), Socket.io, Node.js (`server.js`).
-*   **Core Architecture:** Rule-agnostic, multiplayer 2-player/spectator tabletop sandbox simulator. Engine acts as a visual terminal. State tracking, lanes, hands, scores, and Fog of War masking rules are strictly authoritative on `server.js`.
+*   **Core Architecture:** Rule-agnostic, multiplayer 2-player/spectator tabletop sandbox simulator. Engine acts as a pure visual terminal. State tracking, lanes, hands, scores, and Fog of War masking rules are strictly authoritative on `server.js`.
 *   **Rules Layer:** No rule enforcement or turn sequencing; features manual physical triggers for cards (move, stack, shuffle, draw, tap/rest) and scoring.
+*   **Backend Memory Matrix (server.js):**
+    *   Instantiates 8 tracked tables. Rooms maintain state blocks: `hand`, `deck`, `extraDeck`, `discard`, `support`, `defeated`, `defeatedPoints`.
+    *   Nested `battleZone` structural layouts hold components for `fighterA`, `fighterB`, and `stage`. Fighter positions manage unique object nodes: `{ card, faceDownStack: [] }`.
+*   **Authoritative Fog-of-War / Masking Architecture:**
+    *   `discard`, `support`, and `defeated` fields are unconditionally public.
+    *   `hand` and `extraDeck` arrays filter automatically to target players.
+    *   `deck` arrays block all players. **Only Spectators receive structural X-Ray unmasked access.**
+    *   `faceDownStack` data strips card properties and outputs uniform `Card Back` wrappers to both players (including the zone owner). Only Spectators see raw stack data.
+*   **Deck & Stack Index Arrays Protocol:**
+    *   *Top of Deck / Stack:* Hard-coded to the **end** of the array (`.push()` / `.pop()`).
+    *   *Bottom of Deck / Stack:* Hard-coded to index `0` / **beginning** of the array (`.unshift()`).
+    *   *Recycling Triggers:* `recycleDiscardToDeck` drains the discard array via a `while` block, turns items face-down, pushes them to the deck, and executes a full UUID-based sort routine (`.localeCompare`).
 *   **File Manifest:**
-    *   `index.html`: Entry point, styles, initialization of `globalSocket`.
-    *   `game.js`: Core Phaser config, viewport dimensions, renderer modes, scene registry.
-    *   `LobbyScene.js`: Discovery, table management (1-8), role selection.
-    *   `GameScene.js`: Primary canvas running 3 visual layout columns. Tracks mouse vectors via spacebar key coordinates for targeted asset inspections (`scanCardHitboxesForPreview`), handles horizontal cascading lane steps (+25px), local drag input wrappers, and texture routing for `BS1-`, `BS2-`, `BS3-`, and `BS10-` prefixes.
-    *   `DeveloperMode.js`: Debug console scene utilizing Phaser DOM elements. Features cross-tab data synchronizer, decklist regex parser (`^\s*(\d+)\s+(.*?)\s*\[([A-Za-z0-9-]+)\]`), auto-scrolling telemetry log, and a real-time index-mapped Hand Matrix table.
+    *   `index.html`: Entry point, styles, sequential scripts structure loading custom global network layer variables.
+    *   `game.js`: Core Phaser config, viewport dimensions (1920x1080), renderer modes, global window-scoped class scene registry.
+    *   `LobbyScene.js`: Discovery, table management (1-8), role selection. Includes hidden character key sequence listener buffer mapping the word `dev` to swap targets straight into `DeveloperMode`.
+    *   `DeckPrepScene.js`: Mid-tier data ingestion overlay between Lobby and Match rooms. Preloads texture assets, employs HTML textareas to extract inputs, flattens card properties utilizing identical regex formatting patterns (`^\s*(\d+)\s+(.*?)\s*\[([A-Za-z0-9-]+)\]`), and displays an 11-column miniature asset visual thumbnail grid.
+    *   `GameScene.js`: Primary canvas running 3 visual layout columns. Tracks mouse vectors via spacebar key coordinates for targeted asset inspections (`scanCardHitboxesForPreview`), handles horizontal cascading support lane steps (+25px), local drag input wrappers, and texture routing for `BS1-`, `BS2-`, `BS3-`, and `BS10-` prefixes.
+    *   `DeveloperMode.js`: Debug console scene utilizing Phaser DOM elements. Features cross-tab data synchronizer, auto-scrolling telemetry log, and a real-time index-mapped Hand Matrix table.
+    *   `server.js`: Node.js authoritative state engine running asymmetric payload slicing across customized network sockets.
+*   **Deck Insertion Sequence:** `DeckPrepScene.js` pushes a sequential packet burst to `server.js` upon verification: `loadDeck` ➔ `shuffleDeck` ➔ `draw6Cards`. It intercepts the server's shuffle confirmation notice to securely transition the client straight into `GameScene` with initialized starting hands.
 *   **State & Networking Matrix:**
     *   *Outbound Emissions:* `joinTable`, `leaveTable`, `loadDeck` (`[{id, title}]`), `getGameState`, `drawCard`, `draw6Cards`, `shuffleDeck`, `playCardFaceDown`, `flipCardFaceUp`, `placeDeckCardToStack`, `flipAndDiscardFromStack`, `playCardToSupport`, `playCardToFighter`, `toggleCardTap`, `discardCardFromHand`, `moveFighterToDefeated`, `adjustDefeatedPoints`, `moveDiscardToDefeated`, `recycleDiscardToDeck`, `playHandToTopDeck`, `playHandToBottomDeck`.
-    *   *Inbound Payload Processing:* `stateUpdate` (forces hand matrix render), `errorMsg`, `serverNotice` (auto-fires `getGameState`), `cardDrawnUpdate` (optimized local mutate intercept path), `cardStackedUpdate`, `cardPlayedToSupportUpdate`, `cardPlayedToFighterUpdate`, `cardTapUpdated` (updates orientation), `cardMovedToDefeatedZone`, `defeatedPointsTickedUpdate` (triggers match loss alert at 10+ points), `cardDiscardedUpdate`, `stackFlippedAndDiscardedUpdate`, `handToDeckUpdate`, `discardRecycledUpdate`.
+    *   *Inbound Payload Processing:* `stateUpdate` (forces hand matrix render), `errorMsg`, `serverNotice` (auto-fires `getGameState`), `cardDrawnUpdate` (asymmetric network payload slicing for Owner, Opponent, and Spectator paths), `cardStackedUpdate`, `cardPlayedToSupportUpdate`, `cardPlayedToFighterUpdate`, `cardTapUpdated` (updates orientation), `cardMovedToDefeatedZone`, `defeatedPointsTickedUpdate` (triggers match loss alert at 10+ points), `cardDiscardedUpdate`, `stackFlippedAndDiscardedUpdate`, `handToDeckUpdate`, `discardRecycledUpdate`, `discardToDefeatedUpdate`.
 *   **IP Constraint:** Completely rule-agnostic, generic TCG mechanics only. Avoid any direct references to specific card franchises or proprietary branding to prevent intellectual property issues.
+

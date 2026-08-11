@@ -37,8 +37,14 @@ class LobbyScene extends Phaser.Scene {
                 const tableId = parseInt(document.getElementById('lobbyTableId').value, 10);
                 const role = document.getElementById('lobbyRole').value;
 
-                // Stop this lobby scene and pass metrics directly over to the main GameScene layout
-                this.scene.start('GameScene', { tableId, role });
+                // --- SMART SCENE ROUTING REDIRECT LOOP ---
+                if (role === 'spectator') {
+                    // Spectators bypass asset loading rooms entirely
+                    this.scene.start('GameScene', { tableId, role });
+                } else {
+                    // Competitors must process and register their deck text lists first!
+                    this.scene.start('DeckPrepScene', { tableId, role });
+                }
             }
         });
 
