@@ -221,35 +221,45 @@ class GameScene extends Phaser.Scene {
 
     // --- SUB-ROUTINE 4: STATIC SLOTS COMPILER ---
     drawStaticSlots(c, pData) {
+        // Safe reference capture of the server's nested battleZone structure
+        const bZone = pData.battleZone || {};
+
         const drawZoneBox = (point, label, zoneKey) => {
+            // 1. Render the background placeholder tray
             this.fieldGraphics.fillStyle(0x000000, 0.2);
             this.fieldGraphics.fillRect(point.x - this.cardWidth/2, point.y - this.cardHeight/2, this.cardWidth, this.cardHeight);
             this.fieldGraphics.strokeRect(point.x - this.cardWidth/2, point.y - this.cardHeight/2, this.cardWidth, this.cardHeight);
             this.add.text(point.x, point.y, label, { fontSize: '10px', fontFamily: 'monospace', color: '#64748b' }).setOrigin(0.5);
 
-            // --- DECK DRAW INTERACTION LINK ---
-            // If this is the local perspective deck, create an invisible hit zone over it
-            if (zoneKey === 'deck' && c === this.fieldCoordinates.local) {
-                // Remove previous interactive zone if it exists to prevent event doubling
-                if (this.localDeckHitZone) this.localDeckHitZone.destroy();
+            // 2. --- DYNAMIC RENDER LINK: FIGHTER SLOTS REVEAL ---
+            if (zoneKey === 'fighterA' || zoneKey === 'fighterB') {
+                const fighterSlot = bZone[zoneKey]; // Reads fighterA or fighterB from state
+                const activeCard = fighterSlot?.card;
 
+                if (activeCard && Object.keys(activeCard).length > 0) {
+                    // Spawns the card sprite at the correct matrix position, accounting for tapped states
+                    this.renderCardSprite(point.x, point.y, activeCard, activeCard.isTapped);
+                }
+            }
+
+            // 3. --- DYNAMIC RENDER LINK: STAGE SLOT REVEAL ---
+            if (zoneKey === 'stage' && bZone.stage) {
+                this.renderCardSprite(point.x, point.y, bZone.stage, bZone.stage.isTapped);
+            }
+
+            // 4. --- DECK DRAW INTERACTION LINK (From our previous step) ---
+            if (zoneKey === 'deck' && c === this.fieldCoordinates.local) {
+                if (this.localDeckHitZone) this.localDeckHitZone.destroy();
                 this.localDeckHitZone = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
                 this.localDeckHitZone.setInteractive({ useHandCursor: true });
-                
                 this.localDeckHitZone.on('pointerdown', () => {
-                    // Safety check to ensure spectators don't accidentally emit events
                     if (this.role === 'spectator') return; 
-                    
-                    console.log("🎲 [CLIENT]: Local deck clicked. Emitting drawCard.");
-                    this.socket.emit('drawCard', { 
-                        tableId: this.tableId, 
-                        targetPlayer: this.role 
-                    });
+                    this.socket.emit('drawCard', { tableId: this.tableId, targetPlayer: this.role });
                 });
             }
         };
 
-        // Pass down the zone key to identify the slot layout type
+        // Pass down the structural string keys to map against server state parameters
         drawZoneBox(c.deck, 'DECK', 'deck');
         drawZoneBox(c.discard, 'DISCARD', 'discard');
         drawZoneBox(c.defeated, 'DEFEATED', 'defeated');
@@ -262,6 +272,7 @@ class GameScene extends Phaser.Scene {
             fontSize: '12px', fontFamily: 'monospace', color: breakPts >= 7 ? '#ff3333' : '#e2e8f0', fontWeight: 'bold'
         }).setOrigin(0.5);
     }
+
 
 
     // --- SUB-ROUTINE 5: SUPPORT TRAY CASCADER ---
