@@ -89,6 +89,33 @@ class GameScene extends Phaser.Scene {
             this.handleStateRenderingLoop(sanitizedState);
         });
 
+        // --- NEW TARGETED NETWORK ACTION HANDLER ---
+        this.socket.on('cardDrawnUpdate', (drawEvent) => {
+            console.log(`📡 [NETWORK RECEIVE]: cardDrawnUpdate caught for ${drawEvent.targetPlayer}`);
+
+            // Double check that we have a cached local state array map reference
+            if (!this.lastReceivedState) return;
+
+            // Target the specific player slot altered on the backend state architecture
+            const targetState = this.lastReceivedState[drawEvent.targetPlayer];
+            if (targetState) {
+                // Update the deck numeric count array tracking parameter
+                if (targetState.deck) {
+                    targetState.deck.length = drawEvent.deckCount;
+                }
+
+                // Append the incoming face-up card layout data cleanly into the hand array bounds
+                if (!Array.isArray(targetState.hand)) {
+                    targetState.hand = [];
+                }
+                
+                targetState.hand.push(drawEvent.card);
+
+                // Run the state update re-render pass to display the drawn card face up instantly
+                this.handleStateRenderingLoop(this.lastReceivedState);
+            }
+        });
+
         this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
 
         this.selectedPreviewCard = null; // Caches the active card loaded into Column 3
@@ -194,25 +221,48 @@ class GameScene extends Phaser.Scene {
 
     // --- SUB-ROUTINE 4: STATIC SLOTS COMPILER ---
     drawStaticSlots(c, pData) {
-        const drawZoneBox = (point, label) => {
+        const drawZoneBox = (point, label, zoneKey) => {
             this.fieldGraphics.fillStyle(0x000000, 0.2);
             this.fieldGraphics.fillRect(point.x - this.cardWidth/2, point.y - this.cardHeight/2, this.cardWidth, this.cardHeight);
             this.fieldGraphics.strokeRect(point.x - this.cardWidth/2, point.y - this.cardHeight/2, this.cardWidth, this.cardHeight);
-            this.add.text(point.x, point.y, label, { fontSize: '10px', fontFamily: 'monospace', fill: '#64748b' }).setOrigin(0.5);
+            this.add.text(point.x, point.y, label, { fontSize: '10px', fontFamily: 'monospace', color: '#64748b' }).setOrigin(0.5);
+
+            // --- DECK DRAW INTERACTION LINK ---
+            // If this is the local perspective deck, create an invisible hit zone over it
+            if (zoneKey === 'deck' && c === this.fieldCoordinates.local) {
+                // Remove previous interactive zone if it exists to prevent event doubling
+                if (this.localDeckHitZone) this.localDeckHitZone.destroy();
+
+                this.localDeckHitZone = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
+                this.localDeckHitZone.setInteractive({ useHandCursor: true });
+                
+                this.localDeckHitZone.on('pointerdown', () => {
+                    // Safety check to ensure spectators don't accidentally emit events
+                    if (this.role === 'spectator') return; 
+                    
+                    console.log("🎲 [CLIENT]: Local deck clicked. Emitting drawCard.");
+                    this.socket.emit('drawCard', { 
+                        tableId: this.tableId, 
+                        targetPlayer: this.role 
+                    });
+                });
+            }
         };
 
-        drawZoneBox(c.deck, 'DECK');
-        drawZoneBox(c.discard, 'DISCARD');
-        drawZoneBox(c.defeated, 'DEFEATED');
-        drawZoneBox(c.stage, 'STAGE');
-        drawZoneBox(c.fighterA, 'FIGHTER A');
-        drawZoneBox(c.fighterB, 'FIGHTER B');
+        // Pass down the zone key to identify the slot layout type
+        drawZoneBox(c.deck, 'DECK', 'deck');
+        drawZoneBox(c.discard, 'DISCARD', 'discard');
+        drawZoneBox(c.defeated, 'DEFEATED', 'defeated');
+        drawZoneBox(c.stage, 'STAGE', 'stage');
+        drawZoneBox(c.fighterA, 'FIGHTER A', 'fighterA');
+        drawZoneBox(c.fighterB, 'FIGHTER B', 'fighterB');
 
         const breakPts = pData.defeatedPoints || 0;
         this.add.text(c.defeated.x, c.defeated.y + this.cardHeight/2 + 15, `BREAK POINTS: ${breakPts} / 10`, {
-            fontSize: '12px', fontFamily: 'monospace', fill: breakPts >= 7 ? '#ff3333' : '#e2e8f0', fontWeight: 'bold'
+            fontSize: '12px', fontFamily: 'monospace', color: breakPts >= 7 ? '#ff3333' : '#e2e8f0', fontWeight: 'bold'
         }).setOrigin(0.5);
     }
+
 
     // --- SUB-ROUTINE 5: SUPPORT TRAY CASCADER ---
     drawSupportTray(c, pData) {
@@ -263,6 +313,18 @@ class GameScene extends Phaser.Scene {
         const bigWidth = 260;
         const bigHeight = 364;
 
+        // --- CLEAN FIX: Clear existing preview visual elements to prevent memory leaks/layer blur ---
+        // Identifies any Text or Image objects explicitly placed inside the Column 3 boundary
+        const boundaryLeft = 1536; 
+        const visualElementsToDestroy = [];
+
+        this.children.list.forEach(child => {
+            if ((child.type === 'Text' || child.type === 'Image') && child.x > boundaryLeft) {
+                visualElementsToDestroy.push(child);
+            }
+        });
+        visualElementsToDestroy.forEach(child => child.destroy());
+
         // Draw solid dark background shell plate container
         this.fieldGraphics.fillStyle(0x020617, 1);
         this.fieldGraphics.fillRect(preview.x - bigWidth/2, preview.y - bigHeight/2, bigWidth, bigHeight);
@@ -270,7 +332,7 @@ class GameScene extends Phaser.Scene {
         // Glow cyan if a card is selected, keep slate grey if empty
         this.fieldGraphics.lineStyle(3, this.selectedPreviewCard ? 0x38bdf8 : 0x334155, 1);
         this.fieldGraphics.strokeRect(preview.x - bigWidth/2, preview.y - bigHeight/2, bigWidth, bigHeight);
-        
+
         if (this.selectedPreviewCard) {
             const card = this.selectedPreviewCard;
             
@@ -294,12 +356,12 @@ class GameScene extends Phaser.Scene {
 
             // Print the unmasked metadata details directly underneath the image frame block
             this.add.text(preview.x, preview.y + bigHeight/2 + 20, `CODE: ${card.name === 'Card Back' ? 'UNKNOWN' : card.id}`, {
-                fontSize: '13px', fontFamily: 'monospace', fill: '#38bdf8', fontWeight: 'bold'
+                fontSize: '13px', fontFamily: 'monospace', color: '#38bdf8', fontWeight: 'bold'
             }).setOrigin(0.5);
 
         } else {
             this.add.text(preview.x, preview.y, "[ HOVER CURSOR OVER A CARD\n& PRESS SPACEBAR TO INSPECT ]", {
-                fontSize: '12px', fontFamily: 'monospace', fill: '#64748b', align: 'center'
+                fontSize: '12px', fontFamily: 'monospace', color: '#64748b', align: 'center'
             }).setOrigin(0.5);
         }
     }
