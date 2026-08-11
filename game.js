@@ -8,7 +8,7 @@ const config = {
     height: 1080,
     parent: 'phaser-game',
     dom: { createContainer: true },
-    scene: [LobbyScene, DeckPrepScene, GameScene, DeveloperMode]
+    scene: [BootScene, LobbyScene, DeckPrepScene, GameScene, DeveloperMode]
 };
 
 const game = new Phaser.Game(config);

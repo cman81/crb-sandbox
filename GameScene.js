@@ -19,10 +19,6 @@ class GameScene extends Phaser.Scene {
     }
 
     preload() {
-        this.load.atlasPCT('BS01_cards', 'assets/BS01.pct', 'assets');
-        this.load.atlasPCT('BS02_cards', 'assets/BS02.pct', 'assets');
-        this.load.atlasPCT('BS03_cards', 'assets/BS03.pct', 'assets');
-        this.load.atlasPCT('BS10_cards', 'assets/atlas.pct', 'assets');
     }
 
     create() {
