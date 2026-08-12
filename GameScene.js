@@ -181,11 +181,10 @@ class GameScene extends Phaser.Scene {
                 
                 // 3. Clear out the overlay panels if open
                 if (this.drawerState && this.drawerState.playerKey === recycleEvent.targetPlayer) {
-                    this.toggleDiscardDrawer(null); 
+                    this.toggleStackDrawer(null); 
                 }
             }
         });
-
 
         this.socket.on('discardToDefeatedUpdate', (defeatEvent) => {
             console.log(`📡 [NETWORK RECEIVE]: discardToDefeatedUpdate caught for ${defeatEvent.targetPlayer}`);
@@ -204,6 +203,39 @@ class GameScene extends Phaser.Scene {
             }
         });
 
+        this.socket.on('cardMovedToDefeatedZone', (defeatEvent) => {
+            console.log(`📡 [NETWORK RECEIVE]: cardMovedToDefeatedZone caught for ${defeatEvent.targetPlayer}`);
+            if (!this.lastReceivedState) return;
+
+            const targetState = this.lastReceivedState[defeatEvent.targetPlayer];
+            if (targetState) {
+                // 1. Wipe the card from the active slot on your local state copy
+                if (targetState.battleZone && targetState.battleZone[defeatEvent.slot]) {
+                    targetState.battleZone[defeatEvent.slot].card = null;
+                    
+                    // 2. Safely sync the obfuscated card arrays if passed from the server patch
+                    if (defeatEvent.updatedStack) {
+                        targetState.battleZone[defeatEvent.slot].faceDownStack = defeatEvent.updatedStack;
+                    }
+                }
+
+                // 3. Overwrite the defeated list tracking parameter array references
+                if (Array.isArray(defeatEvent.updatedDefeated)) {
+                    targetState.defeated = defeatEvent.updatedDefeated;
+                } else {
+                    if (!Array.isArray(targetState.defeated)) targetState.defeated = [];
+                    targetState.defeated.push(defeatEvent.card);
+                }
+
+                if (typeof defeatEvent.defeatedPoints !== 'undefined') {
+                    targetState.defeatedPoints = defeatEvent.defeatedPoints;
+                }
+
+                // 4. FIX: Force the rendering engine matrix loop to run right now!
+                // This clears old card models and draws the new top element on the pile.
+                this.handleStateRenderingLoop(this.lastReceivedState);
+            }
+        });
 
         this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
 
@@ -411,35 +443,61 @@ class GameScene extends Phaser.Scene {
                 this[propName].setData('zoneKey', zoneKey);
 
                 // --- STACK OPERATIONAL CONTROL BUTTONS (LOCAL FIGHTERS ONLY) ---
-                const btnY = point.y - this.cardHeight/2 - 20;
-                const styleNormal = { fontSize: '16px', fontFamily: 'monospace', fill: '#38bdf8', fontWeight: 'bold' };
+                const btnY = point.y - this.cardHeight/2 - 22;
                 
-                // 1. Add Stacked Card Button (+)
-                const addBtn = this.add.text(point.x - 25, btnY, '(+)', styleNormal).setOrigin(0.5);
+                // Button Styling Rules: Smaller font, distinct border colors
+                const btnStyle = { 
+                    fontSize: '13px', 
+                    fontFamily: 'monospace', 
+                    fill: '#38bdf8', 
+                    fontWeight: 'bold',
+                    backgroundColor: '#1e293b',
+                    padding: { x: 8, y: 4 }
+                };
+
+                // 1. Add Stacked Card Button (+1) with Borders
+                // Shifted slightly left (point.x - 30) to account for padding widths
+                const addBtn = this.add.text(point.x - 30, btnY, '+1', btnStyle).setOrigin(0.5);
+                this.fieldGraphics.lineStyle(1, 0x38bdf8, 0.6);
+                this.fieldGraphics.strokeRect(addBtn.x - addBtn.width/2, addBtn.y - addBtn.height/2, addBtn.width, addBtn.height);
+                
                 addBtn.setInteractive({ useHandCursor: true });
                 addBtn.on('pointerdown', () => {
                     if (this.role === 'spectator') return;
                     this.socket.emit('placeDeckCardToStack', { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
                 });
 
-                // 2. Remove/Discard Stacked Card Button (-)
-                const remBtn = this.add.text(point.x + 25, btnY, '(-)', styleNormal).setOrigin(0.5);
+                // 2. Remove/Discard Stacked Card Button (-1) with Borders
+                // Shifted slightly right (point.x + 30)
+                const remBtn = this.add.text(point.x + 30, btnY, '-1', btnStyle).setOrigin(0.5);
+                this.fieldGraphics.lineStyle(1, 0x38bdf8, 0.6);
+                this.fieldGraphics.strokeRect(remBtn.x - remBtn.width/2, remBtn.y - remBtn.height/2, remBtn.width, remBtn.height);
+                
                 remBtn.setInteractive({ useHandCursor: true });
                 remBtn.on('pointerdown', () => {
                     if (this.role === 'spectator') return;
                     this.socket.emit('flipAndDiscardFromStack', { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
                 });
 
-                // --- INTEGRATED: DEFEATED ROUTING SYSTEM LINKS ---
-                // 3. Move Fighter to Defeated Zone Button (☠️) 
-                // Positioned 85px to the left of the slot to balance the face-down stack on the right
-                const styleDefeat = { fontSize: '18px', fontFamily: 'monospace', fill: '#ef4444', fontWeight: 'bold' };
+                // --- FIGHTER DEFEATED ACTION LINK ---
+                // 3. Move Fighter to Defeated Zone Button (☠️) with Red Borders
+                const styleDefeat = { 
+                    fontSize: '14px', 
+                    fontFamily: 'monospace', 
+                    fill: '#ef4444', 
+                    fontWeight: 'bold',
+                    backgroundColor: '#1e1b4b',
+                    padding: { x: 8, y: 4 }
+                };
+                
                 const defeatBtn = this.add.text(point.x - 85, point.y, '☠️', styleDefeat).setOrigin(0.5);
+                this.fieldGraphics.lineStyle(1, 0xef4444, 0.6);
+                this.fieldGraphics.strokeRect(defeatBtn.x - defeatBtn.width/2, defeatBtn.y - defeatBtn.height/2, defeatBtn.width, defeatBtn.height);
+                
                 defeatBtn.setInteractive({ useHandCursor: true });
                 defeatBtn.on('pointerdown', () => {
                     if (this.role === 'spectator') return;
                     console.log(`📡 [NETWORK EMIT]: Sending moveFighterToDefeated for ${zoneKey}`);
-                    // Matches your precise server payload signature keys: tableId, targetPlayer, and slot
                     this.socket.emit('moveFighterToDefeated', { 
                         tableId: this.tableId, 
                         targetPlayer: this.role, 
@@ -447,7 +505,6 @@ class GameScene extends Phaser.Scene {
                     });
                 });
             }
-
 
             if (zoneKey === 'fighterA' || zoneKey === 'fighterB') {
                 const fighterSlot = bZone[zoneKey];
@@ -521,7 +578,7 @@ class GameScene extends Phaser.Scene {
                 this[discardHitName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
                 this[discardHitName].setInteractive({ useHandCursor: true });
                 this[discardHitName].on('pointerdown', () => {
-                    this.toggleDiscardDrawer(stateKey, 'discard'); // Added zone identifier
+                    this.toggleStackDrawer(stateKey, 'discard'); // Added zone identifier
                 });
             }
 
@@ -541,7 +598,7 @@ class GameScene extends Phaser.Scene {
                 this[defeatedHitName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
                 this[defeatedHitName].setInteractive({ useHandCursor: true });
                 this[defeatedHitName].on('pointerdown', () => {
-                    this.toggleDiscardDrawer(stateKey, 'defeated'); // Opens drawer under defeated context
+                    this.toggleStackDrawer(stateKey, 'defeated'); // Opens drawer under defeated context
                 });
             }
         };
@@ -553,9 +610,9 @@ class GameScene extends Phaser.Scene {
         drawZoneBox(c.fighterA, 'FIGHTER A', 'fighterA');
         drawZoneBox(c.fighterB, 'FIGHTER B', 'fighterB');
 
-        const breakPts = pData.defeatedPoints || 0;
-        this.add.text(c.defeated.x, c.defeated.y + this.cardHeight/2 + 15, `BREAK POINTS: ${breakPts} / 10`, {
-            fontSize: '12px', fontFamily: 'monospace', color: breakPts >= 7 ? '#ff3333' : '#e2e8f0', fontWeight: 'bold'
+        const defeatedPoints = pData.defeatedPoints || 0;
+        this.add.text(c.defeated.x, c.defeated.y + this.cardHeight/2 + 15, `POINTS: ${defeatedPoints} / 10`, {
+            fontSize: '12px', fontFamily: 'monospace', color: defeatedPoints >= 7 ? '#ff3333' : '#e2e8f0', fontWeight: 'bold'
         }).setOrigin(0.5);
     }
 
@@ -890,7 +947,7 @@ class GameScene extends Phaser.Scene {
      * @param {string|null} playerKey - 'playerA' or 'playerB' to display, or null to close.
      * @param {string} zoneType - 'discard' or 'defeated' depending on origin clicked.
      */
-    toggleDiscardDrawer(playerKey, zoneType = 'discard') {
+    toggleStackDrawer(playerKey, zoneType = 'discard') {
         if (!this.drawerContainer) {
             this.drawerContainer = this.add.container(-1536, 0); 
             this.drawerContainer.setDepth(2000); 
@@ -978,7 +1035,7 @@ class GameScene extends Phaser.Scene {
             style: { fontSize: '15px', fontFamily: 'monospace', fill: '#ef4444', fontWeight: 'bold', backgroundColor: '#1e293b', padding: { x: 12, y: 6 } }
         }).setOrigin(1, 0);
         closeBtn.setInteractive({ useHandCursor: true });
-        closeBtn.on('pointerdown', () => this.toggleDiscardDrawer(null));
+        closeBtn.on('pointerdown', () => this.toggleStackDrawer(null));
         this.drawerContainer.add(closeBtn);
 
         // LOCKOUT CHECK: Recycle buttons ONLY show up for your OWN discard pile. Never for Defeated items.
