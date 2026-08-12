@@ -124,9 +124,20 @@ class GameScene extends Phaser.Scene {
         this.socket.on('cardStackedUpdate', (stackEvent) => {
             console.log(`📡 [NETWORK RECEIVE]: cardStackedUpdate caught for ${stackEvent.targetPlayer} on ${stackEvent.targetSlot}`);
             if (!this.lastReceivedState) return;
+            
             const targetState = this.lastReceivedState[stackEvent.targetPlayer];
-            if (targetState && targetState.battleZone && targetState.battleZone[stackEvent.targetSlot]) {
-                targetState.battleZone[stackEvent.targetSlot].faceDownStack = stackEvent.updatedStack;
+            if (targetState) {
+                // 1. Synchronize the face-down stack structure
+                if (targetState.battleZone && targetState.battleZone[stackEvent.targetSlot]) {
+                    targetState.battleZone[stackEvent.targetSlot].faceDownStack = stackEvent.updatedStack;
+                }
+                
+                // 2. FIX: Safely update the deck length property so the text label and card back re-render instantly
+                if (targetState.deck && typeof stackEvent.deckCount !== 'undefined') {
+                    targetState.deck.length = stackEvent.deckCount;
+                }
+                
+                // 3. Force a screen refresh pass
                 this.handleStateRenderingLoop(this.lastReceivedState);
             }
         });
@@ -156,19 +167,25 @@ class GameScene extends Phaser.Scene {
         this.socket.on('discardRecycledUpdate', (recycleEvent) => {
             console.log(`📡 [NETWORK RECEIVE]: discardRecycledUpdate caught for ${recycleEvent.targetPlayer}`);
             if (!this.lastReceivedState) return;
+            
             const targetState = this.lastReceivedState[recycleEvent.targetPlayer];
             if (targetState) {
+                // 1. Wipe the local data references completely clean
                 targetState.discard = [];
-                if (targetState.deck) targetState.deck.length = recycleEvent.deckCount;
                 
-                // If this recycling event affected the drawer we are viewing, close it cleanly
+                if (!targetState.deck) targetState.deck = [];
+                targetState.deck.length = recycleEvent.deckCount;
+                
+                // 2. FORCE SCREEN RE-RENDER: Forces the canvas layer layout matrix to recalculate immediately
+                this.handleStateRenderingLoop(this.lastReceivedState);
+                
+                // 3. Clear out the overlay panels if open
                 if (this.drawerState && this.drawerState.playerKey === recycleEvent.targetPlayer) {
                     this.toggleDiscardDrawer(null); 
-                } else {
-                    this.handleStateRenderingLoop(this.lastReceivedState);
                 }
             }
         });
+
 
         this.socket.on('discardToDefeatedUpdate', (defeatEvent) => {
             console.log(`📡 [NETWORK RECEIVE]: discardToDefeatedUpdate caught for ${defeatEvent.targetPlayer}`);
@@ -429,6 +446,7 @@ class GameScene extends Phaser.Scene {
                 this.renderCardSprite(point.x, point.y, bZone.stage, bZone.stage.isTapped);
             }
 
+            // 4. --- DECK DRAW INTERACTION LINK ---
             if (zoneKey === 'deck' && isLocalSeat) {
                 if (this.localDeckHitZone) this.localDeckHitZone.destroy();
                 this.localDeckHitZone = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
@@ -437,6 +455,35 @@ class GameScene extends Phaser.Scene {
                     if (this.role === 'spectator') return; 
                     this.socket.emit('drawCard', { tableId: this.tableId, targetPlayer: this.role });
                 });
+            }
+
+            // --- INTEGRATED: DECK CARD COUNT AND GRAPHIC VISUALIZER PASS ---
+            if (zoneKey === 'deck' && pData.deck) {
+                const totalDeckCount = pData.deck.length || 0;
+                const countYOffset = -this.cardHeight / 2 - 15; // Placed neatly above the top margin frame boundary
+
+                // Print the numeric indicator above the slot bounds
+                this.add.text(point.x, point.y + countYOffset, `DECK: ${totalDeckCount}`, {
+                    fontSize: '11px', fontFamily: 'monospace', fill: '#64748b', fontWeight: 'bold'
+                }).setOrigin(0.5);
+
+                // If there is at least one card remaining, spawn the official card back asset
+                if (totalDeckCount > 0) {
+                    // Match the bundle map parameters inside your renderCardSprite rules
+                    const deckSprite = this.add.image(point.x, point.y, 'system_ui', 'card_back');
+                    deckSprite.setDisplaySize(this.cardWidth, this.cardHeight);
+                    deckSprite.setAngle(0);
+                    deckSprite.setDepth(10); // Layer above the gray background slot box shape
+
+                    // If it is the local user's deck, let the sprite match the hand cursor interaction loop
+                    if (isLocalSeat) {
+                        deckSprite.setInteractive({ useHandCursor: true });
+                        deckSprite.on('pointerdown', () => {
+                            if (this.role === 'spectator') return;
+                            this.socket.emit('drawCard', { tableId: this.tableId, targetPlayer: this.role });
+                        });
+                    }
+                }
             }
 
             if (zoneKey === 'discard' && pData.discard && pData.discard.length > 0) {

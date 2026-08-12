@@ -328,17 +328,29 @@ io.on('connection', (socket) => {
     const cardToStack = deck.pop(); 
     cardToStack.isFaceDown = true; 
 
+    // Appends to the end (top) of the stack array
     if (!battleZone[targetSlot].faceDownStack) {
       battleZone[targetSlot].faceDownStack = [];
     }
     battleZone[targetSlot].faceDownStack.push(cardToStack);
 
-    // Enforce asymmetric Fog of War privacy constraints
+    // Dynamic notifications: Everyone gets a masked update except spectators
     const maskCard = () => ({ name: "Card Back", isFaceDown: true });
     const maskedStack = battleZone[targetSlot].faceDownStack.map(maskCard);
 
-    const activePlayersPayload = { targetPlayer, targetSlot, updatedStack: maskedStack };
-    const spectatorPayload = { targetPlayer, targetSlot, updatedStack: battleZone[targetSlot].faceDownStack };
+    const activePlayersPayload = { 
+      targetPlayer, 
+      targetSlot, 
+      updatedStack: maskedStack,
+      deckCount: deck.length // <-- FIX: Package the remaining deck count here
+    };
+    
+    const spectatorPayload = { 
+      targetPlayer, 
+      targetSlot, 
+      updatedStack: battleZone[targetSlot].faceDownStack,
+      deckCount: deck.length // <-- FIX: Package the remaining deck count here
+    };
 
     if (table.playerA) io.to(table.playerA).emit('cardStackedUpdate', activePlayersPayload);
     if (table.playerB) io.to(table.playerB).emit('cardStackedUpdate', activePlayersPayload);
@@ -698,8 +710,11 @@ io.on('connection', (socket) => {
     const table = tables.find(t => t.id === parseInt(tableId));
     if (!table) return socket.emit('errorMsg', 'Table not found.');
 
-    const deck = table.gameState[targetPlayer]?.deck;
-    const discard = table.gameState[targetPlayer]?.discard;
+    const playerState = table.gameState[targetPlayer];
+    if (!playerState) return socket.emit('errorMsg', `Player state not found.`);
+
+    const deck = playerState.deck;
+    const discard = playerState.discard;
 
     if (!discard || discard.length === 0) {
       return socket.emit('errorMsg', `Discard pile is empty! Nothing to recycle.`);
@@ -707,33 +722,30 @@ io.on('connection', (socket) => {
 
     const recycledCount = discard.length;
 
-    // 1. Empty out the entire discard array right onto the deck pile
+    // 1. Empty out the entire discard array right onto the deck pile tail bounds
     while (discard.length > 0) {
-      const card = discard.pop(); // Pop from the top of discard
-      card.isFaceDown = true;     // Turn face down
-      card.isTapped = false;       // Reset tap orientations
-      deck.push(card);            // Append onto the deck array
+      const card = discard.pop(); 
+      card.isFaceDown = true;     
+      card.isTapped = false;       
+      deck.push(card);            
     }
 
-    // 2. Execute automated UUID-based shuffle layout scramble on the updated deck
-    deck.forEach(card => {
-      card.shuffleId = uuidv4(); 
-    });
+    // 2. Execute automated UUID-based shuffle scramble
+    deck.forEach(card => { card.shuffleId = uuidv4(); });
     deck.sort((a, b) => a.shuffleId.localeCompare(b.shuffleId));
-    deck.forEach(card => {
-      delete card.shuffleId; // Wipe temporary property tags
-    });
+    deck.forEach(card => { delete card.shuffleId; });
 
-    // 3. Broadcast targeted updates across rooms
-    const payload = {
+    // 3. FIX: Structure the payload event arguments to pass explicit structural sync values
+    const cleanPayload = {
       targetPlayer,
       deckCount: deck.length,
-      discardCount: discard.length
+      discardCount: 0,
+      updatedDiscard: [] // <-- FIX: Explicitly send down an empty payload matrix map
     };
 
-    if (table.playerA) io.to(table.playerA).emit('discardRecycledUpdate', payload);
-    if (table.playerB) io.to(table.playerB).emit('discardRecycledUpdate', payload);
-    table.spectators.forEach(id => io.to(id).emit('discardRecycledUpdate', payload));
+    if (table.playerA) io.to(table.playerA).emit('discardRecycledUpdate', cleanPayload);
+    if (table.playerB) io.to(table.playerB).emit('discardRecycledUpdate', cleanPayload);
+    table.spectators.forEach(id => io.to(id).emit('discardRecycledUpdate', cleanPayload));
 
     socket.emit('serverNotice', `Recycled all ${recycledCount} cards from discard to deck face down, and fully shuffled the deck!`);
   });
