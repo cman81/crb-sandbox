@@ -44,7 +44,7 @@ class GameScene extends Phaser.Scene {
                 
                 // Bottom tray layout specs
                 supportStart:   { x: 600,  y: 920 }, 
-                supportOverlap: 25,                  
+                supportOverlap: 65,                  
                 trayWidth:      730,                 
                 trayHeight:     166,                 
                 
@@ -61,7 +61,7 @@ class GameScene extends Phaser.Scene {
                 fighterB:    { x: 760,  y: 380 }, 
                 
                 supportStart:   { x: 600,  y: 160 }, 
-                supportOverlap: 25,                  
+                supportOverlap: 65,                  
                 trayWidth:      730,
                 trayHeight:     166,
                 
@@ -253,6 +253,34 @@ class GameScene extends Phaser.Scene {
             }
         });
 
+        this.socket.on('cardTapUpdated', (tapEvent) => {
+            console.log(`📡 [NETWORK RECEIVE]: cardTapUpdated caught for ${tapEvent.targetPlayer} on zone ${tapEvent.zone}`);
+            if (!this.lastReceivedState) return;
+
+            const targetState = this.lastReceivedState[tapEvent.targetPlayer];
+            if (targetState) {
+                const bZone = targetState.battleZone || {};
+
+                // 1. Route the incoming boolean tap state directly to the matching backend array mapping
+                if (tapEvent.zone === 'fighterA' && bZone.fighterA && bZone.fighterA.card) {
+                    bZone.fighterA.card.isTapped = tapEvent.isTapped;
+                } 
+                else if (tapEvent.zone === 'fighterB' && bZone.fighterB && bZone.fighterB.card) {
+                    bZone.fighterB.card.isTapped = tapEvent.isTapped;
+                } 
+                else if (tapEvent.zone === 'support' && Array.isArray(targetState.support)) {
+                    const idx = parseInt(tapEvent.supportIndex);
+                    if (!isNaN(idx) && targetState.support[idx]) {
+                        targetState.support[idx].isTapped = tapEvent.isTapped;
+                    }
+                }
+
+                // 2. FORCE SCREEN RE-RENDER: Forces the canvas layer layout matrix to repaint immediately
+                // This updates the orientation angle parameter to -90 degrees CCW inside renderCardSprite()
+                this.handleStateRenderingLoop(this.lastReceivedState);
+            }
+        });
+
         this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
 
         this.selectedPreviewCard = null; // Caches the active card loaded into Column 3
@@ -264,6 +292,17 @@ class GameScene extends Phaser.Scene {
             const mouseY = this.input.activePointer.y;
             
             this.scanCardHitboxesForPreview(mouseX, mouseY);
+        });
+
+        // Bind the 'T' key to trigger a real-time card tap/untap state change
+        this.input.keyboard.on('keydown-T', () => {
+            if (this.role === 'spectator') return; // Spectators cannot manipulate card objects
+
+            // Grab the current spatial viewport coordinates of the mouse cursor pointer
+            const mouseX = this.input.activePointer.x;
+            const mouseY = this.input.activePointer.y;
+            
+            this.handleKeyboardTapAction(mouseX, mouseY);
         });
         
         // Enable global drag-and-drop listener hooks inside the Phaser 4 input tree
@@ -329,31 +368,27 @@ class GameScene extends Phaser.Scene {
     // Renders either the high-fidelity card graphic or a face-down card back
     renderCardSprite(x, y, card, isTapped) {
         let bundleKey = 'system_ui';
-        let frameKey = 'card_back'; // Change this string to match your official card back frame ID inside atlas.pct
+        let frameKey = 'card_back'; 
 
         if (card && card.name !== "Card Back") {
             const cardId = card.id || "";
             frameKey = cardId;
-
-            // Automatically route the card to the correct loaded asset texture bundle
             if (cardId.startsWith('BS1-')) bundleKey = 'BS01_cards';
             else if (cardId.startsWith('BS2-')) bundleKey = 'BS02_cards';
             else if (cardId.startsWith('BS3-')) bundleKey = 'BS03_cards';
             else if (cardId.startsWith('BS10-')) bundleKey = 'BS10_cards';
         }
 
-        // Add the native Phaser image sprite element using the custom plugin cache frame
         const cardSprite = this.add.image(x, y, bundleKey, frameKey);
         cardSprite.setDisplaySize(this.cardWidth, this.cardHeight);
 
-        // Manage tapped orientation angle changes graphically
+        // FIX: Changed setAngle(90) to setAngle(-90) for counter-clockwise tapping
         if (isTapped || card?.isTapped) {
-            cardSprite.setAngle(90); // Rests the card 90-degrees sideways
+            cardSprite.setAngle(-90); 
         } else {
             cardSprite.setAngle(0);
         }
     }
-
 
     handleStateRenderingLoop(state) {
         // 1. Core Canvas Cleanup Loop
@@ -663,11 +698,8 @@ class GameScene extends Phaser.Scene {
         this.fieldGraphics.lineStyle(2, 0xffffff, 0.08);
         this.fieldGraphics.strokeRoundedRect(trayX, trayY, c.trayWidth, c.trayHeight, borderRadiusRadius);
 
-        // --- NEW DROPAZONE ATTACHMENT FOR LOCAL PLAYER ---
         if (c === this.fieldCoordinates.local) {
             if (this.localSupportDropZone) this.localSupportDropZone.destroy();
-            
-            // Create a matching physical zone bounding box covering the entire support shelf shape
             this.localSupportDropZone = this.add.zone(trayX + c.trayWidth/2, trayY + c.trayHeight/2, c.trayWidth, c.trayHeight);
             this.localSupportDropZone.setRectangleDropZone(c.trayWidth, c.trayHeight);
             this.localSupportDropZone.setData('zoneKey', 'support');
@@ -679,11 +711,14 @@ class GameScene extends Phaser.Scene {
             this.renderCardSprite(shiftX, shiftY, card, card.isTapped);
         });
 
-        this.add.text(trayX + 10, trayY - 14, `SUPPORT ZONE COUNT: ${supportCards.length}`, {
+        // --- INTEGRATED: REAL-TIME UNTAPPED COUNTER ENGINE PASS ---
+        // Dynamically filters out cards where card.isTapped evaluates to true
+        const untappedCount = supportCards.filter(card => !card.isTapped).length;
+
+        this.add.text(trayX + 10, trayY - 14, `SUPPORT REMAINING: ${untappedCount} / ${supportCards.length}`, {
             fontSize: '11px', fontFamily: 'monospace', color: '#38bdf8', fontWeight: 'bold'
         }).setOrigin(0, 0.5);
     }
-
 
     // --- SUB-ROUTINE 6: HAND COLUMN MATRIX MATRIX RENDERER ---
     drawHandColumn(c, pData) {
@@ -1134,6 +1169,73 @@ class GameScene extends Phaser.Scene {
 
             this.drawerContainer.add(drawerCardImg);
         });
+    }
+
+    /**
+     * Scans the card zones under the mouse cursor when pressing 'T' and emits toggleCardTap.
+     */
+    handleKeyboardTapAction(mouseX, mouseY) {
+        // Safety lock: Spectators hold no active field role assignment vectors
+        if (this.role === 'spectator' || !this.lastReceivedState) return;
+
+        const state = this.lastReceivedState;
+        const c = this.fieldCoordinates.local;
+        const pData = state[this.role] || {};
+        const bZone = pData.battleZone || {};
+
+        const halfW = this.cardWidth / 2;
+        const halfH = this.cardHeight / 2;
+
+        // 1. SCAN LOCAL FIGHTER A
+        if (bZone.fighterA && bZone.fighterA.card) {
+            const card = bZone.fighterA.card;
+            // Dynamic check: Invert detection dimensions if the asset card is tapped
+            const hW = card.isTapped ? halfH : halfW;
+            const hH = card.isTapped ? halfW : halfH;
+
+            if (mouseX >= c.fighterA.x - hW && mouseX <= c.fighterA.x + hW &&
+                mouseY >= c.fighterA.y - hH && mouseY <= c.fighterA.y + hH) {
+                this.socket.emit('toggleCardTap', { tableId: this.tableId, targetPlayer: this.role, zone: 'fighterA', supportIndex: null });
+                return;
+            }
+        }
+
+        // 2. SCAN LOCAL FIGHTER B
+        if (bZone.fighterB && bZone.fighterB.card) {
+            const card = bZone.fighterB.card;
+            const hW = card.isTapped ? halfH : halfW;
+            const hH = card.isTapped ? halfW : halfH;
+
+            if (mouseX >= c.fighterB.x - hW && mouseX <= c.fighterB.x + hW &&
+                mouseY >= c.fighterB.y - hH && mouseY <= c.fighterB.y + hH) {
+                this.socket.emit('toggleCardTap', { tableId: this.tableId, targetPlayer: this.role, zone: 'fighterB', supportIndex: null });
+                return;
+            }
+        }
+
+        // 3. SCAN LOCAL SUPPORT LANE CARDS (Iterating backwards to target frontmost card)
+        const support = pData.support || [];
+        for (let i = support.length - 1; i >= 0; i--) {
+            const card = support[i];
+            const shiftX = c.supportStart.x + (i * c.supportOverlap);
+            
+            // FIX: Enforce orientation transformations so tapped horizontal cards scan correctly
+            const hW = card.isTapped ? halfH : halfW;
+            const hH = card.isTapped ? halfW : halfH;
+
+            if (mouseX >= shiftX - hW && mouseX <= shiftX + hW &&
+                mouseY >= c.supportStart.y - hH && mouseY <= c.supportStart.y + hH) {
+                
+                console.log(`📡 [NETWORK EMIT]: Toggled tap on FRONT support card index ${i}`);
+                this.socket.emit('toggleCardTap', {
+                    tableId: this.tableId,
+                    targetPlayer: this.role,
+                    zone: 'support',
+                    supportIndex: i
+                });
+                return; 
+            }
+        }
     }
 
 }
