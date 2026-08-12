@@ -135,15 +135,22 @@ class GameScene extends Phaser.Scene {
 
         this.socket.on('stackFlippedAndDiscardedUpdate', (flipDiscardEvent) => {
             console.log(`📡 [NETWORK RECEIVE]: stackFlippedAndDiscardedUpdate caught for ${flipDiscardEvent.targetPlayer}`);
+            
             if (!this.lastReceivedState) return;
             const targetState = this.lastReceivedState[flipDiscardEvent.targetPlayer];
+            
             if (targetState) {
+                // 1. Synchronize the face-down stack state data structure
                 if (targetState.battleZone && targetState.battleZone[flipDiscardEvent.targetSlot]) {
                     targetState.battleZone[flipDiscardEvent.targetSlot].faceDownStack = flipDiscardEvent.updatedStack;
                 }
-                if (targetState.discard) {
+                
+                // 2. CRITICAL FIX: Bind the incoming public discard array to our local state copy
+                if (flipDiscardEvent.updatedDiscard) {
                     targetState.discard = flipDiscardEvent.updatedDiscard;
                 }
+
+                // 3. CRITICAL FIX: Trigger a full visual redraw pass so the discard pile updates instantly
                 this.handleStateRenderingLoop(this.lastReceivedState);
             }
         });
@@ -388,6 +395,14 @@ class GameScene extends Phaser.Scene {
                     this.socket.emit('drawCard', { tableId: this.tableId, targetPlayer: this.role });
                 });
             }
+
+            if (zoneKey === 'discard' && pData.discard && pData.discard.length > 0) {
+                // Grab the topmost card from the array tail (index length - 1)
+                const topDiscardCard = pData.discard[pData.discard.length - 1];
+                if (topDiscardCard) {
+                    this.renderCardSprite(point.x, point.y, topDiscardCard, false);
+                }
+            }
         };
 
         drawZoneBox(c.deck, 'DECK', 'deck');
@@ -554,7 +569,10 @@ class GameScene extends Phaser.Scene {
             { stateKey: isPlayerB ? 'playerA' : 'playerB', coordKey: 'remote' }
         ];
 
-        // 1. SCAN FIGHTER FACEDOWN STACKS (Flipped Collision Profiles)
+        const halfW = this.cardWidth / 2;
+        const halfH = this.cardHeight / 2;
+
+        // 1. SCAN FIGHTER FACEDOWN STACKS (Flipped CCW Collision Profiles)
         const stackScale = 0.55;
         const stackWidth = this.cardHeight * stackScale; 
         const stackHeight = this.cardWidth * stackScale; 
@@ -573,7 +591,6 @@ class GameScene extends Phaser.Scene {
             for (const item of targets) {
                 if (item.slot && Array.isArray(item.slot.faceDownStack)) {
                     const stack = item.slot.faceDownStack;
-                    // Run backward from tail (top) down to index 0 (bottom) to respect layering
                     for (let index = stack.length - 1; index >= 0; index--) {
                         const card = stack[index];
                         const stackCardX = item.baseCoord.x + stackHorizOffset;
@@ -602,8 +619,8 @@ class GameScene extends Phaser.Scene {
                 const cardX = c.handStart.x + (col * c.handSpacingX);
                 const cardY = c.handStart.y + (row * c.handSpacingY);
 
-                if (mouseX >= cardX - this.cardWidth/2 && mouseX <= cardX + this.cardWidth/2 &&
-                    mouseY >= cardY - this.cardHeight/2 && mouseY <= cardY + this.cardHeight/2) {
+                if (mouseX >= cardX - halfW && mouseX <= cardX + halfW &&
+                    mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
                     
                     this.selectedPreviewCard = card;
                     this.drawPreviewPanel();
@@ -622,8 +639,8 @@ class GameScene extends Phaser.Scene {
                 const shiftX = c.supportStart.x + (originalIndex * c.supportOverlap);
                 const shiftY = c.supportStart.y;
 
-                if (mouseX >= shiftX - this.cardWidth/2 && mouseX <= shiftX + this.cardWidth/2 &&
-                    mouseY >= shiftY - this.cardHeight/2 && mouseY <= shiftY + this.cardHeight/2) {
+                if (mouseX >= shiftX - halfW && mouseX <= shiftX + halfW &&
+                    mouseY >= shiftY - halfH && mouseY <= shiftY + halfH) {
                     
                     this.selectedPreviewCard = card;
                     this.drawPreviewPanel();
@@ -631,11 +648,25 @@ class GameScene extends Phaser.Scene {
                 }
             }
 
-            // 4. SCAN STATIC CARD IMAGES
-            const bZone = state[p.stateKey]?.battleZone || {};
-            const halfW = this.cardWidth / 2;
-            const halfH = this.cardHeight / 2;
+            // 4. INTEGRATED: SCAN THE DISCARD PILE (COLUMN 2 SLOTS)
+            const discard = state[p.stateKey]?.discard || [];
+            if (discard.length > 0) {
+                if (mouseX >= c.discard.x - halfW && mouseX <= c.discard.x + halfW &&
+                    mouseY >= c.discard.y - halfH && mouseY <= c.discard.y + halfH) {
+                    
+                    // Grab the top card from the array tail
+                    const topDiscardCard = discard[discard.length - 1];
+                    if (topDiscardCard) {
+                        console.log(`🎯 [ISOLATED PREVIEW TARGET]: Top discard card locked: ${topDiscardCard.id}`);
+                        this.selectedPreviewCard = topDiscardCard;
+                        this.drawPreviewPanel();
+                        return;
+                    }
+                }
+            }
 
+            // 5. SCAN REMAINING STATIC CARD IMAGES (FIGHTERS, STAGE)
+            const bZone = state[p.stateKey]?.battleZone || {};
             const staticSlots = [
                 { coord: c.fighterA, card: bZone.fighterA?.card },
                 { coord: c.fighterB, card: bZone.fighterB?.card },
@@ -652,6 +683,7 @@ class GameScene extends Phaser.Scene {
             }
         }
     }
+
 
     /**
      * Renders a faceDownStack to the right of a specific fighter slot.
