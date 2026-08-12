@@ -414,6 +414,7 @@ class GameScene extends Phaser.Scene {
                 const btnY = point.y - this.cardHeight/2 - 20;
                 const styleNormal = { fontSize: '16px', fontFamily: 'monospace', fill: '#38bdf8', fontWeight: 'bold' };
                 
+                // 1. Add Stacked Card Button (+)
                 const addBtn = this.add.text(point.x - 25, btnY, '(+)', styleNormal).setOrigin(0.5);
                 addBtn.setInteractive({ useHandCursor: true });
                 addBtn.on('pointerdown', () => {
@@ -421,13 +422,32 @@ class GameScene extends Phaser.Scene {
                     this.socket.emit('placeDeckCardToStack', { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
                 });
 
+                // 2. Remove/Discard Stacked Card Button (-)
                 const remBtn = this.add.text(point.x + 25, btnY, '(-)', styleNormal).setOrigin(0.5);
                 remBtn.setInteractive({ useHandCursor: true });
                 remBtn.on('pointerdown', () => {
                     if (this.role === 'spectator') return;
                     this.socket.emit('flipAndDiscardFromStack', { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
                 });
+
+                // --- INTEGRATED: DEFEATED ROUTING SYSTEM LINKS ---
+                // 3. Move Fighter to Defeated Zone Button (☠️) 
+                // Positioned 85px to the left of the slot to balance the face-down stack on the right
+                const styleDefeat = { fontSize: '18px', fontFamily: 'monospace', fill: '#ef4444', fontWeight: 'bold' };
+                const defeatBtn = this.add.text(point.x - 85, point.y, '☠️', styleDefeat).setOrigin(0.5);
+                defeatBtn.setInteractive({ useHandCursor: true });
+                defeatBtn.on('pointerdown', () => {
+                    if (this.role === 'spectator') return;
+                    console.log(`📡 [NETWORK EMIT]: Sending moveFighterToDefeated for ${zoneKey}`);
+                    // Matches your precise server payload signature keys: tableId, targetPlayer, and slot
+                    this.socket.emit('moveFighterToDefeated', { 
+                        tableId: this.tableId, 
+                        targetPlayer: this.role, 
+                        slot: zoneKey 
+                    });
+                });
             }
+
 
             if (zoneKey === 'fighterA' || zoneKey === 'fighterB') {
                 const fighterSlot = bZone[zoneKey];
@@ -486,6 +506,7 @@ class GameScene extends Phaser.Scene {
                 }
             }
 
+            // 5. --- DISCARD ZONE RENDER LINK ---
             if (zoneKey === 'discard' && pData.discard && pData.discard.length > 0) {
                 const topDiscardCard = pData.discard[pData.discard.length - 1];
                 if (topDiscardCard) {
@@ -500,7 +521,27 @@ class GameScene extends Phaser.Scene {
                 this[discardHitName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
                 this[discardHitName].setInteractive({ useHandCursor: true });
                 this[discardHitName].on('pointerdown', () => {
-                    this.toggleDiscardDrawer(stateKey);
+                    this.toggleDiscardDrawer(stateKey, 'discard'); // Added zone identifier
+                });
+            }
+
+            // --- INTEGRATED: DEFEATED ZONE STACK RENDER & INTERACTION LINK ---
+            if (zoneKey === 'defeated' && pData.defeated && pData.defeated.length > 0) {
+                // Display the topmost card from the array tail face up
+                const topDefeatedCard = pData.defeated[pData.defeated.length - 1];
+                if (topDefeatedCard) {
+                    this.renderCardSprite(point.x, point.y, topDefeatedCard, false);
+                }
+            }
+
+            if (zoneKey === 'defeated') {
+                const defeatedHitName = `defeatedHit_${stateKey}`;
+                if (this[defeatedHitName]) this[defeatedHitName].destroy();
+
+                this[defeatedHitName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
+                this[defeatedHitName].setInteractive({ useHandCursor: true });
+                this[defeatedHitName].on('pointerdown', () => {
+                    this.toggleDiscardDrawer(stateKey, 'defeated'); // Opens drawer under defeated context
                 });
             }
         };
@@ -845,18 +886,17 @@ class GameScene extends Phaser.Scene {
     }
 
     /**
-     * Toggles the sliding animation layout state of the discard view drawer.
+     * Toggles the sliding animation layout state of the view drawer overlay.
      * @param {string|null} playerKey - 'playerA' or 'playerB' to display, or null to close.
+     * @param {string} zoneType - 'discard' or 'defeated' depending on origin clicked.
      */
-    toggleDiscardDrawer(playerKey) {
-        // 1. Initial State Allocation
+    toggleDiscardDrawer(playerKey, zoneType = 'discard') {
         if (!this.drawerContainer) {
             this.drawerContainer = this.add.container(-1536, 0); 
             this.drawerContainer.setDepth(2000); 
-            this.drawerState = { isOpen: false, playerKey: null };
+            this.drawerState = { isOpen: false, playerKey: null, zoneType: 'discard' };
         }
 
-        // 2. Closure Routine Execution Pass
         if (!playerKey) {
             this.tweens.add({
                 targets: this.drawerContainer,
@@ -866,22 +906,19 @@ class GameScene extends Phaser.Scene {
                 onComplete: () => {
                     this.drawerState.isOpen = false;
                     this.drawerState.playerKey = null;
-                    // FIX: Explicitly turn off the input layer so it stops blocking underlying clicks
                     this.drawerContainer.setVisible(false);
                 }
             });
             return;
         }
 
-        // 3. Populate and Render Drawer Data Grid
         this.drawerState.isOpen = true;
         this.drawerState.playerKey = playerKey;
+        this.drawerState.zoneType = zoneType; // Stash context string securely
         this.renderDrawerContents();
         
-        // FIX: Ensure the container is fully visible before running the slide-in tween animation
         this.drawerContainer.setVisible(true);
 
-        // 4. Slide-In Visual Animation Tween Sequence
         this.tweens.add({
             targets: this.drawerContainer,
             x: 0, 
@@ -896,15 +933,16 @@ class GameScene extends Phaser.Scene {
     renderDrawerContents() {
         if (!this.drawerContainer || !this.drawerState.isOpen) return;
 
-        // Flush previous loop iterations inside the container
         this.drawerContainer.removeAll(true);
 
         const playerKey = this.drawerState.playerKey;
-        const discardList = (this.lastReceivedState && this.lastReceivedState[playerKey]) 
-            ? this.lastReceivedState[playerKey].discard || [] 
-            : [];
+        const zoneType = this.drawerState.zoneType || 'discard'; // Read the current zone type context
+        
+        // Dynamically select target data array depending on zone configuration
+        const targetState = (this.lastReceivedState && this.lastReceivedState[playerKey]) ? this.lastReceivedState[playerKey] : {};
+        const cardList = (zoneType === 'defeated') ? (targetState.defeated || []) : (targetState.discard || []);
 
-        // 1. Draw solid overlay backdrop
+        // 1. Draw solid overlay backdrop plate
         const bgPlate = this.add.graphics();
         bgPlate.fillStyle(0x0f172a, 0.98); 
         bgPlate.fillRect(0, 0, 1536, 1080);
@@ -913,14 +951,18 @@ class GameScene extends Phaser.Scene {
         this.drawerContainer.add(bgPlate);
 
         // 2. Header and Instructional Labels
+        const zoneTitle = (zoneType === 'defeated') ? 'DEFEATED PILE' : 'DISCARD CEMETERY PILE';
         const headerText = this.make.text({
-            x: 40, y: 30, text: `${playerKey.toUpperCase()} DISCARD CEMETERY PILE (${discardList.length} CARDS)`,
+            x: 40, y: 30, text: `${playerKey.toUpperCase()} ${zoneTitle} (${cardList.length} CARDS)`,
             style: { fontSize: '22px', fontFamily: 'monospace', fill: '#f8fafc', fontWeight: 'bold' }
         });
         this.drawerContainer.add(headerText);
 
-        const isOwner = (this.role === playerKey);        
-        const instructionString = isOwner && this.role !== 'spectator'
+        const isOwner = (this.role === playerKey);
+        
+        // Force text lockout if it's the defeated pile or if it's the opponent's view
+        const isDefeatedView = (zoneType === 'defeated');
+        const instructionString = (isOwner && !isDefeatedView && this.role !== 'spectator')
             ? '💡 CLICK A CARD TO MOVE IT TO DEFEATED | PRESS [SPACEBAR] TO PREVIEW DETAILED CODE FRAME'
             : '💡 INSPECTION MODE | PRESS [SPACEBAR] TO PREVIEW DETAILED CODE FRAME';
 
@@ -939,9 +981,8 @@ class GameScene extends Phaser.Scene {
         closeBtn.on('pointerdown', () => this.toggleDiscardDrawer(null));
         this.drawerContainer.add(closeBtn);
 
-        // Only show the "Recycle All" option if the user OWNS this discard pile.
-        // Spectators and opponents will not see this action button.        
-        if (discardList.length > 0 && isOwner && this.role !== 'spectator') {
+        // LOCKOUT CHECK: Recycle buttons ONLY show up for your OWN discard pile. Never for Defeated items.
+        if (cardList.length > 0 && isOwner && !isDefeatedView && this.role !== 'spectator') {
             const recycleBtn = this.make.text({
                 x: 40, y: 110, text: '♻️ RECYCLE ALL DISCARDS TO DECK',
                 style: { fontSize: '13px', fontFamily: 'monospace', fill: '#10b981', fontWeight: 'bold', backgroundColor: '#064e3b', padding: { x: 14, y: 8 } }
@@ -953,14 +994,14 @@ class GameScene extends Phaser.Scene {
             this.drawerContainer.add(recycleBtn);
         }
 
-        // 4. GENERATE CARDS GRID MATRIX
+        // 4. GENERATE CARDS GRID MATRIX 
         const gridStartX = 80;
         const gridStartY = 250; 
         const spacingX = 135;
         const spacingY = 185;
         const colsPerLine = 10;
 
-        discardList.forEach((card, index) => {
+        cardList.forEach((card, index) => {
             const col = index % colsPerLine;
             const row = Math.floor(index / colsPerLine);
 
@@ -985,9 +1026,9 @@ class GameScene extends Phaser.Scene {
             drawerCardImg.setData('drawerCardRef', card);
             drawerCardImg.setData('drawerCardIndex', index);
 
-            // FIX: Only register the click interaction if the user is the owner of the deck.
-            // If they are inspecting the opponent's pile (or are a spectator), make the card passive.
-            if (isOwner && this.role !== 'spectator') {
+            // LOCKOUT CHECK: You can click items to mutate state ONLY if you own the pile and it is a DISCARD pile.
+            // Defeated cards, opponent views, and spectators bypass click handlers entirely.
+            if (isOwner && !isDefeatedView && this.role !== 'spectator') {
                 drawerCardImg.setInteractive({ useHandCursor: true });
                 drawerCardImg.on('pointerdown', () => {
                     this.socket.emit('moveDiscardToDefeated', {
@@ -997,7 +1038,7 @@ class GameScene extends Phaser.Scene {
                     });
                 });
             } else {
-                // If inspecting the opponent, just register standard pointer interaction for hover scanning
+                // Lock down to observation preview mode only (allows spacebar hover scanning)
                 drawerCardImg.setInteractive();
             }
 
