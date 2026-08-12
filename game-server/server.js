@@ -6,6 +6,10 @@ const tables = Array.from({ length: 8 }, (_, i) => ({
   playerA: null, 
   playerB: null, 
   spectators: [],
+  endGameSignals: {
+    playerA: false,
+    playerB: false
+  },
   gameState: {
     playerA: {
       hand: [], deck: [], extraDeck: [], discard: [], support: [], defeated: [],
@@ -808,6 +812,105 @@ io.on('connection', (socket) => {
       tableId: table.id,
       role: role,
       hasDeckLoaded: hasDeckLoaded
+    });
+  });
+
+  /**
+   * Action: Sets the target player's end game proposal flag to true.
+   * If both players agree, it hard-scrubs the table state and demotes players to spectators.
+   */
+  socket.on('signalEndGame', ({ tableId, targetPlayer }) => {
+    const table = tables.find(t => t.id === parseInt(tableId));
+    if (!table) return socket.emit('errorMsg', 'Table not found.');
+    if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') {
+      return socket.emit('errorMsg', 'Invalid player role targeted.');
+    }
+
+    // 1. Commit the pending intent signal flag to the staging map
+    table.endGameSignals[targetPlayer] = true;
+    
+    // Broadcast status to the developer stream and active clients
+    const signalStatus = `Player A: ${table.endGameSignals.playerA ? '🚨' : '🟢'} | Player B: ${table.endGameSignals.playerB ? '🚨' : '🟢'}`;
+    io.emit('serverNotice', `[TABLE ${tableId} ADMIN]: Match end proposed. Current matrix: ${signalStatus}`);
+    
+    // Dispatch a targeted logging update for the developer mode console listeners
+    const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean);
+    targetSockets.forEach(sockId => {
+      const sock = io.sockets.sockets.get(sockId);
+      if (sock) sock.emit('endGameSignalUpdate', { tableId: table.id, ...table.endGameSignals });
+    });
+
+    // 2. RESOLUTION RESOLVER: Check if BOTH active seats have consented to clear the table
+    if (table.endGameSignals.playerA && table.endGameSignals.playerB) {
+      console.log(`🧼 [SYSTEM RESET TRIPPED]: Mutual consent achieved on Table ${tableId}. Clearing board...`);
+
+      // Demote active seats to spectators list if they are currently connected
+      if (table.playerA) {
+        table.spectators.push(table.playerA);
+        table.playerA = null;
+      }
+      if (table.playerB) {
+        table.spectators.push(table.playerB);
+        table.playerB = null;
+      }
+
+      // Reset staging environment flags back to default factory baseline
+      table.endGameSignals.playerA = false;
+      table.endGameSignals.playerB = false;
+
+      // Hard-scrub all game state nested data structures
+      const baselineState = () => ({
+        hand: [], deck: [], extraDeck: [], discard: [], support: [], defeated: [],
+        defeatedPoints: 0,
+        battleZone: {
+          fighterA: { card: null, faceDownStack: [] },
+          fighterB: { card: null, faceDownStack: [] },
+          stage: null
+        }
+      });
+
+      table.gameState.playerA = baselineState();
+      table.gameState.playerB = baselineState();
+
+      // 3. MULTI-CHANNEL BROADCAST RIPPLE EFFECT
+      // Send specialized developer logger packet
+      targetSockets.forEach(sockId => {
+        const sock = io.sockets.sockets.get(sockId);
+        if (!sock) return;
+
+        sock.emit('tableClearedReset', { tableId: table.id });
+
+        // Force a soft redraw pass. Because players are now spectators, 
+        // they will instantly see a pristine, completely blank screen area.
+        let viewerRole = 'spectator';
+        if (sockId === table.playerA) viewerRole = 'playerA';
+        if (sockId === table.playerB) viewerRole = 'playerB';
+        sendSanitizedState(sock, table, viewerRole);
+      });
+    }
+  });
+
+  /**
+   * Action: Revokes a previously submitted end-game signal, returning the flag to false.
+   */
+  socket.on('revokeEndGame', ({ tableId, targetPlayer }) => {
+    const table = tables.find(t => t.id === parseInt(tableId));
+    if (!table) return socket.emit('errorMsg', 'Table not found.');
+    if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') {
+      return socket.emit('errorMsg', 'Invalid player role targeted.');
+    }
+
+    // Retract the signal flag back to idle status
+    table.endGameSignals[targetPlayer] = false;
+
+    const signalStatus = `Player A: ${table.endGameSignals.playerA ? '🚨' : '🟢'} | Player B: ${table.endGameSignals.playerB ? '🚨' : '🟢'}`;
+    io.emit('serverNotice', `[TABLE ${tableId} ADMIN]: Match end proposal revoked. Current matrix: ${signalStatus}`);
+
+    // Update logging streams across developer consoles
+    const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean);
+    targetSockets.forEach(sockId => {
+      const sock = io.sockets.sockets.get(sockId);
+      if (sock) sock.emit('endGameSignalUpdate', { tableId: table.id, ...table.endGameSignals });
     });
   });
 

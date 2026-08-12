@@ -21,6 +21,7 @@ class DeveloperMode extends Phaser.Scene {
         this.createLobbyTabPanel();     
         this.createDeckLoaderTabPanel(); 
         this.createGameActionsTabPanel(); 
+        this.createTableAdminTabPanel();
         this.createStateInspectorPanel(); 
         
         this.createHandMappingTablePanel();
@@ -40,6 +41,9 @@ class DeveloperMode extends Phaser.Scene {
 
         this.tab3Btn = this.add.text(490, 110, '[ TAB 3: ACTIONS ]', { fontSize: '18px', fontFamily: 'monospace', fill: '#ffffff', backgroundColor: '#111', padding: 8 })
             .setInteractive({ useHandCursor: true }).on('pointerdown', () => this.switchTab(3));
+
+        this.tab4Btn = this.add.text(690, 110, '[ TAB 4: TABLE ADMIN ]', { fontSize: '18px', fontFamily: 'monospace', fill: '#ffffff', backgroundColor: '#111', padding: 8 })
+            .setInteractive({ useHandCursor: true }).on('pointerdown', () => this.switchTab(4));
     }
 
     switchTab(tabNum) {
@@ -47,10 +51,12 @@ class DeveloperMode extends Phaser.Scene {
         this.tab1Btn.setStyle({ fill: '#ffffff', backgroundColor: '#111' });
         this.tab2Btn.setStyle({ fill: '#ffffff', backgroundColor: '#111' });
         this.tab3Btn.setStyle({ fill: '#ffffff', backgroundColor: '#111' });
+        this.tab4Btn.setStyle({ fill: '#ffffff', backgroundColor: '#111' }); 
         
         if (this.domLobbyPanel) this.domLobbyPanel.setVisible(false);
         if (this.domDeckLoaderPanel) this.domDeckLoaderPanel.setVisible(false);
         if (this.domGameActionsPanel) this.domGameActionsPanel.setVisible(false);
+        if (this.domTableAdminPanel) this.domTableAdminPanel.setVisible(false); 
 
         if (tabNum === 1) {
             this.tab1Btn.setStyle({ fill: '#00ff00', backgroundColor: '#222' });
@@ -61,6 +67,9 @@ class DeveloperMode extends Phaser.Scene {
         } else if (tabNum === 3) {
             this.tab3Btn.setStyle({ fill: '#00ff00', backgroundColor: '#222' });
             if (this.domGameActionsPanel) this.domGameActionsPanel.setVisible(true);
+        } else if (tabNum === 4) { 
+            this.tab4Btn.setStyle({ fill: '#00ff00', backgroundColor: '#222' });
+            if (this.domTableAdminPanel) this.domTableAdminPanel.setVisible(true);
         }
     }
 
@@ -736,10 +745,8 @@ Defeated Pile Total Count: ${defeatEvent.defeatedCount}`);
     }
 
     setupCrossTabSynchronizer() {
-        // Collect all Table ID input references across your panels
-        const tableInputs = ['devTableId', 'deckTableId', 'actionTableId', 'inspectTableId'];
+        const tableInputs = ['devTableId', 'deckTableId', 'actionTableId', 'inspectTableId', 'adminTableId'];
         
-        // Loop through each element ID and bind real-time input mirroring listeners
         tableInputs.forEach(id => {
             const el = document.getElementById(id);
             if (el) {
@@ -755,8 +762,8 @@ Defeated Pile Total Count: ${defeatEvent.defeatedCount}`);
             }
         });
 
-        // Sync logic for Player A / Player B roles and targeting slots
-        const roleSelectors = ['devRole', 'deckTargetPlayer', 'actionTargetPlayer', 'inspectRole'];
+        // FIX: Added 'adminRole' to the dropdown mirroring target chain array
+        const roleSelectors = ['devRole', 'deckTargetPlayer', 'actionTargetPlayer', 'inspectRole', 'adminRole'];
 
         roleSelectors.forEach(id => {
             const el = document.getElementById(id);
@@ -764,13 +771,11 @@ Defeated Pile Total Count: ${defeatEvent.defeatedCount}`);
                 el.addEventListener('change', (event) => {
                     const chosenRole = event.target.value;
                     
-                    // If Spectator is selected on Tab 1 or the Inspector, ignore the player slot sync
                     if (chosenRole === 'spectator') return;
 
                     roleSelectors.forEach(targetId => {
                         const targetEl = document.getElementById(targetId);
                         if (targetEl) {
-                            // Map 'playerA' or 'playerB' choices uniformly across all select boxes
                             if (targetEl.querySelector(`option[value="${chosenRole}"]`)) {
                                 targetEl.value = chosenRole;
                             }
@@ -780,13 +785,11 @@ Defeated Pile Total Count: ${defeatEvent.defeatedCount}`);
             }
         });
 
-        // Append this inside the very bottom of your setupCrossTabSynchronizer() method:
         const masterTableInput = document.getElementById('actionTableId');
         const masterPlayerDropdown = document.getElementById('actionTargetPlayer');
 
         const forceMatrixSync = () => {
             if (masterTableInput && masterPlayerDropdown && masterTableInput.value) {
-                // Silently request a localized update from the server to refresh your matrix rows
                 this.socket.emit('getGameState', { 
                     tableId: parseInt(masterTableInput.value), 
                     role: masterPlayerDropdown.value 
@@ -796,6 +799,68 @@ Defeated Pile Total Count: ${defeatEvent.defeatedCount}`);
 
         if (masterTableInput) masterTableInput.addEventListener('input', forceMatrixSync);
         if (masterPlayerDropdown) masterPlayerDropdown.addEventListener('change', forceMatrixSync);
+    }
+
+    // --- TAB 4: NEW SYSTEM TABLE ADMINISTRATION PANEL PANEL ENGINE ---
+    createTableAdminTabPanel() {
+        // Built to perfectly match your Lobby panel dimensions and style constraints
+        const htmlContent = `
+            <div style="color: white; font-family: monospace; font-size: 18px; background: #222; padding: 25px; border-radius: 8px; width: 460px; height: 500px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box;">
+                <h3 style="margin-top:0; color:#ef4444; font-size: 22px; margin-bottom: 25px;">4. Table Administration</h3>
+                
+                <div style="margin-bottom: 20px;">
+                    <label style="display: inline-block; width: 160px;">Table ID (1-8):</label>
+                    <select id="adminTableId" style="width: 140px; font-size: 16px; padding: 5px; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px; font-family: monospace;">
+                        <option value="1">Table 1</option>
+                        <option value="2">Table 2</option>
+                        <option value="3">Table 3</option>
+                        <option value="4">Table 4</option>
+                        <option value="5">Table 5</option>
+                        <option value="6">Table 6</option>
+                        <option value="7">Table 7</option>
+                        <option value="8">Table 8</option>
+                    </select>
+                </div>
+                
+                <div style="margin-bottom: 40px;">
+                    <label style="display: inline-block; width: 160px;">Select Role:</label>
+                    <select id="adminRole" style="width: 140px; font-size: 16px; padding: 5px; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px; font-family: monospace;">
+                        <option value="playerA">Player A</option>
+                        <option value="playerB">Player B</option>
+                    </select>
+                </div>
+                
+                <div style="display: flex; flex-direction: column; gap: 15px; margin-top: 40px;">
+                    <button id="adminSignalBtn" style="background: #991b1b; color: #fff; font-weight: bold; font-size: 16px; padding: 12px; border: none; border-radius: 4px; cursor: pointer; font-family: monospace; border: 1px solid #ef4444;">🚨 SIGNAL END GAME</button>
+                    <button id="adminRevokeBtn" style="background: #1e293b; color: #fff; font-weight: bold; font-size: 16px; padding: 12px; border: none; border-radius: 4px; cursor: pointer; font-family: monospace; border: 1px solid #475569;">↩️ REVOKE END GAME</button>
+                </div>
+            </div>
+        `;
+        
+        // Spawn the interactive native Phaser DOM container wrapper at identical dimensions
+        this.domTableAdminPanel = this.add.dom(50, 170).createFromHTML(htmlContent).setOrigin(0, 0);
+
+        this.domTableAdminPanel.addListener('click');
+        this.domTableAdminPanel.on('click', (event) => {
+            if (event.target.id === 'adminSignalBtn') this.handleAdminSignalEnd();
+            if (event.target.id === 'adminRevokeBtn') this.handleAdminRevokeEnd();
+        });
+    }
+
+    handleAdminSignalEnd() {
+        const tableId = parseInt(document.getElementById('adminTableId').value);
+        const targetPlayer = document.getElementById('adminRole').value;
+
+        this.logToConsole(`🚨 [DEV ADMIN]: Proposing match closure signal for Table ${tableId}, Role: ${targetPlayer}`);
+        this.socket.emit('signalEndGame', { tableId: tableId, targetPlayer: targetPlayer });
+    }
+
+    handleAdminRevokeEnd() {
+        const tableId = parseInt(document.getElementById('adminTableId').value);
+        const targetPlayer = document.getElementById('adminRole').value;
+
+        this.logToConsole(`↩️ [DEV ADMIN]: Retracting match closure signal for Table ${tableId}, Role: ${targetPlayer}`);
+        this.socket.emit('revokeEndGame', { tableId: tableId, targetPlayer: targetPlayer });
     }
 
 }
