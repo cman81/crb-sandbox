@@ -486,260 +486,238 @@ class GameScene extends Phaser.Scene {
 
 
     // --- SUB-ROUTINE 4: STATIC SLOTS COMPILER ---
+    /**
+     * Main coordinator that loops through all static zones for a player profile.
+     */
     drawStaticSlots(c, pData, stateKey) {
-        const bZone = pData.battleZone || {};
-
-        const drawZoneBox = (point, label, zoneKey) => {
-            // FIX: Force a concrete thickness line style parameter so it can never inherit 0px on redraw sweeps!
-            this.fieldGraphics.lineStyle(2, 16777215, .15); 
-            this.fieldGraphics.fillStyle(0, .2);
-            
-            // Draw the rectangle bounding boxes safely
-            this.fieldGraphics.fillRect(point.x-this.cardWidth/2, point.y-this.cardHeight/2, this.cardWidth, this.cardHeight);
-            this.fieldGraphics.strokeRect(point.x-this.cardWidth/2, point.y-this.cardHeight/2, this.cardWidth, this.cardHeight);
-
-            this.add.text(point.x, point.y, label, { fontSize: "10px", fontFamily: "monospace", color: "#64748b" }).setOrigin(.5);
-
-            const isLocalSeat = (c === this.fieldCoordinates.local);
-
-            if (isLocalSeat && this.role !== 'spectator' && (zoneKey === 'fighterA' || zoneKey === 'fighterB')) {
-                const propName = `localDrop_${zoneKey}`;
-                if (this[propName]) this[propName].destroy();
-
-                this[propName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
-                this[propName].setRectangleDropZone(this.cardWidth, this.cardHeight);
-                this[propName].setData('zoneKey', zoneKey);
-
-                // --- STACK OPERATIONAL CONTROL BUTTONS (LOCAL FIGHTERS ONLY) ---
-                const btnY = point.y - this.cardHeight/2 - 22;
-                const btnStyle = { 
-                    fontSize: '13px', 
-                    fontFamily: 'monospace', 
-                    fill: '#38bdf8', 
-                    fontWeight: 'bold',
-                    backgroundColor: '#1e293b',
-                    padding: { x: 8, y: 4 }
-                };
-
-                // Add Stacked Card Button (+1) with Borders
-                const addBtn = this.add.text(point.x - 30, btnY, '+1', btnStyle).setOrigin(0.5);
-                this.fieldGraphics.lineStyle(1, 0x38bdf8, 0.6);
-                this.fieldGraphics.strokeRect(addBtn.x - addBtn.width/2, addBtn.y - addBtn.height/2, addBtn.width, addBtn.height);
-                addBtn.setInteractive({ useHandCursor: true });
-                addBtn.on('pointerdown', () => {
-                    this.socket.emit('placeDeckCardToStack', { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
-                });
-
-                // Remove/Discard Stacked Card Button (-1) with Borders
-                const remBtn = this.add.text(point.x + 30, btnY, '-1', btnStyle).setOrigin(0.5);
-                this.fieldGraphics.lineStyle(1, 0x38bdf8, 0.6);
-                this.fieldGraphics.strokeRect(remBtn.x - remBtn.width/2, remBtn.y - remBtn.height/2, remBtn.width, remBtn.height);
-                remBtn.setInteractive({ useHandCursor: true });
-                remBtn.on('pointerdown', () => {
-                    this.socket.emit('flipAndDiscardFromStack', { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
-                });
-
-                // Move Fighter to Defeated Zone Button (☠️) with Red Borders
-                const styleDefeat = { 
-                    fontSize: '14px', 
-                    fontFamily: 'monospace', 
-                    fill: '#ef4444', 
-                    fontWeight: 'bold',
-                    backgroundColor: '#1e1b4b',
-                    padding: { x: 8, y: 4 }
-                };
-                const defeatBtn = this.add.text(point.x - 85, point.y, '☠️', styleDefeat).setOrigin(0.5);
-                this.fieldGraphics.lineStyle(1, 0xef4444, 0.6);
-                this.fieldGraphics.strokeRect(defeatBtn.x - defeatBtn.width/2, defeatBtn.y - defeatBtn.height/2, defeatBtn.width, defeatBtn.height);
-                defeatBtn.setInteractive({ useHandCursor: true });
-                defeatBtn.on('pointerdown', () => {
-                    this.socket.emit('moveFighterToDefeated', { tableId: this.tableId, targetPlayer: this.role, slot: zoneKey });
-                });
-            }
-
-            if (zoneKey === 'fighterA' || zoneKey === 'fighterB') {
-                const fighterSlot = bZone[zoneKey];
-                const activeCard = fighterSlot?.card;
-
-                if (activeCard && Object.keys(activeCard).length > 0) {
-                    this.renderCardSprite(point.x, point.y, activeCard, activeCard.isTapped);
-                }
-
-                if (fighterSlot && fighterSlot.faceDownStack) {
-                    this.renderFighterStack(fighterSlot, point);
-                }
-            }
-
-            if (zoneKey === 'stage' && bZone.stage) {
-                this.renderCardSprite(point.x, point.y, bZone.stage, bZone.stage.isTapped);
-            }
-
-            // 4. --- DECK DRAW INTERACTION LINK ---
-            if (zoneKey === 'deck' && isLocalSeat) {
-                if (this.localDeckHitZone) this.localDeckHitZone.destroy();
-                this.localDeckHitZone = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
-                this.localDeckHitZone.setInteractive({ useHandCursor: true });
-                this.localDeckHitZone.on('pointerdown', () => {
-                    if (this.role === 'spectator') return; 
-                    this.socket.emit('drawCard', { tableId: this.tableId, targetPlayer: this.role });
-                });
-            }
-
-            // --- DECK ZONE INTEGRATION LINK ---
-            if (zoneKey === 'deck' && pData.deck) {
-                const totalDeckCount = pData.deck.length || 0;
-                const countYOffset = -this.cardHeight / 2 - 15; 
-
-                // Print the numeric indicator above the slot bounds
-                this.add.text(point.x, point.y + countYOffset, `DECK: ${totalDeckCount}`, {
-                    fontSize: '11px', fontFamily: 'monospace', fill: '#64748b', fontWeight: 'bold'
-                }).setOrigin(0.5);
-
-                // --- INTEGRATED: UNTAP ALL CONVENIENCE MACRO UTILITY BUTTON ---
-                // Only instantiates this control macro button above the local user's deck box coordinate frame
-                if (isLocalSeat && this.role !== 'spectator') {
-                    const untapStyle = { 
-                        fontSize: '11px', 
-                        fontFamily: 'monospace', 
-                        fill: '#10b981', // Clean vivid green layout style tint
-                        fontWeight: 'bold',
-                        backgroundColor: '#064e3b',
-                        padding: { x: 8, y: 4 }
-                    };
-
-                    // Places the button 42px above the deck center, resting cleanly next to the numeric deck text label
-                    const untapAllBtn = this.add.text(point.x - 75, point.y + countYOffset, 'UNTAP ALL', untapStyle).setOrigin(0.5);
-                    this.fieldGraphics.lineStyle(1, 0x10b981, 0.5);
-                    this.fieldGraphics.strokeRect(untapAllBtn.x - untapAllBtn.width/2, untapAllBtn.y - untapAllBtn.height/2, untapAllBtn.width, untapAllBtn.height);
-
-                    untapAllBtn.setInteractive({ useHandCursor: true });
-                    untapAllBtn.on('pointerdown', () => {
-                        this.executeUntapAllMacro();
-                    });
-                }
-
-                // If there is at least one card remaining, spawn the official card back asset
-                if (totalDeckCount > 0) {
-                    const deckSprite = this.add.image(point.x, point.y, 'system_ui', 'card_back');
-                    deckSprite.setDisplaySize(this.cardWidth, this.cardHeight);
-                    deckSprite.setDepth(10); 
-
-                    if (isLocalSeat) {
-                        deckSprite.setInteractive({ useHandCursor: true });
-                        deckSprite.on('pointerdown', () => {
-                            if (this.role === 'spectator') return;
-                            this.socket.emit('drawCard', { tableId: this.tableId, targetPlayer: this.role });
-                        });
-                    }
-                }
-            }
-
-            // 5. --- DISCARD ZONE RENDER LINK ---
-            if (zoneKey === 'discard' && pData.discard && pData.discard.length > 0) {
-                const topDiscardCard = pData.discard[pData.discard.length - 1];
-                if (topDiscardCard) {
-                    this.renderCardSprite(point.x, point.y, topDiscardCard, false);
-                }
-            }
-
-            if (zoneKey === 'discard') {
-                const discardHitName = `discardHit_${stateKey}`;
-                if (this[discardHitName]) this[discardHitName].destroy();
-
-                this[discardHitName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
-                this[discardHitName].setInteractive({ useHandCursor: true });
-                this[discardHitName].on('pointerdown', () => {
-                    this.toggleStackDrawer(stateKey, 'discard'); // Added zone identifier
-                });
-            }
-
-            // --- INTEGRATED: DEFEATED ZONE STACK RENDER & INTERACTION LINK ---
-            if (zoneKey === 'defeated' && pData.defeated && pData.defeated.length > 0) {
-                // Display the topmost card from the array tail face up
-                const topDefeatedCard = pData.defeated[pData.defeated.length - 1];
-                if (topDefeatedCard) {
-                    this.renderCardSprite(point.x, point.y, topDefeatedCard, false);
-                }
-            }
-
-            if (zoneKey === 'defeated') {
-                const defeatedHitName = `defeatedHit_${stateKey}`;
-                if (this[defeatedHitName]) this[defeatedHitName].destroy();
-
-                this[defeatedHitName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
-                this[defeatedHitName].setInteractive({ useHandCursor: true });
-                this[defeatedHitName].on('pointerdown', () => {
-                    this.toggleStackDrawer(stateKey, 'defeated'); // Opens drawer under defeated context
-                });
-            }
-        };
-
-        drawZoneBox(c.deck, 'DECK', 'deck');
-        drawZoneBox(c.discard, 'DISCARD', 'discard');
-        drawZoneBox(c.defeated, 'DEFEATED', 'defeated');
-        drawZoneBox(c.stage, 'STAGE', 'stage');
-        drawZoneBox(c.fighterA, 'FIGHTER A', 'fighterA');
-        drawZoneBox(c.fighterB, 'FIGHTER B', 'fighterB');
-
-        // --- DEFEATED PILE LABEL AND OPERATIONAL CONTROLS ---
-        const defeatedPoints = pData.defeatedPoints || 0;
         const isLocalSeat = (c === this.fieldCoordinates.local);
+        const battleZone = pData.battleZone || {};
 
-        // Render the streamlined "POINTS" indicator string below the slot box shape
-        this.add.text(c.defeated.x, c.defeated.y + this.cardHeight/2 + 15, `POINTS: ${defeatedPoints} / 10`, {
-            fontSize: '12px', fontFamily: 'monospace', color: defeatedPoints >= 7 ? '#ff3333' : '#e2e8f0', fontWeight: 'bold'
-        }).setOrigin(0.5);
+        // 1. Process all static zones sequentially
+        this.processZoneSlot(c.deck, "DECK", "deck", pData, stateKey, isLocalSeat);
+        this.processZoneSlot(c.discard, "DISCARD", "discard", pData, stateKey, isLocalSeat);
+        this.processZoneSlot(c.defeated, "DEFEATED", "defeated", pData, stateKey, isLocalSeat);
+        this.processZoneSlot(c.stage, "STAGE", "stage", pData, stateKey, isLocalSeat);
+        this.processZoneSlot(c.fighterA, "FIGHTER A", "fighterA", pData, stateKey, isLocalSeat);
+        this.processZoneSlot(c.fighterB, "FIGHTER B", "fighterB", pData, stateKey, isLocalSeat);
 
-        if (isLocalSeat && this.role !== 'spectator') {
-            const ptBtnY = c.defeated.y - this.cardHeight/2 - 22;
-            const ptBtnStyle = { 
-                fontSize: '13px', 
-                fontFamily: 'monospace', 
-                fill: '#e2e8f0', 
-                fontWeight: 'bold',
-                backgroundColor: '#1e293b',
-                padding: { x: 8, y: 4 }
-            };
+        // 2. Render localized defeated metrics panel
+        this.renderDefeatedPointsPanel(c.defeated, pData.defeatedPoints || 0, isLocalSeat);
 
-            // Add Points Increment Button (+1) with Borders
-            const incPtBtn = this.add.text(c.defeated.x - 30, ptBtnY, '+1', ptBtnStyle).setOrigin(0.5);
-            this.fieldGraphics.lineStyle(1, 0x64748b, 0.6);
-            this.fieldGraphics.strokeRect(incPtBtn.x - incPtBtn.width/2, incPtBtn.y - incPtBtn.height/2, incPtBtn.width, incPtBtn.height);
-            incPtBtn.setInteractive({ useHandCursor: true });
-            incPtBtn.on('pointerdown', () => {
-                this.socket.emit('adjustDefeatedPoints', { tableId: this.tableId, targetPlayer: this.role, amount: 1 });
+        // 3. Render stateless match-termination exit controls
+        this.renderStatelessEndGameButton(isLocalSeat);
+    }
+
+    /**
+     * Handles the individual rendering pipeline lifecycle for any given grid zone box.
+     */
+    processZoneSlot(point, label, zoneKey, pData, stateKey, isLocalSeat) {
+        const battleZone = pData.battleZone || {};
+
+        // Draw the baseline visual framing shape outline
+        this.drawZoneBoxGeometry(point, label);
+
+        // Bind localized drag-drop tracking vectors and float utility triggers
+        if (isLocalSeat && this.role !== "spectator") {
+            this.configureLocalSlotInteractivity(point, zoneKey, stateKey);
+        }
+
+        // Process specific card graphics rendering per zone types
+        if (zoneKey === "fighterA" || zoneKey === "fighterB") {
+            this.renderFighterZoneContents(point, battleZone[zoneKey]);
+        } else if (zoneKey === "stage" && battleZone.stage) {
+            this.renderCardSprite(point.x, point.y, battleZone.stage, battleZone.stage.isTapped);
+        } else if (zoneKey === "deck") {
+            this.renderDeckZoneStack(point, pData.deck, isLocalSeat);
+        } else if (zoneKey === "discard" || zoneKey === "defeated") {
+            this.renderPublicPileTopCard(point, pData[zoneKey], stateKey, zoneKey);
+        }
+    }
+
+    /**
+     * Sketches the explicit background box frame outlines.
+     */
+    drawZoneBoxGeometry(point, label) {
+        this.fieldGraphics.fillStyle(0, 0.2);
+        this.fieldGraphics.fillRect(point.x - this.cardWidth / 2, point.y - this.cardHeight / 2, this.cardWidth, this.cardHeight);
+        this.fieldGraphics.strokeRect(point.x - this.cardWidth / 2, point.y - this.cardHeight / 2, this.cardWidth, this.cardHeight);
+        this.add.text(point.x, point.y, label, { fontSize: "10px", fontFamily: "monospace", color: "#64748b" }).setOrigin(0.5);
+    }
+
+    /**
+     * Establishes the Phaser Drop Zones and interactive stack manipulation panels (+1, -1, ☠️).
+     */
+    configureLocalSlotInteractivity(point, zoneKey, stateKey) {
+        // 1. Build Drag-Drop Catch Zone Regions for Fighter Slots
+        if (zoneKey === "fighterA" || zoneKey === "fighterB") {
+            const propName = `localDrop_${zoneKey}`;
+            if (this[propName]) this[propName].destroy();
+
+            this[propName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
+            this[propName].setRectangleDropZone(this.cardWidth, this.cardHeight);
+            this[propName].setData("zoneKey", zoneKey);
+
+            // 2. Spawn Sub-Stack Floating Controls (+1, -1)
+            const btnY = point.y - this.cardHeight / 2 - 22;
+            const btnStyle = { fontSize: "13px", fontFamily: "monospace", fill: "#38bdf8", fontWeight: "bold", backgroundColor: "#1e293b", padding: { x: 8, y: 4 } };
+
+            const addBtn = this.add.text(point.x - 30, btnY, "+1", btnStyle).setOrigin(0.5);
+            this.fieldGraphics.lineStyle(1, 3718648, 0.6);
+            this.fieldGraphics.strokeRect(addBtn.x - addBtn.width / 2, addBtn.y - addBtn.height / 2, addBtn.width, addBtn.height);
+            addBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+                this.socket.emit("placeDeckCardToStack", { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
             });
 
-            // Subtract Points Decrement Button (-1) with Borders
-            const decPtBtn = this.add.text(c.defeated.x + 30, ptBtnY, '-1', ptBtnStyle).setOrigin(0.5);
-            this.fieldGraphics.lineStyle(1, 0x64748b, 0.6);
-            this.fieldGraphics.strokeRect(decPtBtn.x - decPtBtn.width/2, decPtBtn.y - decPtBtn.height/2, decPtBtn.width, decPtBtn.height);
-            decPtBtn.setInteractive({ useHandCursor: true });
-            decPtBtn.on('pointerdown', () => {
-                this.socket.emit('adjustDefeatedPoints', { tableId: this.tableId, targetPlayer: this.role, amount: -1 });
+            const remBtn = this.add.text(point.x + 30, btnY, "-1", btnStyle).setOrigin(0.5);
+            this.fieldGraphics.lineStyle(1, 3718648, 0.6);
+            this.fieldGraphics.strokeRect(remBtn.x - remBtn.width / 2, remBtn.y - remBtn.height / 2, remBtn.width, remBtn.height);
+            remBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+                this.socket.emit("flipAndDiscardFromStack", { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
+            });
+
+            // 3. Spawn Defeated Death Shifter Trigger Button (☠️)
+            const styleDefeat = { fontSize: "14px", fontFamily: "monospace", fill: "#ef4444", fontWeight: "bold", backgroundColor: "#1e1b4b", padding: { x: 8, y: 4 } };
+            const defeatBtn = this.add.text(point.x - 85, point.y, "☠️", styleDefeat).setOrigin(0.5);
+            this.fieldGraphics.lineStyle(1, 15680580, 0.6);
+            this.fieldGraphics.strokeRect(defeatBtn.x - defeatBtn.width / 2, defeatBtn.y - defeatBtn.height / 2, defeatBtn.width, defeatBtn.height);
+            defeatBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+                this.socket.emit("moveFighterToDefeated", { tableId: this.tableId, targetPlayer: this.role, slot: zoneKey });
             });
         }
 
-        // Render a straightforward end game proposal action button for active participants
-        if (this.role !== "spectator") {
-            const endMatchStyle = {
-                fontSize: "13px",
-                fontFamily: "monospace",
-                fill: "#ef4444",
-                fontWeight: "bold",
-                backgroundColor: "#1e1b4b",
-                padding: { x: 12, y: 6 }
+        // 4. Build Hitbox Zones For Public Pile Sliders (Clicking deploys Stack Drawer)
+        if (zoneKey === "discard" || zoneKey === "defeated") {
+            const hitName = `${zoneKey}Hit_${stateKey}`;
+            if (this[hitName]) this[hitName].destroy();
+
+            this[hitName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
+            this[hitName].setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+                this.toggleStackDrawer(stateKey, zoneKey);
+            });
+        }
+    }
+
+    /**
+     * Handles rendering for active fighter cards and nested face-down pile overlays.
+     */
+    renderFighterZoneContents(point, fighterSlot) {
+        if (!fighterSlot) return;
+
+        const activeCard = fighterSlot.card;
+        if (activeCard && Object.keys(activeCard).length > 0) {
+            this.renderCardSprite(point.x, point.y, activeCard, activeCard.isTapped);
+        }
+        if (fighterSlot.faceDownStack) {
+            this.renderFighterStack(fighterSlot, point);
+        }
+    }
+
+    /**
+     * Handles deck size indicators and single-card draw hitboxes.
+     */
+    renderDeckZoneStack(point, deckArray, isLocalSeat) {
+        const totalDeckCount = deckArray ? deckArray.length || 0 : 0;
+        const countYOffset = -this.cardHeight / 2 - 15;
+
+        this.add.text(point.x, point.y + countYOffset, `DECK: ${totalDeckCount}`, { fontSize: "11px", fontFamily: "monospace", fill: "#64748b", fontWeight: "bold" }).setOrigin(0.5);
+
+        // Render an "Untap All" batch macro trigger directly over the local deck area
+        if (isLocalSeat && this.role !== "spectator") {
+            if (this.localDeckHitZone) this.localDeckHitZone.destroy();
+            this.localDeckHitZone = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
+            this.localDeckHitZone.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+                this.socket.emit("drawCard", { tableId: this.tableId, targetPlayer: this.role });
+            });
+
+            const untapStyle = { fontSize: "11px", fontFamily: "monospace", fill: "#10b981", fontWeight: "bold", backgroundColor: "#064e3b", padding: { x: 8, y: 4 } };
+            const untapAllBtn = this.add.text(point.x - 75, point.y + countYOffset, "UNTAP ALL", untapStyle).setOrigin(0.5);
+            this.fieldGraphics.lineStyle(1, 1096065, 0.5);
+            this.fieldGraphics.strokeRect(untapAllBtn.x - untapAllBtn.width / 2, untapAllBtn.y - untapAllBtn.height / 2, untapAllBtn.width, untapAllBtn.height);
+            untapAllBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+                this.executeUntapAllMacro();
+            });
+        }
+
+        // Render the physical card back pile if deck length > 0
+        if (totalDeckCount > 0) {
+            const deckSprite = this.add.image(point.x, point.y, "system_ui", "card_back");
+            deckSprite.setDisplaySize(this.cardWidth, this.cardHeight).setDepth(10);
+            
+            if (isLocalSeat && this.role !== "spectator") {
+                deckSprite.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+                    this.socket.emit("drawCard", { tableId: this.tableId, targetPlayer: this.role });
+                });
+            }
+        }
+    }
+
+    /**
+     * Safely renders the topmost item of a public pile lane face up on the grid coordinates.
+     */
+    renderPublicPileTopCard(point, pileArray, stateKey, zoneKey) {
+        if (pileArray && pileArray.length > 0) {
+            const topCard = pileArray[pileArray.length - 1];
+            if (topCard) {
+                this.renderCardSprite(point.x, point.y, topCard, false);
+            }
+        }
+    }
+
+    /**
+     * Handles rendering the score counter and score increment/decrement buttons (+1, -1).
+     */
+    renderDefeatedPointsPanel(defeatedPoint, defeatedPoints, isLocalSeat) {
+        this.add.text(defeatedPoint.x, defeatedPoint.y + this.cardHeight / 2 + 15, `POINTS: ${defeatedPoints} / 10`, {
+            fontSize: "12px", 
+            fontFamily: "monospace", 
+            color: defeatedPoints >= 7 ? "#ff3333" : "#e2e8f0", 
+            fontWeight: "bold"
+        }).setOrigin(0.5);
+
+        if (isLocalSeat && this.role !== "spectator") {
+            const ptBtnY = defeatedPoint.y - this.cardHeight / 2 - 22;
+            const ptBtnStyle = { 
+                fontSize: "13px", 
+                fontFamily: "monospace", 
+                fill: "#e2e8f0", 
+                fontWeight: "bold", 
+                backgroundColor: "#1e293b", 
+                padding: { x: 8, y: 4 } 
             };
 
-            // Perfectly centered horizontally (960px) above central board divider elements
-            this.endGameActionBtn = this.add.text(960, 45, "🚨 PROPOSE END GAME", endMatchStyle).setOrigin(0.5);
-            this.endGameActionBtn.setInteractive({ useHandCursor: true });
+            const incPtBtn = this.add.text(defeatedPoint.x - 30, ptBtnY, "+1", ptBtnStyle).setOrigin(0.5);
+            this.fieldGraphics.lineStyle(1, 6583435, 0.6);
+            this.fieldGraphics.strokeRect(incPtBtn.x - incPtBtn.width / 2, incPtBtn.y - incPtBtn.height / 2, incPtBtn.width, incPtBtn.height);
+            incPtBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+                this.socket.emit("adjustDefeatedPoints", { tableId: this.tableId, targetPlayer: this.role, amount: 1 });
+            });
+
+            const decPtBtn = this.add.text(defeatedPoint.x + 30, ptBtnY, "-1", ptBtnStyle).setOrigin(0.5);
+            this.fieldGraphics.lineStyle(1, 6583435, 0.6);
+            this.fieldGraphics.strokeRect(decPtBtn.x - decPtBtn.width / 2, decPtBtn.y - decPtBtn.height / 2, decPtBtn.width, decPtBtn.height);
+            decPtBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+                this.socket.emit("adjustDefeatedPoints", { tableId: this.tableId, targetPlayer: this.role, amount: -1 });
+            });
+        }
+    }
+
+    /**
+     * Handles rendering the stateless match-termination action trigger button.
+     */
+    renderStatelessEndGameButton(isLocalSeat) {
+        if (isLocalSeat && this.role !== "spectator") {
+            const endMatchStyle = { 
+                fontSize: "13px", 
+                fontFamily: "monospace", 
+                fill: "#ef4444", 
+                fontWeight: "bold", 
+                backgroundColor: "#1e1b4b", 
+                padding: { x: 12, y: 6 } 
+            };
             
-            this.endGameActionBtn.on("pointerdown", () => {
-                // Emit the one-way signal burst immediately down the pipe
+            this.endGameActionBtn = this.add.text(960, 45, "🚨 PROPOSE END GAME", endMatchStyle).setOrigin(0.5);
+            this.endGameActionBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
                 this.socket.emit("signalEndGame", { tableId: this.tableId, targetPlayer: this.role });
-                
-                // Render the "Thanks for playing" overlay modal right on screen
                 this.displayThanksModal();
             });
         }
