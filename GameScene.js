@@ -568,25 +568,45 @@ class GameScene extends Phaser.Scene {
                 });
             }
 
-            // --- INTEGRATED: DECK CARD COUNT AND GRAPHIC VISUALIZER PASS ---
+            // --- DECK ZONE INTEGRATION LINK ---
             if (zoneKey === 'deck' && pData.deck) {
                 const totalDeckCount = pData.deck.length || 0;
-                const countYOffset = -this.cardHeight / 2 - 15; // Placed neatly above the top margin frame boundary
+                const countYOffset = -this.cardHeight / 2 - 15; 
 
                 // Print the numeric indicator above the slot bounds
                 this.add.text(point.x, point.y + countYOffset, `DECK: ${totalDeckCount}`, {
                     fontSize: '11px', fontFamily: 'monospace', fill: '#64748b', fontWeight: 'bold'
                 }).setOrigin(0.5);
 
+                // --- INTEGRATED: UNTAP ALL CONVENIENCE MACRO UTILITY BUTTON ---
+                // Only instantiates this control macro button above the local user's deck box coordinate frame
+                if (isLocalSeat && this.role !== 'spectator') {
+                    const untapStyle = { 
+                        fontSize: '11px', 
+                        fontFamily: 'monospace', 
+                        fill: '#10b981', // Clean vivid green layout style tint
+                        fontWeight: 'bold',
+                        backgroundColor: '#064e3b',
+                        padding: { x: 8, y: 4 }
+                    };
+
+                    // Places the button 42px above the deck center, resting cleanly next to the numeric deck text label
+                    const untapAllBtn = this.add.text(point.x - 75, point.y + countYOffset, 'UNTAP ALL', untapStyle).setOrigin(0.5);
+                    this.fieldGraphics.lineStyle(1, 0x10b981, 0.5);
+                    this.fieldGraphics.strokeRect(untapAllBtn.x - untapAllBtn.width/2, untapAllBtn.y - untapAllBtn.height/2, untapAllBtn.width, untapAllBtn.height);
+
+                    untapAllBtn.setInteractive({ useHandCursor: true });
+                    untapAllBtn.on('pointerdown', () => {
+                        this.executeUntapAllMacro();
+                    });
+                }
+
                 // If there is at least one card remaining, spawn the official card back asset
                 if (totalDeckCount > 0) {
-                    // Match the bundle map parameters inside your renderCardSprite rules
                     const deckSprite = this.add.image(point.x, point.y, 'system_ui', 'card_back');
                     deckSprite.setDisplaySize(this.cardWidth, this.cardHeight);
-                    deckSprite.setAngle(0);
-                    deckSprite.setDepth(10); // Layer above the gray background slot box shape
+                    deckSprite.setDepth(10); 
 
-                    // If it is the local user's deck, let the sprite match the hand cursor interaction loop
                     if (isLocalSeat) {
                         deckSprite.setInteractive({ useHandCursor: true });
                         deckSprite.on('pointerdown', () => {
@@ -1238,4 +1258,49 @@ class GameScene extends Phaser.Scene {
         }
     }
 
+    /**
+     * Traverses all local player active cards and dispatches 'toggleCardTap'
+     * mutations for any items currently sitting in a tapped state.
+     */
+    executeUntapAllMacro() {
+        if (!this.lastReceivedState || this.role === 'spectator') return;
+
+        const pData = this.lastReceivedState[this.role] || {};
+        const bZone = pData.battleZone || {};
+        const support = pData.support || [];
+
+        console.log(`⚡ [UNTAP ALL MACRO]: Initiating local field state traversal pass...`);
+
+        // 1. Audit Fighter A Status
+        if (bZone.fighterA && bZone.fighterA.card && bZone.fighterA.card.isTapped) {
+            this.socket.emit('toggleCardTap', {
+                tableId: this.tableId,
+                targetPlayer: this.role,
+                zone: 'fighterA',
+                supportIndex: null
+            });
+        }
+
+        // 2. Audit Fighter B Status
+        if (bZone.fighterB && bZone.fighterB.card && bZone.fighterB.card.isTapped) {
+            this.socket.emit('toggleCardTap', {
+                tableId: this.tableId,
+                targetPlayer: this.role,
+                zone: 'fighterB',
+                supportIndex: null
+            });
+        }
+
+        // 3. Audit Support Lane Cards Matrix Lists
+        support.forEach((card, index) => {
+            if (card && card.isTapped) {
+                this.socket.emit('toggleCardTap', {
+                    tableId: this.tableId,
+                    targetPlayer: this.role,
+                    zone: 'support',
+                    supportIndex: index
+                });
+            }
+        });
+    }
 }
