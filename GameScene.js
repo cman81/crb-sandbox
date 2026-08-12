@@ -237,6 +237,22 @@ class GameScene extends Phaser.Scene {
             }
         });
 
+        this.socket.on('defeatedPointsTickedUpdate', (pointsEvent) => {
+            console.log(`📡 [NETWORK RECEIVE]: defeatedPointsTickedUpdate caught for ${pointsEvent.targetPlayer}`);
+            if (!this.lastReceivedState) return;
+
+            const targetState = this.lastReceivedState[pointsEvent.targetPlayer];
+            if (targetState) {
+                // 1. Sync the fresh score parameters down into local memory cache variables
+                if (typeof pointsEvent.totalDefeatedPoints !== 'undefined') {
+                    targetState.defeatedPoints = pointsEvent.totalDefeatedPoints;
+                }
+                
+                // 2. Force an immediate screen re-render pass to repaint the visual text fields
+                this.handleStateRenderingLoop(this.lastReceivedState);
+            }
+        });
+
         this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
 
         this.selectedPreviewCard = null; // Caches the active card loaded into Column 3
@@ -434,7 +450,7 @@ class GameScene extends Phaser.Scene {
 
             const isLocalSeat = (c === this.fieldCoordinates.local);
 
-            if (isLocalSeat && (zoneKey === 'fighterA' || zoneKey === 'fighterB')) {
+            if (isLocalSeat && this.role !== 'spectator' && (zoneKey === 'fighterA' || zoneKey === 'fighterB')) {
                 const propName = `localDrop_${zoneKey}`;
                 if (this[propName]) this[propName].destroy();
 
@@ -444,8 +460,6 @@ class GameScene extends Phaser.Scene {
 
                 // --- STACK OPERATIONAL CONTROL BUTTONS (LOCAL FIGHTERS ONLY) ---
                 const btnY = point.y - this.cardHeight/2 - 22;
-                
-                // Button Styling Rules: Smaller font, distinct border colors
                 const btnStyle = { 
                     fontSize: '13px', 
                     fontFamily: 'monospace', 
@@ -455,32 +469,25 @@ class GameScene extends Phaser.Scene {
                     padding: { x: 8, y: 4 }
                 };
 
-                // 1. Add Stacked Card Button (+1) with Borders
-                // Shifted slightly left (point.x - 30) to account for padding widths
+                // Add Stacked Card Button (+1) with Borders
                 const addBtn = this.add.text(point.x - 30, btnY, '+1', btnStyle).setOrigin(0.5);
                 this.fieldGraphics.lineStyle(1, 0x38bdf8, 0.6);
                 this.fieldGraphics.strokeRect(addBtn.x - addBtn.width/2, addBtn.y - addBtn.height/2, addBtn.width, addBtn.height);
-                
                 addBtn.setInteractive({ useHandCursor: true });
                 addBtn.on('pointerdown', () => {
-                    if (this.role === 'spectator') return;
                     this.socket.emit('placeDeckCardToStack', { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
                 });
 
-                // 2. Remove/Discard Stacked Card Button (-1) with Borders
-                // Shifted slightly right (point.x + 30)
+                // Remove/Discard Stacked Card Button (-1) with Borders
                 const remBtn = this.add.text(point.x + 30, btnY, '-1', btnStyle).setOrigin(0.5);
                 this.fieldGraphics.lineStyle(1, 0x38bdf8, 0.6);
                 this.fieldGraphics.strokeRect(remBtn.x - remBtn.width/2, remBtn.y - remBtn.height/2, remBtn.width, remBtn.height);
-                
                 remBtn.setInteractive({ useHandCursor: true });
                 remBtn.on('pointerdown', () => {
-                    if (this.role === 'spectator') return;
                     this.socket.emit('flipAndDiscardFromStack', { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
                 });
 
-                // --- FIGHTER DEFEATED ACTION LINK ---
-                // 3. Move Fighter to Defeated Zone Button (☠️) with Red Borders
+                // Move Fighter to Defeated Zone Button (☠️) with Red Borders
                 const styleDefeat = { 
                     fontSize: '14px', 
                     fontFamily: 'monospace', 
@@ -489,20 +496,12 @@ class GameScene extends Phaser.Scene {
                     backgroundColor: '#1e1b4b',
                     padding: { x: 8, y: 4 }
                 };
-                
                 const defeatBtn = this.add.text(point.x - 85, point.y, '☠️', styleDefeat).setOrigin(0.5);
                 this.fieldGraphics.lineStyle(1, 0xef4444, 0.6);
                 this.fieldGraphics.strokeRect(defeatBtn.x - defeatBtn.width/2, defeatBtn.y - defeatBtn.height/2, defeatBtn.width, defeatBtn.height);
-                
                 defeatBtn.setInteractive({ useHandCursor: true });
                 defeatBtn.on('pointerdown', () => {
-                    if (this.role === 'spectator') return;
-                    console.log(`📡 [NETWORK EMIT]: Sending moveFighterToDefeated for ${zoneKey}`);
-                    this.socket.emit('moveFighterToDefeated', { 
-                        tableId: this.tableId, 
-                        targetPlayer: this.role, 
-                        slot: zoneKey 
-                    });
+                    this.socket.emit('moveFighterToDefeated', { tableId: this.tableId, targetPlayer: this.role, slot: zoneKey });
                 });
             }
 
@@ -610,10 +609,44 @@ class GameScene extends Phaser.Scene {
         drawZoneBox(c.fighterA, 'FIGHTER A', 'fighterA');
         drawZoneBox(c.fighterB, 'FIGHTER B', 'fighterB');
 
+        // --- DEFEATED PILE LABEL AND OPERATIONAL CONTROLS ---
         const defeatedPoints = pData.defeatedPoints || 0;
+        const isLocalSeat = (c === this.fieldCoordinates.local);
+
+        // Render the streamlined "POINTS" indicator string below the slot box shape
         this.add.text(c.defeated.x, c.defeated.y + this.cardHeight/2 + 15, `POINTS: ${defeatedPoints} / 10`, {
             fontSize: '12px', fontFamily: 'monospace', color: defeatedPoints >= 7 ? '#ff3333' : '#e2e8f0', fontWeight: 'bold'
         }).setOrigin(0.5);
+
+        if (isLocalSeat && this.role !== 'spectator') {
+            const ptBtnY = c.defeated.y - this.cardHeight/2 - 22;
+            const ptBtnStyle = { 
+                fontSize: '13px', 
+                fontFamily: 'monospace', 
+                fill: '#e2e8f0', 
+                fontWeight: 'bold',
+                backgroundColor: '#1e293b',
+                padding: { x: 8, y: 4 }
+            };
+
+            // Add Points Increment Button (+1) with Borders
+            const incPtBtn = this.add.text(c.defeated.x - 30, ptBtnY, '+1', ptBtnStyle).setOrigin(0.5);
+            this.fieldGraphics.lineStyle(1, 0x64748b, 0.6);
+            this.fieldGraphics.strokeRect(incPtBtn.x - incPtBtn.width/2, incPtBtn.y - incPtBtn.height/2, incPtBtn.width, incPtBtn.height);
+            incPtBtn.setInteractive({ useHandCursor: true });
+            incPtBtn.on('pointerdown', () => {
+                this.socket.emit('adjustDefeatedPoints', { tableId: this.tableId, targetPlayer: this.role, amount: 1 });
+            });
+
+            // Subtract Points Decrement Button (-1) with Borders
+            const decPtBtn = this.add.text(c.defeated.x + 30, ptBtnY, '-1', ptBtnStyle).setOrigin(0.5);
+            this.fieldGraphics.lineStyle(1, 0x64748b, 0.6);
+            this.fieldGraphics.strokeRect(decPtBtn.x - decPtBtn.width/2, decPtBtn.y - decPtBtn.height/2, decPtBtn.width, decPtBtn.height);
+            decPtBtn.setInteractive({ useHandCursor: true });
+            decPtBtn.on('pointerdown', () => {
+                this.socket.emit('adjustDefeatedPoints', { tableId: this.tableId, targetPlayer: this.role, amount: -1 });
+            });
+        }
     }
 
 
