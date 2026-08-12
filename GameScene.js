@@ -40,11 +40,11 @@ class GameScene extends Phaser.Scene {
                 defeated:    { x: 470,  y: 700 }, 
                 stage:       { x: 1310, y: 700 }, 
                 fighterA:    { x: 760,  y: 700 }, 
-                fighterB:    { x: 1160, y: 700 },
+                fighterB:    { x: 1060, y: 700 }, 
                 
                 // Bottom tray layout specs
-                supportStart:   { x: 600,  y: 920 }, // Starts left (600), cascades right
-                supportOverlap: 25,                  // Cascades left-to-right (+25)
+                supportStart:   { x: 600,  y: 920 }, 
+                supportOverlap: 25,                  
                 trayWidth:      730,                 
                 trayHeight:     166,                 
                 
@@ -57,14 +57,11 @@ class GameScene extends Phaser.Scene {
                 discard:     { x: 470,  y: 200 }, 
                 defeated:    { x: 1450, y: 380 }, 
                 stage:       { x: 610,  y: 380 }, 
-                fighterA:    { x: 1160, y: 380 }, 
+                fighterA:    { x: 1060, y: 380 }, 
                 fighterB:    { x: 760,  y: 380 }, 
                 
-                // FIXED TOP TRAY REALIGNMENT:
-                // Changed supportStart.x from 1320 (right side) to 600 (left side)
-                // Changed supportOverlap from -25 (leftward) to +25 (rightward)
-                supportStart:   { x: 600,  y: 160 }, // Starts left (600) like the bottom tray
-                supportOverlap: 25,                  // Cascades left-to-right (+25)
+                supportStart:   { x: 600,  y: 160 }, 
+                supportOverlap: 25,                  
                 trayWidth:      730,
                 trayHeight:     166,
                 
@@ -74,6 +71,7 @@ class GameScene extends Phaser.Scene {
             },
             previewAnchor: { x: 1728, y: 540 }
         };
+
 
         // 4. WebSocket Sync Handshakes: Reuse the persistent global socket instance
         this.socket = globalSocket;
