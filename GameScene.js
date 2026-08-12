@@ -22,6 +22,10 @@ class GameScene extends Phaser.Scene {
     }
 
     create() {
+        // FIX 1: Hard wipe old, dead graphics container properties from prior visits
+        this.fieldGraphics = null;
+        this.dividerGraphics = null;
+
         // 1. Paint the entire 1920x1080 canvas viewport window space with this table's flat arena color
         const bgFill = this.add.graphics();
         bgFill.fillStyle(this.backgroundColor, 1);
@@ -72,10 +76,14 @@ class GameScene extends Phaser.Scene {
             previewAnchor: { x: 1728, y: 540 }
         };
 
-
         // 4. WebSocket Sync Handshakes: Reuse the persistent global socket instance
         this.socket = globalSocket;
         this.socket.emit('joinTable', { tableId: this.tableId, role: this.role });
+
+        // --- AUTO-REVOKE ON ENTRY ---
+        if (this.role === "playerA" || this.role === "playerB") {
+            this.socket.emit("revokeEndGame", { tableId: this.tableId, targetPlayer: this.role });
+        }
 
         // --- Inside your create() method, replace the stateUpdate block with this: ---
         this.socket.on('stateUpdate', (sanitizedState) => {
@@ -390,66 +398,70 @@ class GameScene extends Phaser.Scene {
         }
     }
 
-    handleStateRenderingLoop(state) {
-        // 1. Core Canvas Cleanup Loop
+    handleStateRenderingLoop(state){
         this.resetRenderLayer();
+        this.drawPanelDividers(); // Draws your section split borders
         
-        // 2. Standard 3-Column Arena Render Sequence Pass
-        this.drawPanelDividers();
+        // FIX: Set a safe baseline global thickness right before passing to the field builders
+        if (this.fieldGraphics) {
+            this.fieldGraphics.lineStyle(2, 16777215, .15);
+        }
+        
         this.drawFieldBoard(state);
         this.drawPreviewPanel();
-
-        // 3. FIXED RENDERING OVERLAY LINK: Draw the drawer AFTER the background field!
-        // This ensures the drawer layout stacks properly on top of standard zone cards without erasing them
-        if (this.drawerContainer && this.drawerState && this.drawerState.isOpen) {
+        
+        if(this.drawerContainer&&this.drawerState&&this.drawerState.isOpen){
             this.renderDrawerContents();
             this.drawerContainer.setVisible(true);
-        } else if (this.drawerContainer) {
+        } else if(this.drawerContainer){
             this.drawerContainer.setVisible(false);
         }
     }
 
     // --- SUB-ROUTINE 1: LAYER RESET ---
     resetRenderLayer() {
+        // If it's null or cleared by create(), instantiate a fresh, live graphics context
         if (this.fieldGraphics) {
             this.fieldGraphics.clear();
         } else {
             this.fieldGraphics = this.add.graphics();
         }
 
-        // Safe cleanup iteration avoiding array modification side-effects
         const childrenToDestroy = [];
         this.children.list.forEach(child => {
-            // Flush all old text layouts
-            if (child.type === 'Text') {
-                childrenToDestroy.push(child);
-            }
-            
-            // --- FLUSH OLD HAND/FIELD SPRITES ---
-            // If it is an Image component, mark it for garbage collection 
-            // so our upcoming render matrix can spawn clean, newly positioned assets.
-            if (child.type === 'Image') {
-                childrenToDestroy.push(child);
-            }
+            if (child.type === "Text" && (
+                child.text.includes("HAND") || 
+                child.text.includes("ARENA ZONE") || 
+                child.text.includes("INSPECTION")
+            )) return;
+
+            if (child.type === "Text") childrenToDestroy.push(child);
+            if (child.type === "Image") childrenToDestroy.push(child);
         });
-        
         childrenToDestroy.forEach(child => child.destroy());
     }
 
+
     // --- SUB-ROUTINE 2: DIVIDER DRAW PASS ---
     drawPanelDividers() {
-        this.fieldGraphics.lineStyle(4, 0x334155, 1);
-        this.fieldGraphics.lineBetween(384, 0, 384, 1080);  // Column 1 | Column 2 Boundary Line
-        this.fieldGraphics.lineBetween(1536, 0, 1536, 1080); // Column 2 | Column 3 Boundary Line
-        
-        this.fieldGraphics.lineStyle(2, 0x334155, 0.5);
-        this.fieldGraphics.lineBetween(0, 540, 1536, 540);   // Center Divide
+        // If it's null or cleared by create(), instantiate a fresh, live graphics context
+        if (this.dividerGraphics) {
+            this.dividerGraphics.clear();
+        } else {
+            this.dividerGraphics = this.add.graphics();
+        }
 
-        const headerStyle = { fontSize: '14px', fontFamily: 'monospace', fill: '#64748b', fontWeight: 'bold' };
-        this.add.text(20, 20, '🗂️ OPPONENT HAND', headerStyle);
-        this.add.text(20, 560, '🗂️ PLAYER HAND', headerStyle);
+        this.dividerGraphics.lineStyle(4, 3359061, 1);
+        this.dividerGraphics.lineBetween(384, 0, 384, 1080);
+        this.dividerGraphics.lineBetween(1536, 0, 1536, 1080);
+        this.dividerGraphics.lineStyle(2, 3359061, .5);
+        this.dividerGraphics.lineBetween(0, 540, 1536, 540);
+        
+        const headerStyle = { fontSize: "14px", fontFamily: "monospace", fill: "#64748b", fontWeight: "#bold" };
+        this.add.text(20, 20, "🗂️ OPPONENT HAND", headerStyle);
+        this.add.text(20, 560, "🗂️ PLAYER HAND", headerStyle);
         this.add.text(404, 20, `🎮 ARENA ZONE (FIELD TERMINAL ${this.tableId})`, headerStyle);
-        this.add.text(1556, 20, '🔍 CARD INSPECTION PREVIEW', headerStyle);
+        this.add.text(1556, 20, "🔍 CARD INSPECTION PREVIEW", headerStyle);
     }
 
     // --- SUB-ROUTINE 3: FIELD BOARD COORDINATOR ---
@@ -474,14 +486,19 @@ class GameScene extends Phaser.Scene {
 
 
     // --- SUB-ROUTINE 4: STATIC SLOTS COMPILER ---
-    drawStaticSlots(c, pData, stateKey) { // FIX: Accept stateKey parameter here
+    drawStaticSlots(c, pData, stateKey) {
         const bZone = pData.battleZone || {};
 
         const drawZoneBox = (point, label, zoneKey) => {
-            this.fieldGraphics.fillStyle(0x000000, 0.2);
-            this.fieldGraphics.fillRect(point.x - this.cardWidth/2, point.y - this.cardHeight/2, this.cardWidth, this.cardHeight);
-            this.fieldGraphics.strokeRect(point.x - this.cardWidth/2, point.y - this.cardHeight/2, this.cardWidth, this.cardHeight);
-            this.add.text(point.x, point.y, label, { fontSize: '10px', fontFamily: 'monospace', color: '#64748b' }).setOrigin(0.5);
+            // FIX: Force a concrete thickness line style parameter so it can never inherit 0px on redraw sweeps!
+            this.fieldGraphics.lineStyle(2, 16777215, .15); 
+            this.fieldGraphics.fillStyle(0, .2);
+            
+            // Draw the rectangle bounding boxes safely
+            this.fieldGraphics.fillRect(point.x-this.cardWidth/2, point.y-this.cardHeight/2, this.cardWidth, this.cardHeight);
+            this.fieldGraphics.strokeRect(point.x-this.cardWidth/2, point.y-this.cardHeight/2, this.cardWidth, this.cardHeight);
+
+            this.add.text(point.x, point.y, label, { fontSize: "10px", fontFamily: "monospace", color: "#64748b" }).setOrigin(.5);
 
             const isLocalSeat = (c === this.fieldCoordinates.local);
 
@@ -700,6 +717,30 @@ class GameScene extends Phaser.Scene {
             decPtBtn.setInteractive({ useHandCursor: true });
             decPtBtn.on('pointerdown', () => {
                 this.socket.emit('adjustDefeatedPoints', { tableId: this.tableId, targetPlayer: this.role, amount: -1 });
+            });
+        }
+
+        // Render a straightforward end game proposal action button for active participants
+        if (this.role !== "spectator") {
+            const endMatchStyle = {
+                fontSize: "13px",
+                fontFamily: "monospace",
+                fill: "#ef4444",
+                fontWeight: "bold",
+                backgroundColor: "#1e1b4b",
+                padding: { x: 12, y: 6 }
+            };
+
+            // Perfectly centered horizontally (960px) above central board divider elements
+            this.endGameActionBtn = this.add.text(960, 45, "🚨 PROPOSE END GAME", endMatchStyle).setOrigin(0.5);
+            this.endGameActionBtn.setInteractive({ useHandCursor: true });
+            
+            this.endGameActionBtn.on("pointerdown", () => {
+                // Emit the one-way signal burst immediately down the pipe
+                this.socket.emit("signalEndGame", { tableId: this.tableId, targetPlayer: this.role });
+                
+                // Render the "Thanks for playing" overlay modal right on screen
+                this.displayThanksModal();
             });
         }
     }
@@ -1364,6 +1405,64 @@ class GameScene extends Phaser.Scene {
                     zone: 'support',
                     supportIndex: index
                 });
+            }
+        });
+    }
+
+    displayThanksModal() {
+        // 1. Structural safeguard check to prevent duplicate markup injection loops
+        if (document.getElementById("thanksModalContainer")) return;
+
+        // 2. Build structured HTML markup styled to match your existing Lobby look
+        const modalHtml = `
+            <div id="thanksModalContainer" style="
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                color: #f8fafc;
+                font-family: monospace;
+                font-size: 16px;
+                background: #0f172a;
+                padding: 40px;
+                border-radius: 12px;
+                width: 350px;
+                text-align: center;
+                border: 2px solid #38bdf8;
+                box-shadow: 0px 10px 30px rgba(0,0,0,0.85);
+                z-index: 9999;
+            ">
+                <h2 style="color: #38bdf8; margin-top: 0; font-size: 24px; margin-bottom: 15px;">MATCH CONCLUDED</h2>
+                <p style="margin-bottom: 30px; color: #94a3b8; line-height: 1.5;">You have proposed to end the match.<br><br>Thanks for playing!</p>
+                <button id="dismissThanksBtn" style="
+                    width: 100%;
+                    background: #38bdf8;
+                    color: #0f172a;
+                    font-weight: bold;
+                    font-size: 16px;
+                    padding: 12px;
+                    border: none;
+                    border-radius: 6px;
+                    cursor: pointer;
+                ">DISMISS</button>
+            </div>
+        `;
+
+        // 3. Mount directly into Phaser's DOM framework stack
+        const modalDom = this.add.dom(960, 540).createFromHTML(modalHtml).setOrigin(0.5);
+        modalDom.setDepth(5000); // Forces structural projection over all card display layers
+        modalDom.addListener("click");
+
+        modalDom.on("click", (event) => {
+            if (event.target.id === "dismissThanksBtn") {
+                // Drop out of the server's table seating registries completely
+                this.socket.emit("leaveTable");
+
+                // Hard destroy the overlay container frame from document space
+                modalDom.destroy();
+
+                // Transition the player smoothly back to the LobbyScene terminal
+                this.scene.start("LobbyScene");
             }
         });
     }

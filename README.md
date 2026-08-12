@@ -212,6 +212,7 @@ The engine monitors background keyboard sequences inside the main menu lobby are
 ---
 
 ## 🤖 LLM Context Bootstrap (Session Init)
+We are working on the crb-sandbox project. Here is our current progress:
 *   **Project Specs:** crb-sandbox. Rule-agnostic, 2-player/spectator TCG sandbox. Node.js server (`server.js`) is authoritative single source of truth for all indices, states, hands, lanes, and Fog of War visibility masking rules. Phaser 4 acts as a passive visual display terminal.
 *   **FOW Visibility Model:** `discard`, `support`, and `defeated` are public unmasked arrays. `hand` and `extraDeck` show only to the owner seat. `deck` arrays hide from all active players; only Spectators hold unmasked X-Ray deck vision. Face-down sub-arrays (`faceDownStack`) securely strip metadata properties, outputting uniform `Card Back` text wrappers to both players. Only Spectators view raw stack items.
 *   **Deck Arrays Index Protocol:** Top of deck/stack maps to array tail (`.push()` / `.pop()`). Bottom of deck/stack maps to array index `0` (`.unshift()`). `recycleDiscardToDeck` drains the discard array via a `while` block, flips tags face-down, pushes to deck, and executes a programmatic UUID sort (`.localeCompare`).

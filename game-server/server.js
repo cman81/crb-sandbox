@@ -122,6 +122,11 @@ io.on('connection', (socket) => {
     else if (role === 'playerB' && !table.playerB) table.playerB = socket.id;
     else if (role === 'spectator') table.spectators.push(socket.id);
     else return socket.emit('errorMsg', 'Seat taken.');
+
+    // --- ADD THIS LINE TO AUTO-REVOKE FLAG ON JOIN/REJOIN ---
+    if (role === 'playerA' || role === 'playerB') {
+      table.endGameSignals[role] = false;
+    }
     
   });
 
