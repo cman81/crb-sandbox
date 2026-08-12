@@ -311,33 +311,37 @@ io.on('connection', (socket) => {
   socket.on('placeDeckCardToStack', ({ tableId, targetPlayer, targetSlot }) => {
     const table = tables.find(t => t.id === parseInt(tableId));
     if (!table) return socket.emit('errorMsg', 'Table not found.');
+    if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') return socket.emit('errorMsg', 'Invalid target.');
 
     const deck = table.gameState[targetPlayer]?.deck;
     const battleZone = table.gameState[targetPlayer]?.battleZone;
 
     if (!deck || deck.length === 0) {
-      return socket.emit('errorMsg', `${targetPlayer}'s deck is empty!`);
+      return socket.emit('errorMsg', `Your deck is empty!`);
     }
 
     if (targetSlot !== 'fighterA' && targetSlot !== 'fighterB') {
       return socket.emit('errorMsg', 'Invalid target stack slot.');
     }
 
-    // Standardized: Pull from the end (top) of the deck array using .pop()
+    // Top of deck stack pops out from the end of the array tail (.pop())
     const cardToStack = deck.pop(); 
     cardToStack.isFaceDown = true; 
 
-    // Appends to the end (top) of the stack array
+    if (!battleZone[targetSlot].faceDownStack) {
+      battleZone[targetSlot].faceDownStack = [];
+    }
     battleZone[targetSlot].faceDownStack.push(cardToStack);
 
-    // Dynamic notifications: Everyone gets a masked update except spectators
+    // Enforce asymmetric Fog of War privacy constraints
     const maskCard = () => ({ name: "Card Back", isFaceDown: true });
-    
-    const standardPayload = { targetPlayer, targetSlot, card: maskCard(), stackCount: battleZone[targetSlot].faceDownStack.length, deckCount: deck.length };
-    const spectatorPayload = { targetPlayer, targetSlot, card: cardToStack, stackCount: battleZone[targetSlot].faceDownStack.length, deckCount: deck.length };
+    const maskedStack = battleZone[targetSlot].faceDownStack.map(maskCard);
 
-    if (table.playerA) io.to(table.playerA).emit('cardStackedUpdate', standardPayload);
-    if (table.playerB) io.to(table.playerB).emit('cardStackedUpdate', standardPayload);
+    const activePlayersPayload = { targetPlayer, targetSlot, updatedStack: maskedStack };
+    const spectatorPayload = { targetPlayer, targetSlot, updatedStack: battleZone[targetSlot].faceDownStack };
+
+    if (table.playerA) io.to(table.playerA).emit('cardStackedUpdate', activePlayersPayload);
+    if (table.playerB) io.to(table.playerB).emit('cardStackedUpdate', activePlayersPayload);
     
     table.spectators.forEach(specId => {
       io.to(specId).emit('cardStackedUpdate', spectatorPayload);
@@ -655,6 +659,7 @@ io.on('connection', (socket) => {
   socket.on('flipAndDiscardFromStack', ({ tableId, targetPlayer, targetSlot }) => {
     const table = tables.find(t => t.id === parseInt(tableId));
     if (!table) return socket.emit('errorMsg', 'Table not found.');
+    if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') return socket.emit('errorMsg', 'Invalid target.');
 
     const battleZone = table.gameState[targetPlayer]?.battleZone;
     const discard = table.gameState[targetPlayer]?.discard;
@@ -668,28 +673,23 @@ io.on('connection', (socket) => {
       return socket.emit('errorMsg', `The face-down stack next to ${targetSlot} is completely empty!`);
     }
 
-    // Standardized: Peel the true topmost item off the end of the array using .pop()
+    // Peel the true topmost item off the end of the array tail (.pop())
     const poppedCard = stack.pop();
-
-    // Flip the card face up and reset any tapped orientations before moving it to discard
     poppedCard.isFaceDown = false;
     poppedCard.isTapped = false;
 
-    // Append directly onto the public discard pile stack
+    // Append directly onto the public discard pile stack (.push())
     discard.push(poppedCard);
 
-    // Build the payload (discard is a completely public zone, so everyone gets unmasked card details)
-    const payload = {
-      targetPlayer,
-      targetSlot,
-      card: poppedCard,
-      stackCount: stack.length,
-      discardCount: discard.length
-    };
+    const maskCard = () => ({ name: "Card Back", isFaceDown: true });
+    const maskedStack = stack.map(maskCard);
 
-    if (table.playerA) io.to(table.playerA).emit('stackFlippedAndDiscardedUpdate', payload);
-    if (table.playerB) io.to(table.playerB).emit('stackFlippedAndDiscardedUpdate', payload);
-    table.spectators.forEach(specId => io.to(specId).emit('stackFlippedAndDiscardedUpdate', payload));
+    const activePlayersPayload = { targetPlayer, targetSlot, updatedStack: maskedStack, updatedDiscard: discard };
+    const spectatorPayload = { targetPlayer, targetSlot, updatedStack: stack, updatedDiscard: discard };
+
+    if (table.playerA) io.to(table.playerA).emit('stackFlippedAndDiscardedUpdate', activePlayersPayload);
+    if (table.playerB) io.to(table.playerB).emit('stackFlippedAndDiscardedUpdate', activePlayersPayload);
+    table.spectators.forEach(specId => io.to(specId).emit('stackFlippedAndDiscardedUpdate', spectatorPayload));
 
     socket.emit('serverNotice', `Peeled top card from ${targetPlayer}'s ${targetSlot} stack and flipped it face up into the discard pile.`);
   });

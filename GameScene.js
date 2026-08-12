@@ -123,6 +123,31 @@ class GameScene extends Phaser.Scene {
             this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
         });
 
+        this.socket.on('cardStackedUpdate', (stackEvent) => {
+            console.log(`📡 [NETWORK RECEIVE]: cardStackedUpdate caught for ${stackEvent.targetPlayer} on ${stackEvent.targetSlot}`);
+            if (!this.lastReceivedState) return;
+            const targetState = this.lastReceivedState[stackEvent.targetPlayer];
+            if (targetState && targetState.battleZone && targetState.battleZone[stackEvent.targetSlot]) {
+                targetState.battleZone[stackEvent.targetSlot].faceDownStack = stackEvent.updatedStack;
+                this.handleStateRenderingLoop(this.lastReceivedState);
+            }
+        });
+
+        this.socket.on('stackFlippedAndDiscardedUpdate', (flipDiscardEvent) => {
+            console.log(`📡 [NETWORK RECEIVE]: stackFlippedAndDiscardedUpdate caught for ${flipDiscardEvent.targetPlayer}`);
+            if (!this.lastReceivedState) return;
+            const targetState = this.lastReceivedState[flipDiscardEvent.targetPlayer];
+            if (targetState) {
+                if (targetState.battleZone && targetState.battleZone[flipDiscardEvent.targetSlot]) {
+                    targetState.battleZone[flipDiscardEvent.targetSlot].faceDownStack = flipDiscardEvent.updatedStack;
+                }
+                if (targetState.discard) {
+                    targetState.discard = flipDiscardEvent.updatedDiscard;
+                }
+                this.handleStateRenderingLoop(this.lastReceivedState);
+            }
+        });
+
         this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
 
         this.selectedPreviewCard = null; // Caches the active card loaded into Column 3
@@ -297,43 +322,64 @@ class GameScene extends Phaser.Scene {
 
     // --- SUB-ROUTINE 4: STATIC SLOTS COMPILER ---
     drawStaticSlots(c, pData) {
-        // Safe reference capture of the server's nested battleZone structure
         const bZone = pData.battleZone || {};
 
         const drawZoneBox = (point, label, zoneKey) => {
-            // 1. Render the background placeholder tray
             this.fieldGraphics.fillStyle(0x000000, 0.2);
             this.fieldGraphics.fillRect(point.x - this.cardWidth/2, point.y - this.cardHeight/2, this.cardWidth, this.cardHeight);
             this.fieldGraphics.strokeRect(point.x - this.cardWidth/2, point.y - this.cardHeight/2, this.cardWidth, this.cardHeight);
             this.add.text(point.x, point.y, label, { fontSize: '10px', fontFamily: 'monospace', color: '#64748b' }).setOrigin(0.5);
 
-            if (c === this.fieldCoordinates.local && (zoneKey === 'fighterA' || zoneKey === 'fighterB')) {
-                // Re-instantiate dedicated localized hitbox target properties
+            const isLocalSeat = (c === this.fieldCoordinates.local);
+
+            if (isLocalSeat && (zoneKey === 'fighterA' || zoneKey === 'fighterB')) {
                 const propName = `localDrop_${zoneKey}`;
                 if (this[propName]) this[propName].destroy();
 
                 this[propName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
                 this[propName].setRectangleDropZone(this.cardWidth, this.cardHeight);
                 this[propName].setData('zoneKey', zoneKey);
+
+                // --- STACK OPERATIONAL CONTROL BUTTONS (LOCAL FIGHTERS ONLY) ---
+                const btnY = point.y - this.cardHeight/2 - 20;
+                const styleNormal = { fontSize: '16px', fontFamily: 'monospace', fill: '#38bdf8', fontWeight: 'bold' };
+                
+                // Add Stacked Card Button (+)
+                const addBtn = this.add.text(point.x - 25, btnY, '(+)', styleNormal).setOrigin(0.5);
+                addBtn.setInteractive({ useHandCursor: true });
+                addBtn.on('pointerdown', () => {
+                    if (this.role === 'spectator') return;
+                    this.socket.emit('placeDeckCardToStack', { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
+                });
+
+                // Remove/Discard Stacked Card Button (-)
+                const remBtn = this.add.text(point.x + 25, btnY, '(-)', styleNormal).setOrigin(0.5);
+                remBtn.setInteractive({ useHandCursor: true });
+                remBtn.on('pointerdown', () => {
+                    if (this.role === 'spectator') return;
+                    this.socket.emit('flipAndDiscardFromStack', { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
+                });
             }
-            // 2. --- DYNAMIC RENDER LINK: FIGHTER SLOTS REVEAL ---
+
             if (zoneKey === 'fighterA' || zoneKey === 'fighterB') {
-                const fighterSlot = bZone[zoneKey]; // Reads fighterA or fighterB from state
+                const fighterSlot = bZone[zoneKey];
                 const activeCard = fighterSlot?.card;
 
                 if (activeCard && Object.keys(activeCard).length > 0) {
-                    // Spawns the card sprite at the correct matrix position, accounting for tapped states
                     this.renderCardSprite(point.x, point.y, activeCard, activeCard.isTapped);
+                }
+
+                // Render splayed stack directly to the right of the slot position coordinates
+                if (fighterSlot && fighterSlot.faceDownStack) {
+                    this.renderFighterStack(fighterSlot, point);
                 }
             }
 
-            // 3. --- DYNAMIC RENDER LINK: STAGE SLOT REVEAL ---
             if (zoneKey === 'stage' && bZone.stage) {
                 this.renderCardSprite(point.x, point.y, bZone.stage, bZone.stage.isTapped);
             }
 
-            // 4. --- DECK DRAW INTERACTION LINK (From our previous step) ---
-            if (zoneKey === 'deck' && c === this.fieldCoordinates.local) {
+            if (zoneKey === 'deck' && isLocalSeat) {
                 if (this.localDeckHitZone) this.localDeckHitZone.destroy();
                 this.localDeckHitZone = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
                 this.localDeckHitZone.setInteractive({ useHandCursor: true });
@@ -344,7 +390,6 @@ class GameScene extends Phaser.Scene {
             }
         };
 
-        // Pass down the structural string keys to map against server state parameters
         drawZoneBox(c.deck, 'DECK', 'deck');
         drawZoneBox(c.discard, 'DISCARD', 'discard');
         drawZoneBox(c.defeated, 'DEFEATED', 'defeated');
@@ -357,8 +402,6 @@ class GameScene extends Phaser.Scene {
             fontSize: '12px', fontFamily: 'monospace', color: breakPts >= 7 ? '#ff3333' : '#e2e8f0', fontWeight: 'bold'
         }).setOrigin(0.5);
     }
-
-
 
     // --- SUB-ROUTINE 5: SUPPORT TRAY CASCADER ---
     drawSupportTray(c, pData) {
@@ -511,10 +554,46 @@ class GameScene extends Phaser.Scene {
             { stateKey: isPlayerB ? 'playerA' : 'playerB', coordKey: 'remote' }
         ];
 
+        // 1. SCAN FIGHTER FACEDOWN STACKS (Flipped Collision Profiles)
+        const stackScale = 0.55;
+        const stackWidth = this.cardHeight * stackScale; 
+        const stackHeight = this.cardWidth * stackScale; 
+        const stackHorizOffset = 85;                     
+        const stackInitialSplay = -25;                   
+        const stackSplayStepY = 18;                      
+
         for (const p of perspectiveMap) {
             const c = this.fieldCoordinates[p.coordKey];
-            
-            // 1. SCAN THE HAND REGION (COLUMN 1)
+            const bZone = state[p.stateKey]?.battleZone || {};
+            const targets = [
+                { slot: bZone.fighterA, baseCoord: c.fighterA },
+                { slot: bZone.fighterB, baseCoord: c.fighterB }
+            ];
+
+            for (const item of targets) {
+                if (item.slot && Array.isArray(item.slot.faceDownStack)) {
+                    const stack = item.slot.faceDownStack;
+                    // Run backward from tail (top) down to index 0 (bottom) to respect layering
+                    for (let index = stack.length - 1; index >= 0; index--) {
+                        const card = stack[index];
+                        const stackCardX = item.baseCoord.x + stackHorizOffset;
+                        const stackCardY = item.baseCoord.y + stackInitialSplay + (index * stackSplayStepY);
+
+                        if (mouseX >= stackCardX - stackWidth/2 && mouseX <= stackCardX + stackWidth/2 &&
+                            mouseY >= stackCardY - stackHeight/2 && mouseY <= stackCardY + stackHeight/2) {
+                            
+                            this.selectedPreviewCard = card;
+                            this.drawPreviewPanel();
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. SCAN THE HAND REGION (COLUMN 1)
+        for (const p of perspectiveMap) {
+            const c = this.fieldCoordinates[p.coordKey];
             const hand = state[p.stateKey]?.hand || [];
             for (let index = 0; index < hand.length; index++) {
                 const card = hand[index];
@@ -526,16 +605,13 @@ class GameScene extends Phaser.Scene {
                 if (mouseX >= cardX - this.cardWidth/2 && mouseX <= cardX + this.cardWidth/2 &&
                     mouseY >= cardY - this.cardHeight/2 && mouseY <= cardY + this.cardHeight/2) {
                     
-                    console.log(`🎯 [ISOLATED PREVIEW TARGET]: Hand card locked: ${card.id}`);
                     this.selectedPreviewCard = card;
-                    
-                    // PERFORMANCE FIXED: Only redraw the preview section, skipping full board overhaul loops
                     this.drawPreviewPanel();
                     return; 
                 }
             }
 
-            // 2. SCAN THE SUPPORT AREA TRAY (COLUMN 2)
+            // 3. SCAN THE SUPPORT AREA TRAY (COLUMN 2)
             const support = state[p.stateKey]?.support || [];
             const reversedSupport = support.slice().reverse();
 
@@ -549,14 +625,74 @@ class GameScene extends Phaser.Scene {
                 if (mouseX >= shiftX - this.cardWidth/2 && mouseX <= shiftX + this.cardWidth/2 &&
                     mouseY >= shiftY - this.cardHeight/2 && mouseY <= shiftY + this.cardHeight/2) {
                     
-                    console.log(`🎯 [ISOLATED PREVIEW TARGET]: Top support card locked: ${card.id}`);
                     this.selectedPreviewCard = card;
-                    
-                    // PERFORMANCE FIXED: Isolated redraw call
                     this.drawPreviewPanel();
                     return; 
                 }
             }
+
+            // 4. SCAN STATIC CARD IMAGES
+            const bZone = state[p.stateKey]?.battleZone || {};
+            const halfW = this.cardWidth / 2;
+            const halfH = this.cardHeight / 2;
+
+            const staticSlots = [
+                { coord: c.fighterA, card: bZone.fighterA?.card },
+                { coord: c.fighterB, card: bZone.fighterB?.card },
+                { coord: c.stage, card: bZone.stage }
+            ];
+
+            for (const slot of staticSlots) {
+                if (slot.card && mouseX >= slot.coord.x - halfW && mouseX <= slot.coord.x + halfW &&
+                    mouseY >= slot.coord.y - halfH && mouseY <= slot.coord.y + halfH) {
+                    this.selectedPreviewCard = slot.card;
+                    this.drawPreviewPanel();
+                    return;
+                }
+            }
         }
     }
+
+    /**
+     * Renders a faceDownStack to the right of a specific fighter slot.
+     * Scales down cards, rotates them 90 degrees CCW, and splays them top-to-bottom.
+     */
+    renderFighterStack(slotData, screenPos) {
+        if (!slotData || !slotData.faceDownStack || !Array.isArray(slotData.faceDownStack)) return;
+
+        const stackArray = slotData.faceDownStack;
+        if (stackArray.length === 0) return;
+
+        const scaleFactor = 0.55;
+        const horizontalOffset = 85; 
+        const initialVerticalSplay = -25;
+        const splayStepY = 18;
+        const cardDepthOffset = 200;
+
+        stackArray.forEach((cardItem, index) => {
+            const posX = screenPos.x + horizontalOffset;
+            const posY = screenPos.y + initialVerticalSplay + (index * splayStepY);
+
+            let bundleKey = 'system_ui';
+            let frameKey = 'card_back';
+
+            if (this.role === 'spectator' && cardItem && cardItem.id) {
+                const cardId = cardItem.id || "";
+                frameKey = cardId;
+                if (cardId.startsWith('BS1-')) bundleKey = 'BS01_cards';
+                else if (cardId.startsWith('BS2-')) bundleKey = 'BS02_cards';
+                else if (cardId.startsWith('BS3-')) bundleKey = 'BS03_cards';
+                else if (cardId.startsWith('BS10-')) bundleKey = 'BS10_cards';
+            }
+
+            const stackCardImage = this.add.image(posX, posY, bundleKey, frameKey);
+            stackCardImage.setDisplaySize(this.cardWidth * scaleFactor, this.cardHeight * scaleFactor);
+            stackCardImage.setAngle(-90);
+            stackCardImage.setDepth(cardDepthOffset + index);
+
+            // Stash local references onto the engine object so the scanner can intercept it
+            stackCardImage.setData('cardData', cardItem);
+        });
+    }
+
 }
