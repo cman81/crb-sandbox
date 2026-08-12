@@ -155,6 +155,41 @@ class GameScene extends Phaser.Scene {
             }
         });
 
+        this.socket.on('discardRecycledUpdate', (recycleEvent) => {
+            console.log(`📡 [NETWORK RECEIVE]: discardRecycledUpdate caught for ${recycleEvent.targetPlayer}`);
+            if (!this.lastReceivedState) return;
+            const targetState = this.lastReceivedState[recycleEvent.targetPlayer];
+            if (targetState) {
+                targetState.discard = [];
+                if (targetState.deck) targetState.deck.length = recycleEvent.deckCount;
+                
+                // If this recycling event affected the drawer we are viewing, close it cleanly
+                if (this.drawerState && this.drawerState.playerKey === recycleEvent.targetPlayer) {
+                    this.toggleDiscardDrawer(null); 
+                } else {
+                    this.handleStateRenderingLoop(this.lastReceivedState);
+                }
+            }
+        });
+
+        this.socket.on('discardToDefeatedUpdate', (defeatEvent) => {
+            console.log(`📡 [NETWORK RECEIVE]: discardToDefeatedUpdate caught for ${defeatEvent.targetPlayer}`);
+            if (!this.lastReceivedState) return;
+            const targetState = this.lastReceivedState[defeatEvent.targetPlayer];
+            if (targetState) {
+                if (Array.isArray(targetState.discard)) {
+                    // Update discard length to match server context
+                    targetState.discard.length = defeatEvent.discardCount; 
+                }
+                if (!Array.isArray(targetState.defeated)) targetState.defeated = [];
+                targetState.defeated.push(defeatEvent.card);
+                
+                // Re-render the visual display terminal loop state instantly
+                this.handleStateRenderingLoop(this.lastReceivedState);
+            }
+        });
+
+
         this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
 
         this.selectedPreviewCard = null; // Caches the active card loaded into Column 3
@@ -258,10 +293,22 @@ class GameScene extends Phaser.Scene {
 
 
     handleStateRenderingLoop(state) {
+        // 1. Core Canvas Cleanup Loop
         this.resetRenderLayer();
+        
+        // 2. Standard 3-Column Arena Render Sequence Pass
         this.drawPanelDividers();
         this.drawFieldBoard(state);
         this.drawPreviewPanel();
+
+        // 3. FIXED RENDERING OVERLAY LINK: Draw the drawer AFTER the background field!
+        // This ensures the drawer layout stacks properly on top of standard zone cards without erasing them
+        if (this.drawerContainer && this.drawerState && this.drawerState.isOpen) {
+            this.renderDrawerContents();
+            this.drawerContainer.setVisible(true);
+        } else if (this.drawerContainer) {
+            this.drawerContainer.setVisible(false);
+        }
     }
 
     // --- SUB-ROUTINE 1: LAYER RESET ---
@@ -321,14 +368,15 @@ class GameScene extends Phaser.Scene {
             const c = this.fieldCoordinates[p.coordKey];
             const pData = state[p.stateKey] || {};
 
-            this.drawStaticSlots(c, pData);
+            this.drawStaticSlots(c, pData, p.stateKey);
             this.drawSupportTray(c, pData);
             this.drawHandColumn(c, pData);
         });
     }
 
+
     // --- SUB-ROUTINE 4: STATIC SLOTS COMPILER ---
-    drawStaticSlots(c, pData) {
+    drawStaticSlots(c, pData, stateKey) { // FIX: Accept stateKey parameter here
         const bZone = pData.battleZone || {};
 
         const drawZoneBox = (point, label, zoneKey) => {
@@ -351,7 +399,6 @@ class GameScene extends Phaser.Scene {
                 const btnY = point.y - this.cardHeight/2 - 20;
                 const styleNormal = { fontSize: '16px', fontFamily: 'monospace', fill: '#38bdf8', fontWeight: 'bold' };
                 
-                // Add Stacked Card Button (+)
                 const addBtn = this.add.text(point.x - 25, btnY, '(+)', styleNormal).setOrigin(0.5);
                 addBtn.setInteractive({ useHandCursor: true });
                 addBtn.on('pointerdown', () => {
@@ -359,7 +406,6 @@ class GameScene extends Phaser.Scene {
                     this.socket.emit('placeDeckCardToStack', { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
                 });
 
-                // Remove/Discard Stacked Card Button (-)
                 const remBtn = this.add.text(point.x + 25, btnY, '(-)', styleNormal).setOrigin(0.5);
                 remBtn.setInteractive({ useHandCursor: true });
                 remBtn.on('pointerdown', () => {
@@ -376,7 +422,6 @@ class GameScene extends Phaser.Scene {
                     this.renderCardSprite(point.x, point.y, activeCard, activeCard.isTapped);
                 }
 
-                // Render splayed stack directly to the right of the slot position coordinates
                 if (fighterSlot && fighterSlot.faceDownStack) {
                     this.renderFighterStack(fighterSlot, point);
                 }
@@ -397,11 +442,21 @@ class GameScene extends Phaser.Scene {
             }
 
             if (zoneKey === 'discard' && pData.discard && pData.discard.length > 0) {
-                // Grab the topmost card from the array tail (index length - 1)
                 const topDiscardCard = pData.discard[pData.discard.length - 1];
                 if (topDiscardCard) {
                     this.renderCardSprite(point.x, point.y, topDiscardCard, false);
                 }
+            }
+
+            if (zoneKey === 'discard') {
+                const discardHitName = `discardHit_${stateKey}`;
+                if (this[discardHitName]) this[discardHitName].destroy();
+
+                this[discardHitName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
+                this[discardHitName].setInteractive({ useHandCursor: true });
+                this[discardHitName].on('pointerdown', () => {
+                    this.toggleDiscardDrawer(stateKey);
+                });
             }
         };
 
@@ -417,6 +472,7 @@ class GameScene extends Phaser.Scene {
             fontSize: '12px', fontFamily: 'monospace', color: breakPts >= 7 ? '#ff3333' : '#e2e8f0', fontWeight: 'bold'
         }).setOrigin(0.5);
     }
+
 
     // --- SUB-ROUTINE 5: SUPPORT TRAY CASCADER ---
     drawSupportTray(c, pData) {
@@ -560,6 +616,22 @@ class GameScene extends Phaser.Scene {
 
     // --- HELPER METHOD: MOUSE VECTOR SCANNER ---
     scanCardHitboxesForPreview(mouseX, mouseY) {
+        // CRITICAL DRAWER SCAN INTERCEPT LINK: If drawer is open, bypass board vectors and scan drawer items
+        if (this.drawerContainer && this.drawerState && this.drawerState.isOpen) {
+            // Test collisions against interactive images attached inside the drawer container
+            const targets = this.input.manager.hitTest(this.input.activePointer, this.drawerContainer.list, this.cameras.main);
+            for (const target of targets) {
+                if (target.data && target.data.has('drawerCardRef')) {
+                    const cardData = target.data.get('drawerCardRef');
+                    console.log(`🎯 [DRAWER INSPECT]: Locked card focus frame identity: ${cardData.id}`);
+                    this.selectedPreviewCard = cardData;
+                    this.drawPreviewPanel(); // Isolated refresh pass updates Column 3 instantly
+                    return;
+                }
+            }
+            return; // Block further execution loops while the drawer is active
+        }
+
         if (!this.lastReceivedState) return;
 
         const state = this.lastReceivedState;
@@ -724,6 +796,167 @@ class GameScene extends Phaser.Scene {
 
             // Stash local references onto the engine object so the scanner can intercept it
             stackCardImage.setData('cardData', cardItem);
+        });
+    }
+
+    /**
+     * Toggles the sliding animation layout state of the discard view drawer.
+     * @param {string|null} playerKey - 'playerA' or 'playerB' to display, or null to close.
+     */
+    toggleDiscardDrawer(playerKey) {
+        // 1. Initial State Allocation
+        if (!this.drawerContainer) {
+            this.drawerContainer = this.add.container(-1536, 0); 
+            this.drawerContainer.setDepth(2000); 
+            this.drawerState = { isOpen: false, playerKey: null };
+        }
+
+        // 2. Closure Routine Execution Pass
+        if (!playerKey) {
+            this.tweens.add({
+                targets: this.drawerContainer,
+                x: -1536,
+                duration: 350,
+                ease: 'Cubic.easeIn',
+                onComplete: () => {
+                    this.drawerState.isOpen = false;
+                    this.drawerState.playerKey = null;
+                    // FIX: Explicitly turn off the input layer so it stops blocking underlying clicks
+                    this.drawerContainer.setVisible(false);
+                }
+            });
+            return;
+        }
+
+        // 3. Populate and Render Drawer Data Grid
+        this.drawerState.isOpen = true;
+        this.drawerState.playerKey = playerKey;
+        this.renderDrawerContents();
+        
+        // FIX: Ensure the container is fully visible before running the slide-in tween animation
+        this.drawerContainer.setVisible(true);
+
+        // 4. Slide-In Visual Animation Tween Sequence
+        this.tweens.add({
+            targets: this.drawerContainer,
+            x: 0, 
+            duration: 400,
+            ease: 'Cubic.easeOut'
+        });
+    }
+
+    /**
+     * Renders the internal structural canvas elements nested inside the drawer container frame.
+     */
+    renderDrawerContents() {
+        if (!this.drawerContainer || !this.drawerState.isOpen) return;
+
+        // Flush previous loop iterations inside the container
+        this.drawerContainer.removeAll(true);
+
+        const playerKey = this.drawerState.playerKey;
+        const discardList = (this.lastReceivedState && this.lastReceivedState[playerKey]) 
+            ? this.lastReceivedState[playerKey].discard || [] 
+            : [];
+
+        // 1. Draw solid overlay backdrop
+        const bgPlate = this.add.graphics();
+        bgPlate.fillStyle(0x0f172a, 0.98); 
+        bgPlate.fillRect(0, 0, 1536, 1080);
+        bgPlate.lineStyle(4, 0x38bdf8, 1);
+        bgPlate.lineBetween(1536, 0, 1536, 1080); 
+        this.drawerContainer.add(bgPlate);
+
+        // 2. Header and Instructional Labels
+        const headerText = this.make.text({
+            x: 40, y: 30, text: `${playerKey.toUpperCase()} DISCARD CEMETERY PILE (${discardList.length} CARDS)`,
+            style: { fontSize: '22px', fontFamily: 'monospace', fill: '#f8fafc', fontWeight: 'bold' }
+        });
+        this.drawerContainer.add(headerText);
+
+        const isOwner = (this.role === playerKey);        
+        const instructionString = isOwner && this.role !== 'spectator'
+            ? '💡 CLICK A CARD TO MOVE IT TO DEFEATED | PRESS [SPACEBAR] TO PREVIEW DETAILED CODE FRAME'
+            : '💡 INSPECTION MODE | PRESS [SPACEBAR] TO PREVIEW DETAILED CODE FRAME';
+
+        const subText = this.make.text({
+            x: 40, y: 65, text: instructionString,
+            style: { fontSize: '12px', fontFamily: 'monospace', fill: '#94a3b8' }
+        });
+        this.drawerContainer.add(subText);
+
+        // 3. ACTION CONTROL BUTTONS
+        const closeBtn = this.make.text({
+            x: 1480, y: 25, text: '❌ CLOSE',
+            style: { fontSize: '15px', fontFamily: 'monospace', fill: '#ef4444', fontWeight: 'bold', backgroundColor: '#1e293b', padding: { x: 12, y: 6 } }
+        }).setOrigin(1, 0);
+        closeBtn.setInteractive({ useHandCursor: true });
+        closeBtn.on('pointerdown', () => this.toggleDiscardDrawer(null));
+        this.drawerContainer.add(closeBtn);
+
+        // Only show the "Recycle All" option if the user OWNS this discard pile.
+        // Spectators and opponents will not see this action button.        
+        if (discardList.length > 0 && isOwner && this.role !== 'spectator') {
+            const recycleBtn = this.make.text({
+                x: 40, y: 110, text: '♻️ RECYCLE ALL DISCARDS TO DECK',
+                style: { fontSize: '13px', fontFamily: 'monospace', fill: '#10b981', fontWeight: 'bold', backgroundColor: '#064e3b', padding: { x: 14, y: 8 } }
+            });
+            recycleBtn.setInteractive({ useHandCursor: true });
+            recycleBtn.on('pointerdown', () => {
+                this.socket.emit('recycleDiscardToDeck', { tableId: this.tableId, targetPlayer: playerKey });
+            });
+            this.drawerContainer.add(recycleBtn);
+        }
+
+        // 4. GENERATE CARDS GRID MATRIX
+        const gridStartX = 80;
+        const gridStartY = 250; 
+        const spacingX = 135;
+        const spacingY = 185;
+        const colsPerLine = 10;
+
+        discardList.forEach((card, index) => {
+            const col = index % colsPerLine;
+            const row = Math.floor(index / colsPerLine);
+
+            const posX = gridStartX + (col * spacingX);
+            const posY = gridStartY + (row * spacingY); 
+
+            let bundleKey = 'system_ui';
+            let frameKey = 'card_back';
+
+            if (card && card.name !== "Card Back") {
+                const cardId = card.id || "";
+                frameKey = cardId;
+                if (cardId.startsWith('BS1-')) bundleKey = 'BS01_cards';
+                else if (cardId.startsWith('BS2-')) bundleKey = 'BS02_cards';
+                else if (cardId.startsWith('BS3-')) bundleKey = 'BS03_cards';
+                else if (cardId.startsWith('BS10-')) bundleKey = 'BS10_cards';
+            }
+
+            const drawerCardImg = this.make.image({ x: posX, y: posY, key: bundleKey, frame: frameKey });
+            drawerCardImg.setDisplaySize(this.cardWidth * 0.9, this.cardHeight * 0.9);
+            
+            drawerCardImg.setData('drawerCardRef', card);
+            drawerCardImg.setData('drawerCardIndex', index);
+
+            // FIX: Only register the click interaction if the user is the owner of the deck.
+            // If they are inspecting the opponent's pile (or are a spectator), make the card passive.
+            if (isOwner && this.role !== 'spectator') {
+                drawerCardImg.setInteractive({ useHandCursor: true });
+                drawerCardImg.on('pointerdown', () => {
+                    this.socket.emit('moveDiscardToDefeated', {
+                        tableId: this.tableId,
+                        targetPlayer: playerKey,
+                        discardIndex: index
+                    });
+                });
+            } else {
+                // If inspecting the opponent, just register standard pointer interaction for hover scanning
+                drawerCardImg.setInteractive();
+            }
+
+            this.drawerContainer.add(drawerCardImg);
         });
     }
 

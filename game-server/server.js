@@ -742,8 +742,11 @@ io.on('connection', (socket) => {
     const table = tables.find(t => t.id === parseInt(tableId));
     if (!table) return socket.emit('errorMsg', 'Table not found.');
 
-    const discard = table.gameState[targetPlayer]?.discard;
-    const defeated = table.gameState[targetPlayer]?.defeated;
+    const playerState = table.gameState[targetPlayer];
+    if (!playerState) return socket.emit('errorMsg', 'Player state structural map not found.');
+
+    const discard = playerState.discard;
+    const defeated = playerState.defeated;
 
     if (!discard || discard.length === 0) {
       return socket.emit('errorMsg', 'Discard pile is completely empty!');
@@ -751,20 +754,20 @@ io.on('connection', (socket) => {
 
     const idx = parseInt(discardIndex);
     if (isNaN(idx) || idx < 0 || idx >= discard.length) {
-      return socket.emit('errorMsg', `Invalid discard index selection! Choose between 0 and ${discard.length - 1}.`);
+      return socket.emit('errorMsg', `Invalid discard index choice! Please choose between 0 and ${discard.length - 1}.`);
     }
 
-    // Extract the exact chosen card index from the discard pile array
+    // 1. Extract the card from the discard pile array using index splicing rules
     const [retiredCard] = discard.splice(idx, 1);
     
-    // Ensure properties remain face up and untapped inside the defeated lane
+    // 2. Clear face-down tracking properties for public view
     retiredCard.isFaceDown = false;
     retiredCard.isTapped = false;
 
-    // Append to the end of the public defeated pile
+    // 3. Commit cleanly to the defeated array pile tail bounds
     defeated.push(retiredCard);
 
-    // Build the public broadcast notice payload
+    // 4. Construct synchronized payloads to broadcast down the network pipes
     const payload = {
       targetPlayer,
       card: retiredCard,
@@ -772,11 +775,12 @@ io.on('connection', (socket) => {
       defeatedCount: defeated.length
     };
 
+    // Broadcast the state update instantly to update everyone's grid counts
     if (table.playerA) io.to(table.playerA).emit('discardToDefeatedUpdate', payload);
     if (table.playerB) io.to(table.playerB).emit('discardToDefeatedUpdate', payload);
     table.spectators.forEach(id => io.to(id).emit('discardToDefeatedUpdate', payload));
 
-    socket.emit('serverNotice', `Moved card at discard index ${idx} to ${targetPlayer}'s defeated zone.`);
+    socket.emit('serverNotice', `Successfully extracted card from discard index ${idx} to defeated zone.`);
   });
 
   socket.on('checkTableStatus', ({ tableId, role }) => {
