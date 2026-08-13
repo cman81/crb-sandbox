@@ -334,6 +334,51 @@ class GameScene extends Phaser.Scene {
             }
         });
 
+        // --- NETWORK LISTENER: HAND TO DECK SYNC PACKETS ---
+        this.socket.on("handToDeckUpdate", (deckEvent) => {
+            console.log(`📡 [NETWORK RECEIVE]: handToDeckUpdate caught for ${deckEvent.targetPlayer} to ${deckEvent.location}`);
+            
+            if (!this.lastReceivedState) return;
+            const targetState = this.lastReceivedState[deckEvent.targetPlayer];
+            
+            if (targetState) {
+                // 1. Sync hand size count
+                if (typeof deckEvent.handCount !== "undefined" && Array.isArray(targetState.hand)) {
+                    // For the remote player, shrink their tracked hand array length
+                    if (deckEvent.targetPlayer !== this.role) {
+                        targetState.hand.length = deckEvent.handCount;
+                    }
+                }
+
+                // 2. Sync deck size count
+                if (!Array.isArray(targetState.deck)) {
+                    targetState.deck = [];
+                }
+                
+                // Active players don't get card details, spectators get full X-Ray data via deckEvent.card
+                const freshCard = deckEvent.card || { name: "Card Back", isFaceDown: true };
+                freshCard.isFaceDown = true;
+                freshCard.isTapped = false;
+
+                // 3. Local prediction guard: skip pushing if we are the one who already performed it locally
+                if (deckEvent.targetPlayer !== this.role || this.role === "spectator") {
+                    if (deckEvent.location === "top") {
+                        targetState.deck.push(freshCard); // Array tail is top of deck
+                    } else {
+                        targetState.deck.unshift(freshCard); // Index 0 is bottom of deck
+                    }
+                }
+
+                // Force precise deck length validation from server metric
+                if (typeof deckEvent.deckCount !== "undefined") {
+                    targetState.deck.length = deckEvent.deckCount;
+                }
+
+                // 4. Force visual frame update pass
+                this.handleStateRenderingLoop(this.lastReceivedState);
+            }
+        });
+
         this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
 
         this.selectedPreviewCard = null; // Caches the active card loaded into Column 3
@@ -365,6 +410,22 @@ class GameScene extends Phaser.Scene {
             const mouseX = this.input.activePointer.x;
             const mouseY = this.input.activePointer.y;
             this.handleKeyboardDiscardAction(mouseX, mouseY);
+        });
+
+        // --- KEYBOARD SHORTCUTS: T FOR TOP DECK, B FOR BOTTOM DECK ---
+        this.input.keyboard.on("keydown-T", () => {
+            // CHANGE: Allow 'T' shortcut only if not over a battlefield card
+            if (this.role === "spectator") return;
+            const mouseX = this.input.activePointer.x;
+            const mouseY = this.input.activePointer.y;
+            this.handleHandToDeckShortcut(mouseX, mouseY, "top");
+        });
+
+        this.input.keyboard.on("keydown-B", () => {
+            if (this.role === "spectator") return;
+            const mouseX = this.input.activePointer.x;
+            const mouseY = this.input.activePointer.y;
+            this.handleHandToDeckShortcut(mouseX, mouseY, "bottom");
         });
         
         // Enable global drag-and-drop listener hooks inside the Phaser 4 input tree
@@ -1604,6 +1665,81 @@ class GameScene extends Phaser.Scene {
                 // 6. Force an immediate layout redraw pass to compress the gap instantly on screen
                 this.handleStateRenderingLoop(state);
                 return; 
+            }
+        }
+    }
+
+    /**
+     * Scans local hand cards under cursor to move a card to the top or bottom of the deck.
+     */
+    handleHandToDeckShortcut(mouseX, mouseY, destination) {
+        if (!this.lastReceivedState || !this.lastReceivedState[this.role]) return;
+
+        const state = this.lastReceivedState;
+        const c = this.fieldCoordinates.local;
+        const hand = state[this.role].hand || [];
+        const deck = state[this.role].deck || [];
+        
+        const halfW = this.cardWidth / 2;
+        const halfH = this.cardHeight / 2;
+
+        // 1. Re-calculate dynamic hand column dimension metrics
+        let gridDim = 3;
+        if (hand.length <= 1) gridDim = 1;
+        else if (hand.length <= 4) gridDim = 2;
+        else if (hand.length <= 9) gridDim = 3;
+        else if (hand.length <= 16) gridDim = 4;
+        else if (hand.length <= 25) gridDim = 5;
+        else gridDim = 6;
+
+        let startX = 55;
+        let endX = 330;
+        if (gridDim === 1) { startX = 192; endX = 192; }
+        else if (gridDim === 2) { startX = 100; endX = 284; }
+
+        const availableWidth = endX - startX;
+        const colSpacing = gridDim > 1 ? availableWidth / (gridDim - 1) : 0;
+        const rowSpacing = gridDim === 1 ? 0 : gridDim === 2 ? 200 : gridDim === 3 ? 140 : gridDim === 4 ? 100 : 75;
+
+        let verticalPushOffset = 0;
+        if (gridDim === 1) verticalPushOffset = 110;
+        else if (gridDim === 2) verticalPushOffset = 45;
+
+        // 2. Traversal pass matching bottom depth cards up to top depth array elements
+        for (let index = hand.length - 1; index >= 0; index--) {
+            const col = index % gridDim;
+            const row = Math.floor(index / gridDim);
+            
+            const cardX = gridDim === 1 ? startX : startX + col * colSpacing;
+            const cardY = c.handStart.y + (row * rowSpacing) + verticalPushOffset;
+
+            // 3. Collision footprint box intersection scan
+            if (mouseX >= cardX - halfW && mouseX <= cardX + halfW && 
+                mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
+                
+                console.log(`🗂️ [KEYBOARD DECK MOVE]: Target card index ${index} moving to ${destination} deck stack.`);
+
+                // 4. Local Prediction: Extract card, force face down parameters
+                const [cardToDeck] = hand.splice(index, 1);
+                cardToDeck.isFaceDown = true;
+                cardToDeck.isTapped = false;
+
+                if (!Array.isArray(state[this.role].deck)) {
+                    state[this.role].deck = [];
+                }
+
+                // Index protocols: Tail (.push) is top of deck, Index 0 (.unshift) is bottom of deck
+                if (destination === "top") {
+                    state[this.role].deck.push(cardToDeck);
+                    this.socket.emit("playHandToTopDeck", { tableId: this.tableId, targetPlayer: this.role, handIndex: index });
+                } else {
+                    state[this.role].deck.unshift(cardToDeck);
+                    this.socket.emit("playHandToBottomDeck", { tableId: this.tableId, targetPlayer: this.role, handIndex: index });
+                }
+
+                // 5. Force instant local hand gap compression update pass
+                this.handleStateRenderingLoop(state);
+                return;
             }
         }
     }
