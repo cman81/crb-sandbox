@@ -440,7 +440,9 @@ class GameScene extends Phaser.Scene {
             const mouseX = this.input.activePointer.x;
             const mouseY = this.input.activePointer.y;
             
-            this.handleKeyboardTapAction(mouseX, mouseY);
+            // Not a problem, as they affect different zones!
+            this.handleKeyboardTapAction(mouseX, mouseY); // zones: figtherA, fighterB, support, stage
+            this.handleHandToDeckShortcut(mouseX, mouseY, "top"); // zone: hand
         });
 
         // --- SHORTCUT: KEYDOWN D FOR INSTANT HAND DISCARD ---
@@ -475,6 +477,12 @@ class GameScene extends Phaser.Scene {
             this.handleKeyboardFaceDownAction(mouseX, mouseY);
         });
 
+        this.input.keyboard.on("keydown-S", () => {
+            if (this.role === "spectator") return;
+            const mouseX = this.input.activePointer.x;
+            const mouseY = this.input.activePointer.y;
+            this.handleKeyboardToStageAction(mouseX, mouseY);
+        });
         
         // Enable global drag-and-drop listener hooks inside the Phaser 4 input tree
         this.input.on('drag', (pointer, gameObject, dragX, dragY) => {
@@ -543,6 +551,29 @@ class GameScene extends Phaser.Scene {
                 gameObject.destroy();
 
                 // 4. Force a clean rendering pass immediately. The column scaler recalculates rows and closes the gap seamlessly!
+                this.handleStateRenderingLoop(this.lastReceivedState);
+                // --- ADD THIS ELSE IF BRANCH INSIDE YOUR GLOBAL DROP LISTENER IN GAMESCENE ---
+            } else if (zoneKey === "stage") {
+                console.log(`🎭 [LOCAL PREDICTION]: Drag-dropped hand index ${handIndex} to Stage zone.`);
+                
+                // Client-Side Prediction Splice
+                if (this.lastReceivedState && this.lastReceivedState[this.role]) {
+                    const localHand = this.lastReceivedState[this.role].hand;
+                    if (Array.isArray(localHand) && handIndex >= 0 && handIndex < localHand.length) {
+                        const [stagedCardData] = localHand.splice(handIndex, 1);
+                        stagedCardData.isFaceDown = false;
+                        stagedCardData.isTapped = false;
+                        
+                        if (!this.lastReceivedState[this.role].battleZone) {
+                            this.lastReceivedState[this.role].battleZone = {};
+                        }
+                        this.lastReceivedState[this.role].battleZone.stage = stagedCardData;
+                    }
+                }
+                
+                // Outbound Socket Call Pipeline
+                this.socket.emit("playCardToStage", { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex });
+                gameObject.destroy();
                 this.handleStateRenderingLoop(this.lastReceivedState);
             } else {
                 // Fail-safe automatic snapback routine for any invalid target selections
@@ -889,6 +920,17 @@ class GameScene extends Phaser.Scene {
                 if (this.input.dragactive) return;
                 this.toggleStackDrawer(stateKey, zoneKey);
             });
+        }
+
+        // --- Register the stage target drop zone system ---
+        if (zoneKey === "stage") {
+            const propName = `localDrop_${zoneKey}`;
+            if (this[propName]) this[propName].destroy();
+            
+            // Create drop zone matching card dimensions over the stage coordinates
+            this[propName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
+            this[propName].setRectangleDropZone(this.cardWidth, this.cardHeight);
+            this[propName].setData("zoneKey", zoneKey);
         }
     }
 
@@ -1604,6 +1646,28 @@ class GameScene extends Phaser.Scene {
                 return; 
             }
         }
+
+        // 4. SCAN STAGE
+        if (bZone.stage) {
+            const card = bZone.stage;
+            
+            // Tapped/rotated cards swap their collision width and height profiles
+            const hW = card.isTapped ? halfH : halfW;
+            const hH = card.isTapped ? halfW : halfH;
+
+            if (mouseX >= c.stage.x - hW && mouseX <= c.stage.x + hW && 
+                mouseY >= c.stage.y - hH && mouseY <= c.stage.y + hH) {
+                
+                console.log(`📡 [NETWORK EMIT]: Toggling tap orientation on STAGE position.`);
+                this.socket.emit("toggleCardTap", {
+                    tableId: this.tableId,
+                    targetPlayer: this.role,
+                    zone: "stage",
+                    supportIndex: null
+                });
+                return;
+            }
+        }
     }
 
     /**
@@ -1828,6 +1892,47 @@ class GameScene extends Phaser.Scene {
 
                 // Transmit request
                 this.socket.emit("playCardFaceDown", { tableId: this.tableId, targetPlayer: this.role, handIndex: index });
+                this.handleStateRenderingLoop(state);
+                return;
+            }
+        }
+    }
+
+    handleKeyboardToStageAction(mouseX, mouseY) {
+        if (!this.lastReceivedState || !this.lastReceivedState[this.role]) return;
+        const state = this.lastReceivedState;
+        const c = this.fieldCoordinates.local;
+        const hand = state[this.role].hand || [];
+
+        for (let index = hand.length - 1; index >= 0; index--) {
+            const layout = this.getHandCardLayout(index, hand.length, true);
+            const cardX = layout.x;
+            const cardY = c.handStart.y + layout.y;
+            const halfW = layout.width / 2;
+            const halfH = layout.height / 2;
+
+            if (mouseX >= cardX - halfW && mouseX <= cardX + halfW && 
+                mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
+                
+                console.log(`🎭 [KEYBOARD STAGE]: Executing instant predictive slice for index ${index}...`);
+                
+                // Verify if target stage slot is currently empty locally
+                const bZone = state[this.role].battleZone || {};
+                if (bZone.stage && Object.keys(bZone.stage).length > 0) {
+                    console.log("❌ [LOCAL ALERT]: Stage position is already occupied.");
+                    return;
+                }
+
+                // Client-Side Prediction Splice
+                const [stagedCardData] = hand.splice(index, 1);
+                stagedCardData.isFaceDown = false;
+                stagedCardData.isTapped = false;
+                
+                if (!state[this.role].battleZone) state[this.role].battleZone = {};
+                state[this.role].battleZone.stage = stagedCardData;
+
+                // Pipeline Network Call Outbound
+                this.socket.emit("playCardToStage", { tableId: this.tableId, targetPlayer: this.role, handIndex: index });
                 this.handleStateRenderingLoop(state);
                 return;
             }

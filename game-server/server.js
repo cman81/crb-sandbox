@@ -1,4 +1,8 @@
-const io = require('socket.io')(3000, { cors: { origin: "*" } });
+const PORT = process.env.PORT || 3000;
+const io = require("socket.io")(PORT, {
+    cors: { origin: "*" } // Universal wildcard simplifies routing checks for debugging
+});
+
 const { v4: uuidv4 } = require('uuid');
 
 const tables = Array.from({ length: 8 }, (_, i) => ({
@@ -492,6 +496,9 @@ io.on('connection', (socket) => {
       targetCard = battleZone?.fighterA?.card;
     } else if (zone === 'fighterB') {
       targetCard = battleZone?.fighterB?.card;
+    } else if (zone === 'stage') {
+      // 🌟 ADDED STAGE LAYER EVALUATION
+      targetCard = battleZone?.stage;
     } else if (zone === 'support') {
       const idx = parseInt(supportIndex);
       if (!support || isNaN(idx) || idx < 0 || idx >= support.length) {

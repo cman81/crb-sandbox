@@ -1,5 +1,5 @@
 // 1. Establish the single, global network connection first
-const globalSocket = io('http://localhost:3000');
+const globalSocket = io('https://crb-sandbox-production.up.railway.app');
 
 // 2. Standard game configuration object
 const config = {
