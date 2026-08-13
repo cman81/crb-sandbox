@@ -532,6 +532,46 @@ class GameScene extends Phaser.Scene {
         }
     }
 
+    getHandCardLayout(index, totalCards, isLocalSeat) {
+        let gridDim = 3;
+        if (totalCards <= 1) gridDim = 1;
+        else if (totalCards <= 4) gridDim = 2;
+        else if (totalCards <= 9) gridDim = 3;
+        else if (totalCards <= 16) gridDim = 4;
+        else if (totalCards <= 25) gridDim = 5;
+        else gridDim = 6;
+
+        let startX = 55, endX = 330;
+        if (gridDim === 1) { startX = 192; endX = 192; }
+        else if (gridDim === 2) { startX = 100; endX = 284; }
+
+        const availableWidth = endX - startX;
+        const colSpacing = gridDim > 1 ? availableWidth / (gridDim - 1) : 0;
+        const rowSpacing = gridDim === 1 ? 0 : gridDim === 2 ? 200 : gridDim === 3 ? 140 : gridDim === 4 ? 100 : 75;
+
+        let scaleFactor = 1;
+        if (gridDim === 1) scaleFactor = 2.4;
+        else if (gridDim === 2) scaleFactor = 1.4;
+        else if (gridDim === 3) scaleFactor = .8;
+        else if (gridDim === 4) scaleFactor = .6;
+        else if (gridDim === 5) scaleFactor = .48;
+        else scaleFactor = .38;
+
+        let verticalPushOffset = 0;
+        if (gridDim === 1) verticalPushOffset = isLocalSeat ? 110 : 80;
+        else if (gridDim === 2) verticalPushOffset = isLocalSeat ? 45 : 30;
+
+        const col = index % gridDim;
+        const row = Math.floor(index / gridDim);
+        
+        return {
+            x: gridDim === 1 ? startX : startX + col * colSpacing,
+            y: row * rowSpacing + verticalPushOffset, // Base offset added outside by coordinate profile
+            width: this.cardWidth * scaleFactor,
+            height: this.cardHeight * scaleFactor
+        };
+    }
+
     handleStateRenderingLoop(state){
         this.resetRenderLayer();
         this.drawPanelDividers(); // Draws your section split borders
@@ -931,67 +971,28 @@ class GameScene extends Phaser.Scene {
         const totalCards = hand.length;
         if (totalCards === 0) return;
 
-        let gridDim = 3;
-        if (totalCards <= 1) gridDim = 1;
-        else if (totalCards <= 4) gridDim = 2;
-        else if (totalCards <= 9) gridDim = 3;
-        else if (totalCards <= 16) gridDim = 4;
-        else if (totalCards <= 25) gridDim = 5;
-        else gridDim = 6;
-
-        let startX = 55;
-        let endX = 330;
-        if (gridDim === 1) { startX = 192; endX = 192; }
-        else if (gridDim === 2) { startX = 100; endX = 284; }
-
-        const availableWidth = endX - startX;
-        const colSpacing = gridDim > 1 ? availableWidth / (gridDim - 1) : 0;
-        const rowSpacing = gridDim === 1 ? 0 : gridDim === 2 ? 200 : gridDim === 3 ? 140 : gridDim === 4 ? 100 : 75;
-
-        let scaleFactor = 1;
-        if (gridDim === 1) scaleFactor = 2.4;
-        else if (gridDim === 2) scaleFactor = 1.4;
-        else if (gridDim === 3) scaleFactor = .8;
-        else if (gridDim === 4) scaleFactor = .6;
-        else if (gridDim === 5) scaleFactor = .48;
-        else scaleFactor = .38;
-
-        const targetWidth = this.cardWidth * scaleFactor;
-        const targetHeight = this.cardHeight * scaleFactor;
-
-        // --- AUTOMATED VERTICAL GAP PUSHING LOGIC ---
-        let verticalPushOffset = 0;
-        const isLocalSeat = (c === this.fieldCoordinates.local);
-        
-        if (gridDim === 1) {
-            // A 2.4x card is 369px tall. Pushes down to guarantee top edge clears the label zone safely
-            verticalPushOffset = isLocalSeat ? 110 : 80;
-        } else if (gridDim === 2) {
-            // A 1.4x card is 215px tall. Pushes down moderately to clear layout text
-            verticalPushOffset = isLocalSeat ? 45 : 30;
-        }
+        const isLocalSeat = c === this.fieldCoordinates.local;
 
         hand.forEach((card, index) => {
-            const col = index % gridDim;
-            const row = Math.floor(index / gridDim);
-            const cardX = gridDim === 1 ? startX : startX + col * colSpacing;
-            
-            // FIX: Inject the layout shift compensation cleanly to push cards down out of the label spaces
-            const cardY = c.handStart.y + (row * rowSpacing) + verticalPushOffset;
+            // Reuse layout math
+            const layout = this.getHandCardLayout(index, totalCards, isLocalSeat);
+            const cardX = layout.x;
+            const cardY = c.handStart.y + layout.y; // Append layout offset to seat baseline
+
+            let bundleKey = "system_ui";
+            let frameKey = "card_back";
+            if (card && card.name !== "Card Back") {
+                const cardId = card.id || "";
+                frameKey = cardId;
+                if (cardId.startsWith("BS1-")) bundleKey = "BS01_cards";
+                else if (cardId.startsWith("BS2-")) bundleKey = "BS02_cards";
+                else if (cardId.startsWith("BS3-")) bundleKey = "BS03_cards";
+                else if (cardId.startsWith("BS10-")) bundleKey = "BS10_cards";
+            }
 
             if (isLocalSeat) {
-                let bundleKey = "system_ui";
-                let frameKey = "card_back";
-                if (card && card.name !== "Card Back") {
-                    const cardId = card.id || "";
-                    frameKey = cardId;
-                    if (cardId.startsWith("BS1-")) bundleKey = "BS01_cards";
-                    else if (cardId.startsWith("BS2-")) bundleKey = "BS02_cards";
-                    else if (cardId.startsWith("BS3-")) bundleKey = "BS03_cards";
-                    else if (cardId.startsWith("BS10-")) bundleKey = "BS10_cards";
-                }
                 const interactiveCard = this.add.image(cardX, cardY, bundleKey, frameKey);
-                interactiveCard.setDisplaySize(targetWidth, targetHeight);
+                interactiveCard.setDisplaySize(layout.width, layout.height);
                 interactiveCard.setAngle(card?.isTapped ? -90 : 0);
                 interactiveCard.setDepth(50 + index);
                 interactiveCard.setData("originalX", cardX);
@@ -1000,18 +1001,8 @@ class GameScene extends Phaser.Scene {
                 interactiveCard.setInteractive({ useHandCursor: true });
                 this.input.setDraggable(interactiveCard);
             } else {
-                let bundleKey = "system_ui";
-                let frameKey = "card_back";
-                if (card && card.name !== "Card Back") {
-                    const cardId = card.id || "";
-                    frameKey = cardId;
-                    if (cardId.startsWith("BS1-")) bundleKey = "BS01_cards";
-                    else if (cardId.startsWith("BS2-")) bundleKey = "BS02_cards";
-                    else if (cardId.startsWith("BS3-")) bundleKey = "BS03_cards";
-                    else if (cardId.startsWith("BS10-")) bundleKey = "BS10_cards";
-                }
                 const opponentCard = this.add.image(cardX, cardY, bundleKey, frameKey);
-                opponentCard.setDisplaySize(targetWidth, targetHeight);
+                opponentCard.setDisplaySize(layout.width, layout.height);
                 opponentCard.setAngle(0);
                 opponentCard.setDepth(50 + index);
             }
@@ -1147,19 +1138,24 @@ class GameScene extends Phaser.Scene {
         for (const p of perspectiveMap) {
             const c = this.fieldCoordinates[p.coordKey];
             const hand = state[p.stateKey]?.hand || [];
+            const totalCards = hand.length;
+            const isLocalSeat = c === this.fieldCoordinates.local;
+
             for (let index = 0; index < hand.length; index++) {
                 const card = hand[index];
-                const col = index % 3;
-                const row = Math.floor(index / 3);
-                const cardX = c.handStart.x + (col * c.handSpacingX);
-                const cardY = c.handStart.y + (row * c.handSpacingY);
+                
+                // Reuse layout math
+                const layout = this.getHandCardLayout(index, totalCards, isLocalSeat);
+                const cardX = layout.x;
+                const cardY = c.handStart.y + layout.y;
+                const halfW = layout.width / 2;
+                const halfH = layout.height / 2;
 
                 if (mouseX >= cardX - halfW && mouseX <= cardX + halfW &&
                     mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
-                    
                     this.selectedPreviewCard = card;
                     this.drawPreviewPanel();
-                    return; 
+                    return;
                 }
             }
 
@@ -1599,136 +1595,76 @@ class GameScene extends Phaser.Scene {
      */
     handleKeyboardDiscardAction(mouseX, mouseY) {
         if (!this.lastReceivedState || !this.lastReceivedState[this.role]) return;
-
         const state = this.lastReceivedState;
         const c = this.fieldCoordinates.local;
         const hand = state[this.role].hand || [];
-        
-        const halfW = this.cardWidth / 2;
-        const halfH = this.cardHeight / 2;
 
-        // 1. Calculate hand layout metrics to find where the cards are currently drawn
-        let gridDim = 3;
-        if (hand.length <= 1) gridDim = 1;
-        else if (hand.length <= 4) gridDim = 2;
-        else if (hand.length <= 9) gridDim = 3;
-        else if (hand.length <= 16) gridDim = 4;
-        else if (hand.length <= 25) gridDim = 5;
-        else gridDim = 6;
-
-        let startX = 55;
-        let endX = 330;
-        if (gridDim === 1) { startX = 192; endX = 192; }
-        else if (gridDim === 2) { startX = 100; endX = 284; }
-
-        const availableWidth = endX - startX;
-        const colSpacing = gridDim > 1 ? availableWidth / (gridDim - 1) : 0;
-        const rowSpacing = gridDim === 1 ? 0 : gridDim === 2 ? 200 : gridDim === 3 ? 140 : gridDim === 4 ? 100 : 75;
-
-        // Incorporate the exact vertical push offsets we designed earlier to keep hits precise
-        let verticalPushOffset = 0;
-        if (gridDim === 1) verticalPushOffset = 110;
-        else if (gridDim === 2) verticalPushOffset = 45;
-
-        // 2. Scan the hand matrix backwards (from top depth tail down to index 0)
         for (let index = hand.length - 1; index >= 0; index--) {
             const card = hand[index];
-            const col = index % gridDim;
-            const row = Math.floor(index / gridDim);
             
-            const cardX = gridDim === 1 ? startX : startX + col * colSpacing;
-            const cardY = c.handStart.y + (row * rowSpacing) + verticalPushOffset;
+            // Use the centralized layout engine
+            const layout = this.getHandCardLayout(index, hand.length, true);
+            const cardX = layout.x;
+            const cardY = c.handStart.y + layout.y;
+            const halfW = layout.width / 2;
+            const halfH = layout.height / 2;
 
-            // 3. Perform bounding box collision check against the cursor
             if (mouseX >= cardX - halfW && mouseX <= cardX + halfW && 
                 mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
                 
                 console.log(`♻️ [KEYBOARD DISCARD]: Detected hit on card index ${index}. Executing instant discard...`);
-
-                // 4. Local prediction: Extract from hand cache and push to discard stack
+                
+                // Client-Side Prediction Splice
                 const [discardedCardData] = hand.splice(index, 1);
                 discardedCardData.isFaceDown = false;
                 discardedCardData.isTapped = false;
-
+                
                 if (!Array.isArray(state[this.role].discard)) {
                     state[this.role].discard = [];
                 }
                 state[this.role].discard.push(discardedCardData);
-
-                // 5. Transmit authoritative request over the WebSocket pipeline
-                this.socket.emit("discardCardFromHand", { 
-                    tableId: this.tableId, 
-                    targetPlayer: this.role, 
-                    handIndex: index 
-                });
-
-                // 6. Force an immediate layout redraw pass to compress the gap instantly on screen
+                
+                // Network Pipeline Emitter
+                this.socket.emit("discardCardFromHand", { tableId: this.tableId, targetPlayer: this.role, handIndex: index });
                 this.handleStateRenderingLoop(state);
-                return; 
+                return;
             }
         }
     }
+
 
     /**
      * Scans local hand cards under cursor to move a card to the top or bottom of the deck.
      */
     handleHandToDeckShortcut(mouseX, mouseY, destination) {
         if (!this.lastReceivedState || !this.lastReceivedState[this.role]) return;
-
         const state = this.lastReceivedState;
         const c = this.fieldCoordinates.local;
         const hand = state[this.role].hand || [];
-        const deck = state[this.role].deck || [];
-        
-        const halfW = this.cardWidth / 2;
-        const halfH = this.cardHeight / 2;
 
-        // 1. Re-calculate dynamic hand column dimension metrics
-        let gridDim = 3;
-        if (hand.length <= 1) gridDim = 1;
-        else if (hand.length <= 4) gridDim = 2;
-        else if (hand.length <= 9) gridDim = 3;
-        else if (hand.length <= 16) gridDim = 4;
-        else if (hand.length <= 25) gridDim = 5;
-        else gridDim = 6;
-
-        let startX = 55;
-        let endX = 330;
-        if (gridDim === 1) { startX = 192; endX = 192; }
-        else if (gridDim === 2) { startX = 100; endX = 284; }
-
-        const availableWidth = endX - startX;
-        const colSpacing = gridDim > 1 ? availableWidth / (gridDim - 1) : 0;
-        const rowSpacing = gridDim === 1 ? 0 : gridDim === 2 ? 200 : gridDim === 3 ? 140 : gridDim === 4 ? 100 : 75;
-
-        let verticalPushOffset = 0;
-        if (gridDim === 1) verticalPushOffset = 110;
-        else if (gridDim === 2) verticalPushOffset = 45;
-
-        // 2. Traversal pass matching bottom depth cards up to top depth array elements
         for (let index = hand.length - 1; index >= 0; index--) {
-            const col = index % gridDim;
-            const row = Math.floor(index / gridDim);
-            
-            const cardX = gridDim === 1 ? startX : startX + col * colSpacing;
-            const cardY = c.handStart.y + (row * rowSpacing) + verticalPushOffset;
+            // Use the centralized layout engine
+            const layout = this.getHandCardLayout(index, hand.length, true);
+            const cardX = layout.x;
+            const cardY = c.handStart.y + layout.y;
+            const halfW = layout.width / 2;
+            const halfH = layout.height / 2;
 
-            // 3. Collision footprint box intersection scan
             if (mouseX >= cardX - halfW && mouseX <= cardX + halfW && 
                 mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
                 
                 console.log(`🗂️ [KEYBOARD DECK MOVE]: Target card index ${index} moving to ${destination} deck stack.`);
-
-                // 4. Local Prediction: Extract card, force face down parameters
+                
+                // Client-Side Prediction Splice
                 const [cardToDeck] = hand.splice(index, 1);
                 cardToDeck.isFaceDown = true;
                 cardToDeck.isTapped = false;
-
+                
                 if (!Array.isArray(state[this.role].deck)) {
                     state[this.role].deck = [];
                 }
-
-                // Index protocols: Tail (.push) is top of deck, Index 0 (.unshift) is bottom of deck
+                
+                // Handle Top vs Bottom Array Index Positioning Rules
                 if (destination === "top") {
                     state[this.role].deck.push(cardToDeck);
                     this.socket.emit("playHandToTopDeck", { tableId: this.tableId, targetPlayer: this.role, handIndex: index });
@@ -1736,8 +1672,7 @@ class GameScene extends Phaser.Scene {
                     state[this.role].deck.unshift(cardToDeck);
                     this.socket.emit("playHandToBottomDeck", { tableId: this.tableId, targetPlayer: this.role, handIndex: index });
                 }
-
-                // 5. Force instant local hand gap compression update pass
+                
                 this.handleStateRenderingLoop(state);
                 return;
             }
