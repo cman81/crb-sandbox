@@ -289,6 +289,51 @@ class GameScene extends Phaser.Scene {
             }
         });
 
+        // Socket Listener: Catches public discard updates from either player
+        this.socket.on("cardDiscardedUpdate", (discardEvent) => {
+            console.log(`📡 [NETWORK RECEIVE]: cardDiscardedUpdate caught for ${discardEvent.targetPlayer}`);
+            
+            if (!this.lastReceivedState) return;
+
+            const targetState = this.lastReceivedState[discardEvent.targetPlayer];
+            if (targetState) {
+                // 1. Update the remote player's hand size total count safely
+                if (typeof discardEvent.handCount !== "undefined") {
+                    if (Array.isArray(targetState.hand)) {
+                        // If it's a remote player, we don't have the cards, we just compress the structural length array
+                        if (discardEvent.targetPlayer !== this.role) {
+                            targetState.hand.length = discardEvent.handCount;
+                        }
+                    }
+                }
+
+                // 2. Clear face-down tracking properties for public view compliance
+                const freshDiscardCard = discardEvent.card;
+                freshDiscardCard.isFaceDown = false;
+                freshDiscardCard.isTapped = false;
+
+                // 3. Ensure the target player's discard pile structure exists
+                if (!Array.isArray(targetState.discard)) {
+                    targetState.discard = [];
+                }
+
+                // 4. Check if the card is already in our pile (avoids local double-push prediction conflicts)
+                const isDuplicate = targetState.discard.some(c => c.id === freshDiscardCard.id);
+                
+                if (!isDuplicate) {
+                    targetState.discard.push(freshDiscardCard);
+                }
+
+                // 5. Force a hard synchronization length match step check
+                if (typeof discardEvent.discardCount !== "undefined") {
+                    targetState.discard.length = discardEvent.discardCount;
+                }
+
+                // 6. Execute an immediate layout refresh loop pass across all graphic layers
+                this.handleStateRenderingLoop(this.lastReceivedState);
+            }
+        });
+
         this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
 
         this.selectedPreviewCard = null; // Caches the active card loaded into Column 3
@@ -312,6 +357,15 @@ class GameScene extends Phaser.Scene {
             
             this.handleKeyboardTapAction(mouseX, mouseY);
         });
+
+        // --- SHORTCUT: KEYDOWN D FOR INSTANT HAND DISCARD ---
+        this.input.keyboard.on("keydown-D", () => {
+            if (this.role === "spectator") return;
+            
+            const mouseX = this.input.activePointer.x;
+            const mouseY = this.input.activePointer.y;
+            this.handleKeyboardDiscardAction(mouseX, mouseY);
+        });
         
         // Enable global drag-and-drop listener hooks inside the Phaser 4 input tree
         this.input.on('drag', (pointer, gameObject, dragX, dragY) => {
@@ -332,40 +386,59 @@ class GameScene extends Phaser.Scene {
             }
         });
 
-        this.input.on('drop', (pointer, gameObject, dropZone) => {
-            const handIndex = gameObject.data.get('handIndex');
-            const zoneKey = dropZone.data.get('zoneKey');
-
+        this.input.on("drop", (pointer, gameObject, dropZone) => {
+            const handIndex = gameObject.data.get("handIndex");
+            const zoneKey = dropZone.data.get("zoneKey");
+            
             console.log(`🎯 [DRAG DROP]: Card index ${handIndex} dropped onto target zone: ${zoneKey}`);
-
-            if (this.role === 'spectator') {
-                // Instantly bounce the card back if a spectator tries to manipulate objects
-                gameObject.x = gameObject.data.get('originalX');
-                gameObject.y = gameObject.data.get('originalY');
+            
+            if (this.role === "spectator") {
+                gameObject.x = gameObject.data.get("originalX");
+                gameObject.y = gameObject.data.get("originalY");
                 gameObject.setDepth(0);
                 return;
             }
 
-            // Route network communications seamlessly depending on which drop zone was targeted
-            if (zoneKey === 'support') {
-                this.socket.emit('playCardToSupport', { 
-                    tableId: this.tableId, 
-                    targetPlayer: this.role, 
-                    handIndex: handIndex 
-                });
-                gameObject.destroy(); 
-            } else if (zoneKey === 'fighterA' || zoneKey === 'fighterB') {
-                this.socket.emit('playCardToFighter', {
-                    tableId: this.tableId,
-                    targetPlayer: this.role,
-                    handIndex: handIndex,
-                    targetSlot: zoneKey
-                });
-                gameObject.destroy(); 
+            if (zoneKey === "support") {
+                this.socket.emit("playCardToSupport", { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex });
+                gameObject.destroy();
+            } else if (zoneKey === "fighterA" || zoneKey === "fighterB") {
+                this.socket.emit("playCardToFighter", { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex, targetSlot: zoneKey });
+                gameObject.destroy();
+            } else if (zoneKey === "discard") {
+                console.log(`♻️ [LOCAL PREDICTION]: Splicing index ${handIndex} out of local cache to compress hand...`);
+                
+                // 1. Locate and mutate the local client state array copy instantly
+                if (this.lastReceivedState && this.lastReceivedState[this.role]) {
+                    const localHand = this.lastReceivedState[this.role].hand;
+                    if (Array.isArray(localHand) && handIndex >= 0 && handIndex < localHand.length) {
+                        // Extract the true card metadata object from the hand
+                        const [discardedCardData] = localHand.splice(handIndex, 1);
+                        
+                        // Force state parameter rules before dropping it onto the discard memory stack
+                        discardedCardData.isFaceDown = false;
+                        discardedCardData.isTapped = false;
+                        
+                        if (!Array.isArray(this.lastReceivedState[this.role].discard)) {
+                            this.lastReceivedState[this.role].discard = [];
+                        }
+                        // Push it onto our local discard cache stack so it draws instantly
+                        this.lastReceivedState[this.role].discard.push(discardedCardData);
+                    }
+                }
+
+                // 2. Transmit the authoritative instruction down the socket pipeline
+                this.socket.emit("discardCardFromHand", { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex });
+                
+                // 3. Destroy the physical dragged image object
+                gameObject.destroy();
+
+                // 4. Force a clean rendering pass immediately. The column scaler recalculates rows and closes the gap seamlessly!
+                this.handleStateRenderingLoop(this.lastReceivedState);
             } else {
-                // If unknown drop layout, fail-safe snap back
-                gameObject.x = gameObject.data.get('originalX');
-                gameObject.y = gameObject.data.get('originalY');
+                // Fail-safe automatic snapback routine for any invalid target selections
+                gameObject.x = gameObject.data.get("originalX");
+                gameObject.y = gameObject.data.get("originalY");
                 gameObject.setDepth(0);
             }
         });
@@ -591,7 +664,23 @@ class GameScene extends Phaser.Scene {
             if (this[hitName]) this[hitName].destroy();
 
             this[hitName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
-            this[hitName].setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+            
+            if (zoneKey === "discard") {
+                // Register as drop zone frame
+                this[hitName].setRectangleDropZone(this.cardWidth, this.cardHeight);
+                
+                // FIX: Set a massive depth layer so face-up card sprites cannot cover it and block your drops!
+                this[hitName].setDepth(150); 
+            } else {
+                this[hitName].setInteractive({ useHandCursor: true });
+            }
+            
+            this[hitName].setData("zoneKey", zoneKey);
+
+            // Standardized pointerdown trigger pass for opening the slide drawer
+            this[hitName].on("pointerdown", (pointer) => {
+                // FIX: Only trigger the slide drawer click if we aren't currently carrying a dragged card sprite!
+                if (this.input.dragactive) return;
                 this.toggleStackDrawer(stateKey, zoneKey);
             });
         }
@@ -658,10 +747,26 @@ class GameScene extends Phaser.Scene {
         if (pileArray && pileArray.length > 0) {
             const topCard = pileArray[pileArray.length - 1];
             if (topCard) {
-                this.renderCardSprite(point.x, point.y, topCard, false);
+                // Render card sprite onto field
+                let bundleKey = "system_ui";
+                let frameKey = "card_back";
+                if (topCard && topCard.name !== "Card Back") {
+                    const cardId = topCard.id || "";
+                    frameKey = cardId;
+                    if (cardId.startsWith("BS1-")) bundleKey = "BS01_cards";
+                    else if (cardId.startsWith("BS2-")) bundleKey = "BS02_cards";
+                    else if (cardId.startsWith("BS3-")) bundleKey = "BS03_cards";
+                    else if (cardId.startsWith("BS10-")) bundleKey = "BS10_cards";
+                }
+                const pileCardSprite = this.add.image(point.x, point.y, bundleKey, frameKey);
+                pileCardSprite.setDisplaySize(this.cardWidth, this.cardHeight);
+                
+                // FIX: Keep card sprites layered beneath the zone hitbox (150) so dropping is never blocked
+                pileCardSprite.setDepth(20); 
             }
         }
     }
+
 
     /**
      * Handles rendering the score counter and score increment/decrement buttons (+1, -1).
@@ -1427,4 +1532,80 @@ class GameScene extends Phaser.Scene {
             }
         });
     }
+
+    /**
+     * Traces mouse vectors against local hand cards to execute an instant key-driven discard.
+     */
+    handleKeyboardDiscardAction(mouseX, mouseY) {
+        if (!this.lastReceivedState || !this.lastReceivedState[this.role]) return;
+
+        const state = this.lastReceivedState;
+        const c = this.fieldCoordinates.local;
+        const hand = state[this.role].hand || [];
+        
+        const halfW = this.cardWidth / 2;
+        const halfH = this.cardHeight / 2;
+
+        // 1. Calculate hand layout metrics to find where the cards are currently drawn
+        let gridDim = 3;
+        if (hand.length <= 1) gridDim = 1;
+        else if (hand.length <= 4) gridDim = 2;
+        else if (hand.length <= 9) gridDim = 3;
+        else if (hand.length <= 16) gridDim = 4;
+        else if (hand.length <= 25) gridDim = 5;
+        else gridDim = 6;
+
+        let startX = 55;
+        let endX = 330;
+        if (gridDim === 1) { startX = 192; endX = 192; }
+        else if (gridDim === 2) { startX = 100; endX = 284; }
+
+        const availableWidth = endX - startX;
+        const colSpacing = gridDim > 1 ? availableWidth / (gridDim - 1) : 0;
+        const rowSpacing = gridDim === 1 ? 0 : gridDim === 2 ? 200 : gridDim === 3 ? 140 : gridDim === 4 ? 100 : 75;
+
+        // Incorporate the exact vertical push offsets we designed earlier to keep hits precise
+        let verticalPushOffset = 0;
+        if (gridDim === 1) verticalPushOffset = 110;
+        else if (gridDim === 2) verticalPushOffset = 45;
+
+        // 2. Scan the hand matrix backwards (from top depth tail down to index 0)
+        for (let index = hand.length - 1; index >= 0; index--) {
+            const card = hand[index];
+            const col = index % gridDim;
+            const row = Math.floor(index / gridDim);
+            
+            const cardX = gridDim === 1 ? startX : startX + col * colSpacing;
+            const cardY = c.handStart.y + (row * rowSpacing) + verticalPushOffset;
+
+            // 3. Perform bounding box collision check against the cursor
+            if (mouseX >= cardX - halfW && mouseX <= cardX + halfW && 
+                mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
+                
+                console.log(`♻️ [KEYBOARD DISCARD]: Detected hit on card index ${index}. Executing instant discard...`);
+
+                // 4. Local prediction: Extract from hand cache and push to discard stack
+                const [discardedCardData] = hand.splice(index, 1);
+                discardedCardData.isFaceDown = false;
+                discardedCardData.isTapped = false;
+
+                if (!Array.isArray(state[this.role].discard)) {
+                    state[this.role].discard = [];
+                }
+                state[this.role].discard.push(discardedCardData);
+
+                // 5. Transmit authoritative request over the WebSocket pipeline
+                this.socket.emit("discardCardFromHand", { 
+                    tableId: this.tableId, 
+                    targetPlayer: this.role, 
+                    handIndex: index 
+                });
+
+                // 6. Force an immediate layout redraw pass to compress the gap instantly on screen
+                this.handleStateRenderingLoop(state);
+                return; 
+            }
+        }
+    }
+
 }
