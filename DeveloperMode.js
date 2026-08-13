@@ -128,13 +128,18 @@ class DeveloperMode extends Phaser.Scene {
                 <textarea id="deckRawInput" placeholder="2 Adventurer Cookie [ST1-013]..." style="width:100%; height:140px; background:#111; color:#fff; font-family:monospace; font-size:13px; border:1px solid #555; padding:8px; box-sizing:border-box; resize:none; border-radius: 4px;"></textarea>
                 <button id="deckLoadBtn" style="margin-top:10px; width:100%; background:#00ff00; color:#000; font-weight:bold; font-size:15px; padding:10px; border:none; border-radius:4px; cursor:pointer;">LOAD DECKLIST</button>
 
-
                 <!-- SETUP & BOARD PREPARATION TRAY -->
                 <div style="margin-top: 15px; background: #1a1a1a; padding: 12px; border-radius: 6px; border: 1px solid #555; display: flex; flex-direction: column; gap: 8px;">
                     <div style="display: flex; gap: 8px;">
                         <button id="deckShuffleBtn" style="flex: 1; background:#ffff00; color:#000; font-weight:bold; font-size:13px; padding:8px; border:none; border-radius:4px; cursor:pointer;">⚡ SHUFFLE</button>
                         <button id="setupDraw6Btn" style="flex: 1; background:#00ff88; color:#000; font-weight:bold; font-size:13px; padding:8px; border:none; border-radius:4px; cursor:pointer;">🎴 DRAW 6</button>
                     </div>
+                    
+                    <!-- NEW MULLIGAN DEV MACRO BUTTON -->
+                    <div>
+                        <button id="setupMulliganBtn" style="width:100%; background:#f59e0b; color:#000; font-weight:bold; font-size:13px; padding:8px; border:none; border-radius:4px; cursor:pointer;">🔄 QUICK MULLIGAN (HAND ➔ DECK ➔ SHUFFLE ➔ DRAW 6)</button>
+                    </div>
+
                     <div style="display: flex; align-items: center; gap: 8px;">
                         <label style="font-size: 12px; color: #aaa;">Hand Pos:</label>
                         <input type="number" id="playHandIdx" min="0" value="0" style="width: 45px; background: #333; color: #fff; border: 1px solid #555; padding: 6px; border-radius: 4px;">
@@ -148,15 +153,24 @@ class DeveloperMode extends Phaser.Scene {
         `;
         
         this.domDeckLoaderPanel = this.add.dom(50, 170).createFromHTML(htmlContent).setOrigin(0, 0);
-        
-        this.domDeckLoaderPanel.addListener('click');
-        this.domDeckLoaderPanel.on('click', (event) => {
-            if (event.target.id === 'deckLoadBtn') this.handleDeckLoad();
-            if (event.target.id === 'deckShuffleBtn') this.handleDeckShuffle();
-            if (event.target.id === 'setupDraw6Btn') this.handleDraw6Cards();
-            if (event.target.id === 'setupPlayDownBtn') this.handlePlayCardFaceDown();
-            if (event.target.id === 'setupFlipUpBtn') this.handleFlipCardFaceUp();
+        this.domDeckLoaderPanel.addListener("click");
+        this.domDeckLoaderPanel.on("click", event => {
+            if (event.target.id === "deckLoadBtn") this.handleDeckLoad();
+            if (event.target.id === "deckShuffleBtn") this.handleDeckShuffle();
+            if (event.target.id === "setupDraw6Btn") this.handleDraw6Cards();
+            if (event.target.id === "setupMulliganBtn") this.handleQuickMulligan(); // Added Hook
+            if (event.target.id === "setupPlayDownBtn") this.handlePlayCardFaceDown();
+            if (event.target.id === "setupFlipUpBtn") this.handleFlipCardFaceUp();
         });
+    }
+
+    // Paste this new helper method right below the createDeckLoaderTabPanel method
+    handleQuickMulligan() {
+        const tableId = parseInt(document.getElementById("deckTableId").value, 10);
+        const targetPlayer = document.getElementById("deckTargetPlayer").value;
+
+        this.logToConsole(`>> [DEV MACRO]: Dispatching atomic Mulligan request for Table ${tableId} (${targetPlayer})`);
+        this.socket.emit("executeDevMulligan", { tableId: tableId, targetPlayer: targetPlayer });
     }
 
     createConsoleLog() {

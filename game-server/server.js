@@ -277,6 +277,52 @@ io.on('connection', (socket) => {
     socket.emit('serverNotice', `${targetPlayer} successfully drew a 6-card opening hand.`);
   });
 
+  socket.on("executeDevMulligan", ({ tableId, targetPlayer }) => {
+      const table = tables.find(t => t.id === parseInt(tableId));
+      if (!table) return socket.emit("errorMsg", "Table not found.");
+      
+      const pState = table.gameState[targetPlayer];
+      if (!pState) return socket.emit("errorMsg", "Invalid player slot targeted.");
+
+      console.log(`⚡ [DEV MACRO]: Processing atomic Mulligan matrix loop for player slot: ${targetPlayer}`);
+
+      // 1. Flush hand cards face-down back into the deck's tail boundary array
+      while (pState.hand.length > 0) {
+          const card = pState.hand.pop();
+          card.isFaceDown = true;
+          card.isTapped = false;
+          pState.deck.push(card);
+      }
+
+      // 2. Execute program shuffle scramble with alphabetic UUID sorting rules
+      pState.deck.forEach(card => { card.shuffleId = uuidv4(); });
+      pState.deck.sort((a, b) => a.shuffleId.localeCompare(b.shuffleId));
+      pState.deck.forEach(card => { delete card.shuffleId; });
+
+      // 3. Pop 6 fresh top deck cards into the player hand
+      for (let i = 0; i < 6; i++) {
+          if (pState.deck.length > 0) {
+              const drawnCard = pState.deck.pop();
+              drawnCard.isFaceDown = false;
+              pState.hand.push(drawnCard);
+          }
+      }
+
+      // 4. Dispatch synchronized sanitization states across all active sockets
+      const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean);
+      targetSockets.forEach(sockId => {
+          const targetSock = io.sockets.sockets.get(sockId);
+          if (targetSock) {
+              let viewerRole = "spectator";
+              if (sockId === table.playerA) viewerRole = "playerA";
+              if (sockId === table.playerB) viewerRole = "playerB";
+              sendSanitizedState(targetSock, table, viewerRole);
+          }
+      });
+
+      socket.emit("serverNotice", `Mulligan completed! Hand returned to deck tail, scrambled via UUID, and 6 cards redrawn.`);
+  });
+
   socket.on('playCardFaceDown', ({ tableId, targetPlayer, handIndex }) => {
     const table = tables.find(t => t.id === parseInt(tableId));
     if (!table) return socket.emit('errorMsg', 'Table not found.');
