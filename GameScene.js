@@ -1196,6 +1196,21 @@ class GameScene extends Phaser.Scene {
                 }
             }
 
+            const defeatedZoneCards = state[p.stateKey]?.defeated || [];
+            if (defeatedZoneCards.length > 0) {
+                if (mouseX >= c.defeated.x - halfW && mouseX <= c.defeated.x + halfW && 
+                    mouseY >= c.defeated.y - halfH && mouseY <= c.defeated.y + halfH) {
+                    
+                    const topDefeatedCard = defeatedZoneCards[defeatedZoneCards.length - 1];
+                    if (topDefeatedCard) {
+                        console.log(`🎯 [ISOLATED PREVIEW TARGET]: Top defeated card locked: ${topDefeatedCard.id}`);
+                        this.selectedPreviewCard = topDefeatedCard;
+                        this.drawPreviewPanel();
+                        return;
+                    }
+                }
+            }
+
             // 5. SCAN REMAINING STATIC CARD IMAGES (FIGHTERS, STAGE)
             const bZone = state[p.stateKey]?.battleZone || {};
             const staticSlots = [

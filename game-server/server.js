@@ -804,20 +804,40 @@ io.on('connection', (socket) => {
     socket.emit('serverNotice', `Successfully extracted card from discard index ${idx} to defeated zone.`);
   });
 
-  socket.on('checkTableStatus', ({ tableId, role }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-    
-    // Safe reference evaluation: check if the targeted seat has an initialized deck array with elements
-    const targetPlayerState = table.gameState[role];
-    const hasDeckLoaded = !!(targetPlayerState && targetPlayerState.deck && targetPlayerState.deck.length > 0);
+  socket.on("checkTableStatus", ({ tableId: tableId, role: role }) => {
+      const table = tables.find(t => t.id === parseInt(tableId));
+      if (!table) return socket.emit("errorMsg", "Table not found.");
+      
+      const targetPlayerState = table.gameState[role];
+      
+      // Evaluate if ANY zone contains cards to determine if a deck was loaded for this match
+      let hasDeckLoaded = false;
+      if (targetPlayerState) {
+          const bZone = targetPlayerState.battleZone || {};
+          
+          const hasDeckCards = !!(targetPlayerState.deck && targetPlayerState.deck.length > 0);
+          const hasHandCards = !!(targetPlayerState.hand && targetPlayerState.hand.length > 0);
+          const hasDiscardCards = !!(targetPlayerState.discard && targetPlayerState.discard.length > 0);
+          const hasSupportCards = !!(targetPlayerState.support && targetPlayerState.support.length > 0);
+          const hasDefeatedCards = !!(targetPlayerState.defeated && targetPlayerState.defeated.length > 0);
+          
+          const hasFighterA = !!(bZone.fighterA && bZone.fighterA.card);
+          const hasFighterB = !!(bZone.fighterB && bZone.fighterB.card);
+          const hasStage = !!bZone.stage;
+          
+          const hasStackA = !!(bZone.fighterA && bZone.fighterA.faceDownStack && bZone.fighterA.faceDownStack.length > 0);
+          const hasStackB = !!(bZone.fighterB && bZone.fighterB.faceDownStack && bZone.fighterB.faceDownStack.length > 0);
 
-    // Send back the precise localized seat evaluation payload
-    socket.emit('tableStatusResponse', {
-      tableId: table.id,
-      role: role,
-      hasDeckLoaded: hasDeckLoaded
-    });
+          hasDeckLoaded = hasDeckCards || hasHandCards || hasDiscardCards || 
+                          hasSupportCards || hasDefeatedCards || hasFighterA || 
+                          hasFighterB || hasStage || hasStackA || hasStackB;
+      }
+
+      socket.emit("tableStatusResponse", {
+          tableId: table.id,
+          role: role,
+          hasDeckLoaded: hasDeckLoaded
+      });
   });
 
   /**
