@@ -763,104 +763,87 @@ class GameScene extends Phaser.Scene {
     drawHandColumn(c, pData) {
         const hand = pData.hand || [];
         const totalCards = hand.length;
-
         if (totalCards === 0) return;
 
-        // 1. CHOOSE MATRIX STEP CEILING BOUNDS (1x1, 2x2, 3x3, 4x4, 5x5, 6x6)
-        let gridDim = 3; 
-        if (totalCards <= 1)       gridDim = 1;
-        else if (totalCards <= 4)  gridDim = 2;
-        else if (totalCards <= 9)  gridDim = 3;
+        let gridDim = 3;
+        if (totalCards <= 1) gridDim = 1;
+        else if (totalCards <= 4) gridDim = 2;
+        else if (totalCards <= 9) gridDim = 3;
         else if (totalCards <= 16) gridDim = 4;
         else if (totalCards <= 25) gridDim = 5;
-        else                       gridDim = 6;
+        else gridDim = 6;
 
-        // 2. FIXED LAYOUT MATRIX ADAPTIVE POSITION CONSTANTS
-        // Dynamically shift margins depending on matrix density to ensure large shapes center correctly
-        let startX = 55;  
-        let endX = 330;   
-        
-        if (gridDim === 1) {
-            startX = 192; // Lock the single huge card directly to the exact horizontal center of Column 1
-            endX = 192;
-        } else if (gridDim === 2) {
-            startX = 100; // Pull column margins outward to keep larger 2x2 cards from bleeding out of bounds
-            endX = 284;
-        }
+        let startX = 55;
+        let endX = 330;
+        if (gridDim === 1) { startX = 192; endX = 192; }
+        else if (gridDim === 2) { startX = 100; endX = 284; }
 
         const availableWidth = endX - startX;
-        const colSpacing = (gridDim > 1) ? (availableWidth / (gridDim - 1)) : 0;
-        
-        // Dynamic row pacing adjustments 
-        const rowSpacing = (gridDim === 1) ? 0 : (gridDim === 2) ? 200 : (gridDim === 3) ? 140 : (gridDim === 4) ? 100 : 75;
+        const colSpacing = gridDim > 1 ? availableWidth / (gridDim - 1) : 0;
+        const rowSpacing = gridDim === 1 ? 0 : gridDim === 2 ? 200 : gridDim === 3 ? 140 : gridDim === 4 ? 100 : 75;
 
-        // 3. RUNTIME ASSET PROPORTIONAL SCALE FACTOR TRANSFORMS
-        // EXPANDED SIZING SUITE: Maximize asset footprints at lower matrix cell densities
-        let scaleFactor = 1.0;
-        if (gridDim === 1)      scaleFactor = 2.4;  // HUGE SCALE: Card expands to ~264px width / ~370px height (Main Feature)
-        else if (gridDim === 2) scaleFactor = 1.4;  // BIG SCALE: Proportional layout optimization for 2x2 grid configurations
-        else if (gridDim === 3) scaleFactor = 0.80; // Baseline density sizes
-        else if (gridDim === 4) scaleFactor = 0.60; 
-        else if (gridDim === 5) scaleFactor = 0.48;
-        else                    scaleFactor = 0.38;
+        let scaleFactor = 1;
+        if (gridDim === 1) scaleFactor = 2.4;
+        else if (gridDim === 2) scaleFactor = 1.4;
+        else if (gridDim === 3) scaleFactor = .8;
+        else if (gridDim === 4) scaleFactor = .6;
+        else if (gridDim === 5) scaleFactor = .48;
+        else scaleFactor = .38;
 
         const targetWidth = this.cardWidth * scaleFactor;
         const targetHeight = this.cardHeight * scaleFactor;
 
-        // 4. GENERATE ITERATIVE MATRIX RENDER GRID PASS
+        // --- AUTOMATED VERTICAL GAP PUSHING LOGIC ---
+        let verticalPushOffset = 0;
+        const isLocalSeat = (c === this.fieldCoordinates.local);
+        
+        if (gridDim === 1) {
+            // A 2.4x card is 369px tall. Pushes down to guarantee top edge clears the label zone safely
+            verticalPushOffset = isLocalSeat ? 110 : 80;
+        } else if (gridDim === 2) {
+            // A 1.4x card is 215px tall. Pushes down moderately to clear layout text
+            verticalPushOffset = isLocalSeat ? 45 : 30;
+        }
+
         hand.forEach((card, index) => {
             const col = index % gridDim;
             const row = Math.floor(index / gridDim);
-
-            // Compute the horizontal placement coordinate
-            const cardX = (gridDim === 1) ? startX : startX + (col * colSpacing);
+            const cardX = gridDim === 1 ? startX : startX + col * colSpacing;
             
-            // Compute vertical layout placement by shifting downwards from the base configuration tray anchors
-            const cardY = c.handStart.y + (row * rowSpacing);
+            // FIX: Inject the layout shift compensation cleanly to push cards down out of the label spaces
+            const cardY = c.handStart.y + (row * rowSpacing) + verticalPushOffset;
 
-            // Check if this is the active user's local hand perspective
-            if (c === this.fieldCoordinates.local) {
-                let bundleKey = 'system_ui';
-                let frameKey = 'card_back';
-
+            if (isLocalSeat) {
+                let bundleKey = "system_ui";
+                let frameKey = "card_back";
                 if (card && card.name !== "Card Back") {
                     const cardId = card.id || "";
                     frameKey = cardId;
-                    if (cardId.startsWith('BS1-')) bundleKey = 'BS01_cards';
-                    else if (cardId.startsWith('BS2-')) bundleKey = 'BS02_cards';
-                    else if (cardId.startsWith('BS3-')) bundleKey = 'BS03_cards';
-                    else if (cardId.startsWith('BS10-')) bundleKey = 'BS10_cards';
+                    if (cardId.startsWith("BS1-")) bundleKey = "BS01_cards";
+                    else if (cardId.startsWith("BS2-")) bundleKey = "BS02_cards";
+                    else if (cardId.startsWith("BS3-")) bundleKey = "BS03_cards";
+                    else if (cardId.startsWith("BS10-")) bundleKey = "BS10_cards";
                 }
-
                 const interactiveCard = this.add.image(cardX, cardY, bundleKey, frameKey);
-                
                 interactiveCard.setDisplaySize(targetWidth, targetHeight);
                 interactiveCard.setAngle(card?.isTapped ? -90 : 0);
                 interactiveCard.setDepth(50 + index);
-
-                // Cache spatial positioning meta-tags onto the Phaser data storage container
-                interactiveCard.setData('originalX', cardX);
-                interactiveCard.setData('originalY', cardY);
-                interactiveCard.setData('handIndex', index);
-
-                // Activate modern Phaser interactive drag state loops
+                interactiveCard.setData("originalX", cardX);
+                interactiveCard.setData("originalY", cardY);
+                interactiveCard.setData("handIndex", index);
                 interactiveCard.setInteractive({ useHandCursor: true });
                 this.input.setDraggable(interactiveCard);
-
             } else {
-                // If it is the opponent's hand view, mirror the dynamic matrix scaling properties cleanly
-                let bundleKey = 'system_ui';
-                let frameKey = 'card_back';
-
+                let bundleKey = "system_ui";
+                let frameKey = "card_back";
                 if (card && card.name !== "Card Back") {
                     const cardId = card.id || "";
                     frameKey = cardId;
-                    if (cardId.startsWith('BS1-')) bundleKey = 'BS01_cards';
-                    else if (cardId.startsWith('BS2-')) bundleKey = 'BS02_cards';
-                    else if (cardId.startsWith('BS3-')) bundleKey = 'BS03_cards';
-                    else if (cardId.startsWith('BS10-')) bundleKey = 'BS10_cards';
+                    if (cardId.startsWith("BS1-")) bundleKey = "BS01_cards";
+                    else if (cardId.startsWith("BS2-")) bundleKey = "BS02_cards";
+                    else if (cardId.startsWith("BS3-")) bundleKey = "BS03_cards";
+                    else if (cardId.startsWith("BS10-")) bundleKey = "BS10_cards";
                 }
-
                 const opponentCard = this.add.image(cardX, cardY, bundleKey, frameKey);
                 opponentCard.setDisplaySize(targetWidth, targetHeight);
                 opponentCard.setAngle(0);
