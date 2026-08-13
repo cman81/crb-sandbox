@@ -531,7 +531,6 @@ Defeated Pile Total Count: ${defeatEvent.defeatedCount}`);
                 <!-- DRAWS & DECK STACKING -->
                 <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #444; display: flex; flex-direction: column; gap: 8px;">
                     <button id="actionDrawBtn" style="width:100%; background:#00ff00; color:#000; font-weight:bold; font-size:12px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🎴 DRAW 1 CARD</button>
-                    
                     <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 2px;">
                         <label style="font-size:12px; color:#00ffff; font-weight:bold;">Target Stack:</label>
                         <select id="actionStackSlot" style="width:110px; background:#333; color:#fff; border:1px solid #555; padding:5px; border-radius: 4px; font-size:12px;">
@@ -564,9 +563,14 @@ Defeated Pile Total Count: ${defeatEvent.defeatedCount}`);
                         <button id="actionToTopDeckBtn" style="flex:1; background:#00ff88; color:#000; font-weight:bold; font-size:10px; padding:5px; border:none; border-radius:4px; cursor:pointer;">🔝 TO TOP DECK</button>
                         <button id="actionToBottomDeckBtn" style="flex:1; background:#00aa66; color:#fff; font-weight:bold; font-size:10px; padding:5px; border:none; border-radius:4px; cursor:pointer;">🔙 TO BOT DECK</button>
                     </div>
+                    
+                    <!-- NEW ADDED STAGE SECTOR OPERATION BUTTON BUTTON -->
+                    <div>
+                        <button id="actionToStageBtn" style="width:100%; background:#a855f7; color:#fff; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:4px; cursor:pointer;">🎭 TO STAGE ZONE</button>
+                    </div>
                 </div>
 
-                <!-- DISCARD OPERATIONAL CONTROLLER PANELS -->
+                <!-- DISCARD OPERATIONS -->
                 <div style="background: #1a1a1a; padding: 10px; border-radius: 6px; border: 1px solid #00ffcc; display: flex; flex-direction: column; gap: 8px;">
                     <div style="display: flex; align-items: center; gap: 6px;">
                         <label style="font-size:12px; color:#00ffcc; font-weight:bold; flex: 1;">Discard Operations:</label>
@@ -627,6 +631,20 @@ Defeated Pile Total Count: ${defeatEvent.defeatedCount}`);
             if (event.target.id === 'actionDefeatMinus1Btn') this.handleScoreAdjustmentEmit(-1);
             if (event.target.id === 'actionToTopDeckBtn') this.handlePlayToDeckEmit('top');
             if (event.target.id === 'actionToBottomDeckBtn') this.handlePlayToDeckEmit('bottom');
+            if (event.target.id==="actionToStageBtn") this.handlePlayToStageEmit();
+        });
+    }
+
+    handlePlayToStageEmit() {
+        const tableId = document.getElementById("actionTableId").value;
+        const targetPlayer = document.getElementById("actionTargetPlayer").value;
+        const handIndex = document.getElementById("actionHandIdx").value;
+
+        this.logToConsole(`>> [DEV ACTIONS]: Shifting hand card index ${handIndex} face up to Stage zone for ${targetPlayer} at Table ${tableId}.`);
+        this.socket.emit("playCardToStage", {
+            tableId: parseInt(tableId, 10),
+            targetPlayer: targetPlayer,
+            handIndex: parseInt(handIndex, 10)
         });
     }
 

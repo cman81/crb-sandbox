@@ -1004,6 +1004,47 @@ io.on('connection', (socket) => {
     });
   });
 
+  socket.on("playCardToStage", ({ tableId, targetPlayer, handIndex }) => {
+      const table = tables.find(t => t.id === parseInt(tableId));
+      if (!table) return socket.emit("errorMsg", "Table not found.");
+      
+      const hand = table.gameState[targetPlayer]?.hand;
+      const battleZone = table.gameState[targetPlayer]?.battleZone;
+      if (!hand || hand.length === 0) {
+          return socket.emit("errorMsg", `Hand is completely empty! Cannot place card onto the stage.`);
+      }
+
+      const idx = parseInt(handIndex);
+      if (isNaN(idx) || idx < 0 || idx >= hand.length) {
+          return socket.emit("errorMsg", `Invalid hand position index! Choose between 0 and ${hand.length - 1}.`);
+      }
+
+      // Verify if target stage slot is currently empty
+      if (battleZone.stage && Object.keys(battleZone.stage).length > 0) {
+          return socket.emit("errorMsg", "The Stage zone position is already occupied! Discard or move it first.");
+      }
+
+      // Slice card out of hand and push to public Stage configuration state
+      const [cardToStage] = hand.splice(idx, 1);
+      cardToStage.isFaceDown = false;
+      cardToStage.isTapped = false;
+      battleZone.stage = cardToStage;
+
+      // Trigger universal room broadcast to update public viewports
+      const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean);
+      targetSockets.forEach(sockId => {
+          const targetSock = io.sockets.sockets.get(sockId);
+          if (targetSock) {
+              let viewerRole = "spectator";
+              if (sockId === table.playerA) viewerRole = "playerA";
+              if (sockId === table.playerB) viewerRole = "playerB";
+              sendSanitizedState(targetSock, table, viewerRole);
+          }
+      });
+
+      socket.emit("serverNotice", `Successfully placed card from hand index ${idx} face up into ${targetPlayer}'s stage position.`);
+  });
+
 });
 
 console.log('TCG Server on 3000');
