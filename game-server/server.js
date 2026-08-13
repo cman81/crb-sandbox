@@ -323,45 +323,64 @@ io.on('connection', (socket) => {
       socket.emit("serverNotice", `Mulligan completed! Hand returned to deck tail, scrambled via UUID, and 6 cards redrawn.`);
   });
 
-  socket.on('playCardFaceDown', ({ tableId, targetPlayer, handIndex }) => {
+  socket.on("playCardFaceDown", ({ tableId, targetPlayer, handIndex }) => {
     const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-
+    if (!table) return socket.emit("errorMsg", "Table not found.");
+    
     const hand = table.gameState[targetPlayer]?.hand;
     const battleZone = table.gameState[targetPlayer]?.battleZone;
-
-    if (!hand || hand.length === 0) {
-      return socket.emit('errorMsg', `Hand is empty! Cannot place a fighter card.`);
-    }
-
-    const idx = parseInt(handIndex);
-    if (isNaN(idx) || idx < 0 || idx >= hand.length) {
-      return socket.emit('errorMsg', `Invalid hand position! Choose an index between 0 and ${hand.length - 1}.`);
-    }
-
-    // Explicitly remove the card at that index from the hand array
-    const [cardToPlay] = hand.splice(idx, 1);
+    if (!hand || hand.length === 0) return socket.emit("errorMsg", "Hand is empty! Cannot place a fighter card.");
     
-    cardToPlay.isFaceDown = true; 
+    const idx = parseInt(handIndex);
+    if (isNaN(idx) || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid hand position!");
+    
+    // Check if slot is occupied
+    if (battleZone.fighterA.card && Object.keys(battleZone.fighterA.card).length > 0) {
+        return socket.emit("errorMsg", "Fighter A slot is already occupied!");
+    }
+
+    const [cardToPlay] = hand.splice(idx, 1);
+    cardToPlay.isFaceDown = true;
+    cardToPlay.isTapped = false;
     battleZone.fighterA.card = cardToPlay;
 
-    socket.emit('serverNotice', `Placed card from hand index ${idx} face down into ${targetPlayer}'s fighterA position.`);
+    // Fog of War Payloads
+    const maskCard = () => ({ name: "Card Back", isFaceDown: true });
+    const ownerPayload = { targetPlayer: targetPlayer, card: cardToPlay, handCount: hand.length };
+    const opponentPayload = { targetPlayer: targetPlayer, card: maskCard(), handCount: hand.length };
+
+    // Broadcast to matching seats
+    if (targetPlayer === "playerA") {
+        if (table.playerA) io.to(table.playerA).emit("cardPlayedFaceDownUpdate", ownerPayload);
+        if (table.playerB) io.to(table.playerB).emit("cardPlayedFaceDownUpdate", opponentPayload);
+    } else {
+        if (table.playerA) io.to(table.playerA).emit("cardPlayedFaceDownUpdate", opponentPayload);
+        if (table.playerB) io.to(table.playerB).emit("cardPlayedFaceDownUpdate", ownerPayload);
+    }
+    table.spectators.forEach(specId => io.to(specId).emit("cardPlayedFaceDownUpdate", ownerPayload));
+    
+    socket.emit("serverNotice", `Placed card from hand index ${idx} face down into ${targetPlayer}'s fighterA position.`);
   });
 
-  socket.on('flipCardFaceUp', ({ tableId, targetPlayer }) => {
+  socket.on("flipCardFaceUp", ({ tableId, targetPlayer }) => {
     const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-
+    if (!table) return socket.emit("errorMsg", "Table not found.");
+    
     const fighterACard = table.gameState[targetPlayer]?.battleZone?.fighterA?.card;
-
     if (!fighterACard || Object.keys(fighterACard).length === 0) {
-      return socket.emit('errorMsg', `No card found in fighterA to flip face up!`);
+        return socket.emit("errorMsg", "No card found in fighterA to flip face up!");
     }
 
-    fighterACard.isFaceDown = false; // Reveal to all clients
+    fighterACard.isFaceDown = false;
 
-    socket.emit('serverNotice', `Flipped ${targetPlayer}'s active fighterA card face up.`);
+    const payload = { targetPlayer: targetPlayer, card: fighterACard };
+    if (table.playerA) io.to(table.playerA).emit("cardFlippedFaceUpUpdate", payload);
+    if (table.playerB) io.to(table.playerB).emit("cardFlippedFaceUpUpdate", payload);
+    table.spectators.forEach(specId => io.to(specId).emit("cardFlippedFaceUpUpdate", payload));
+
+    socket.emit("serverNotice", `Flipped ${targetPlayer}'s active fighterA card face up.`);
   });
+
 
   socket.on('placeDeckCardToStack', ({ tableId, targetPlayer, targetSlot }) => {
     const table = tables.find(t => t.id === parseInt(tableId));
