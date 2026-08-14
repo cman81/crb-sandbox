@@ -237,7 +237,7 @@ class GameScene extends Phaser.Scene {
     // --- HELPER ROUTINE: CARD SPRITE FACTORY ---
     // Renders either the high-fidelity card graphic or a face-down card back
     // ADDED PARAMETER: 'currentZone' explicitly separates hand logic from other board tiles
-    renderCardSprite(x, y, card, isTapped, currentZone = "field") {
+    renderCardSprite(x, y, card, isTapped, currentZone = "field", baseDepth = 50) {
         let bundleKey = "system_ui";
         let frameKey = "card_back";
         let useFallback = false;
@@ -283,27 +283,35 @@ class GameScene extends Phaser.Scene {
             cardSprite.setDisplaySize(appliedWidth, appliedHeight);
             cardSprite.setAngle(isTapped || card?.isTapped ? -90 : 0);
             
-            return cardSprite; // FIX: Return the image instance explicitly
+            // FIX: Explicitly enforce the dynamic loop depth on the Image asset
+            cardSprite.setDepth(baseDepth); 
+            return cardSprite;
         }
 
         // Path B: Programmatic Vector Fallback Container
         const fallbackContainer = this.add.container(x, y);
-        fallbackContainer.setDepth(50);
+        fallbackContainer.setDepth(baseDepth); 
 
         const halfW = appliedWidth / 2;
         const halfH = appliedHeight / 2;
         const cardShape = this.add.graphics();
         
-        if (isCardBack) {
-            cardShape.fillStyle(0x475569, 1);       
-            cardShape.lineStyle(2, 0x334155, 1);    
+        if (isCardBack) {            
+            cardShape.fillStyle(730437, 1);
+            cardShape.lineStyle(2, 3718648, 1);
+            
             cardShape.fillRoundedRect(-halfW, -halfH, appliedWidth, appliedHeight, 6);
             cardShape.strokeRoundedRect(-halfW, -halfH, appliedWidth, appliedHeight, 6);
             fallbackContainer.add(cardShape);
 
             const backFontSize = Math.max(7, Math.floor(10 * currentScaleFactor));
-            const backStyle = { fontSize: `${backFontSize}px`, fontFamily: "monospace", fill: "#f8fafc", fontWeight: "bold" };
-            const backText = this.add.text(0, 0, "CARD BACK", backStyle).setOrigin(0.5);
+            const backStyle = {
+                fontSize: `${backFontSize}px`,
+                fontFamily: "monospace",
+                fill: "#38bdf8", // Changed text color to cyan to match the framing accents
+                fontWeight: "bold"
+            };
+            const backText = this.add.text(0, 0, "CARD BACK", backStyle).setOrigin(.5);
             fallbackContainer.add(backText);
         } else {
             cardShape.fillStyle(0xF5F5F5, 1);       
@@ -787,35 +795,43 @@ class GameScene extends Phaser.Scene {
     drawSupportTray(c, pData) {
         const supportCards = pData.support || [];
         const borderRadiusRadius = 12;
-
         const trayX = c.supportStart.x - this.cardWidth / 2 - 6;
         const trayY = c.supportStart.y - c.trayHeight / 2;
 
-        this.fieldGraphics.fillStyle(0x000000, 0.35);
+        this.fieldGraphics.fillStyle(0, .35);
         this.fieldGraphics.fillRoundedRect(trayX, trayY, c.trayWidth, c.trayHeight, borderRadiusRadius);
-        this.fieldGraphics.lineStyle(2, 0xffffff, 0.08);
+        this.fieldGraphics.lineStyle(2, 16777215, .08);
         this.fieldGraphics.strokeRoundedRect(trayX, trayY, c.trayWidth, c.trayHeight, borderRadiusRadius);
 
         if (c === this.fieldCoordinates.local) {
             if (this.localSupportDropZone) this.localSupportDropZone.destroy();
-            this.localSupportDropZone = this.add.zone(trayX + c.trayWidth/2, trayY + c.trayHeight/2, c.trayWidth, c.trayHeight);
+            this.localSupportDropZone = this.add.zone(trayX + c.trayWidth / 2, trayY + c.trayHeight / 2, c.trayWidth, c.trayHeight);
             this.localSupportDropZone.setRectangleDropZone(c.trayWidth, c.trayHeight);
-            this.localSupportDropZone.setData('zoneKey', 'support');
+            this.localSupportDropZone.setData("zoneKey", "support");
         }
 
+        // Baseline tray stack layer starts at 100
+        const trayBaseDepth = 100;
+
         supportCards.forEach((card, index) => {
-            const shiftX = c.supportStart.x + (index * c.supportOverlap);
+            const shiftX = c.supportStart.x + index * c.supportOverlap;
             const shiftY = c.supportStart.y;
-            this.renderCardSprite(shiftX, shiftY, card, card.isTapped);
+            
+            // FIX: Pass a dynamic incremental depth. 
+            // Card index 0 gets 100, Card index 1 gets 101, etc.
+            // This guarantees items on the right always sit strictly on top of items on the left!
+            const relativeCardDepth = trayBaseDepth + index;
+            
+            this.renderCardSprite(shiftX, shiftY, card, card.isTapped, "field", relativeCardDepth);
         });
 
-        // --- INTEGRATED: REAL-TIME UNTAPPED COUNTER ENGINE PASS ---
-        // Dynamically filters out cards where card.isTapped evaluates to true
         const untappedCount = supportCards.filter(card => !card.isTapped).length;
-
         this.add.text(trayX + 10, trayY - 14, `SUPPORT REMAINING: ${untappedCount} / ${supportCards.length}`, {
-            fontSize: '11px', fontFamily: 'monospace', color: '#38bdf8', fontWeight: 'bold'
-        }).setOrigin(0, 0.5);
+            fontSize: "11px",
+            fontFamily: "monospace",
+            color: "#38bdf8",
+            fontWeight: "bold"
+        }).setOrigin(0, .5);
     }
 
     // --- SUB-ROUTINE 6: DYNAMIC SQUARE MATRIX HAND COMPILER ---
