@@ -91,49 +91,6 @@ class GameScene extends Phaser.Scene {
             this.handleStateRenderingLoop(sanitizedState);
         });
 
-        this.socket.on('cardStackedUpdate', (stackEvent) => {
-            console.log(`📡 [NETWORK RECEIVE]: cardStackedUpdate caught for ${stackEvent.targetPlayer} on ${stackEvent.targetSlot}`);
-            if (!this.lastReceivedState) return;
-            
-            const targetState = this.lastReceivedState[stackEvent.targetPlayer];
-            if (targetState) {
-                // 1. Synchronize the face-down stack structure
-                if (targetState.battleZone && targetState.battleZone[stackEvent.targetSlot]) {
-                    targetState.battleZone[stackEvent.targetSlot].faceDownStack = stackEvent.updatedStack;
-                }
-                
-                // 2. FIX: Safely update the deck length property so the text label and card back re-render instantly
-                if (targetState.deck && typeof stackEvent.deckCount !== 'undefined') {
-                    targetState.deck.length = stackEvent.deckCount;
-                }
-                
-                // 3. Force a screen refresh pass
-                this.handleStateRenderingLoop(this.lastReceivedState);
-            }
-        });
-
-        this.socket.on('stackFlippedAndDiscardedUpdate', (flipDiscardEvent) => {
-            console.log(`📡 [NETWORK RECEIVE]: stackFlippedAndDiscardedUpdate caught for ${flipDiscardEvent.targetPlayer}`);
-            
-            if (!this.lastReceivedState) return;
-            const targetState = this.lastReceivedState[flipDiscardEvent.targetPlayer];
-            
-            if (targetState) {
-                // 1. Synchronize the face-down stack state data structure
-                if (targetState.battleZone && targetState.battleZone[flipDiscardEvent.targetSlot]) {
-                    targetState.battleZone[flipDiscardEvent.targetSlot].faceDownStack = flipDiscardEvent.updatedStack;
-                }
-                
-                // 2. CRITICAL FIX: Bind the incoming public discard array to our local state copy
-                if (flipDiscardEvent.updatedDiscard) {
-                    targetState.discard = flipDiscardEvent.updatedDiscard;
-                }
-
-                // 3. CRITICAL FIX: Trigger a full visual redraw pass so the discard pile updates instantly
-                this.handleStateRenderingLoop(this.lastReceivedState);
-            }
-        });
-
         this.socket.on('discardRecycledUpdate', (recycleEvent) => {
             console.log(`📡 [NETWORK RECEIVE]: discardRecycledUpdate caught for ${recycleEvent.targetPlayer}`);
             if (!this.lastReceivedState) return;
@@ -153,40 +110,6 @@ class GameScene extends Phaser.Scene {
                 if (this.drawerState && this.drawerState.playerKey === recycleEvent.targetPlayer) {
                     this.toggleStackDrawer(null); 
                 }
-            }
-        });
-
-        this.socket.on('cardMovedToDefeatedZone', (defeatEvent) => {
-            console.log(`📡 [NETWORK RECEIVE]: cardMovedToDefeatedZone caught for ${defeatEvent.targetPlayer}`);
-            if (!this.lastReceivedState) return;
-
-            const targetState = this.lastReceivedState[defeatEvent.targetPlayer];
-            if (targetState) {
-                // 1. Wipe the card from the active slot on your local state copy
-                if (targetState.battleZone && targetState.battleZone[defeatEvent.slot]) {
-                    targetState.battleZone[defeatEvent.slot].card = null;
-                    
-                    // 2. Safely sync the obfuscated card arrays if passed from the server patch
-                    if (defeatEvent.updatedStack) {
-                        targetState.battleZone[defeatEvent.slot].faceDownStack = defeatEvent.updatedStack;
-                    }
-                }
-
-                // 3. Overwrite the defeated list tracking parameter array references
-                if (Array.isArray(defeatEvent.updatedDefeated)) {
-                    targetState.defeated = defeatEvent.updatedDefeated;
-                } else {
-                    if (!Array.isArray(targetState.defeated)) targetState.defeated = [];
-                    targetState.defeated.push(defeatEvent.card);
-                }
-
-                if (typeof defeatEvent.defeatedPoints !== 'undefined') {
-                    targetState.defeatedPoints = defeatEvent.defeatedPoints;
-                }
-
-                // 4. FIX: Force the rendering engine matrix loop to run right now!
-                // This clears old card models and draws the new top element on the pile.
-                this.handleStateRenderingLoop(this.lastReceivedState);
             }
         });
 
