@@ -86,63 +86,13 @@ class GameScene extends Phaser.Scene {
         }
 
         this.socket.on("stateUpdate", sanitizedState => {
-            if (this.lastReceivedState) {
-                // Iterate symmetrically through both seat states to catch remote actions
-                const rolesToCheck = ["playerA", "playerB"];
-                
-                for (const targetRole of rolesToCheck) {
-                    const oldHand = this.lastReceivedState[targetRole]?.hand || [];
-                    const newHand = sanitizedState[targetRole]?.hand || [];
-                    const oldDiscard = this.lastReceivedState[targetRole]?.discard || [];
-                    const newDiscard = sanitizedState[targetRole]?.discard || [];
+            // 1. Hand off the incoming state array frame to the decoupled Analyzer
+            const didTriggerAnimation = this.checkAndAnimateStateChanges(sanitizedState);
+            
+            // 2. If an active flight path animation is underway, exit early to allow the tween thread to complete
+            if (didTriggerAnimation) return;
 
-                    const isLocal = targetRole === this.role;
-                    const c = isLocal ? this.fieldCoordinates.local : this.fieldCoordinates.remote;
-
-                    // CASE 1: ANY PLAYER DRAWS A CARD (Hand Size Increased)
-                    if (newHand.length > oldHand.length) {
-                        const startDeckPos = c.deck;
-                        
-                        // Calculate destination grid coordinates based on seat perspective parameters
-                        const targetLayout = this.getHandCardLayout(newHand.length - 1, newHand.length, isLocal);
-                        const endHandPos = {
-                            x: targetLayout.x,
-                            y: c.handStart.y + targetLayout.y
-                        };
-
-                        this.lastReceivedState = sanitizedState;
-                        
-                        // Draws are face-down animations unless you are spectating true values
-                        const shouldHide = this.role !== "spectator";
-                        const freshCard = newHand[newHand.length - 1];
-
-                        this.animateCardFlight(startDeckPos, endHandPos, freshCard, shouldHide, 350);
-                        return; // Break frame progression to yield to the active tween thread
-                    }
-
-                    // CASE 2: ANY PLAYER DISCARDS A CARD (Hand Size Decreased & Discard Stack Grew)
-                    if (newHand.length < oldHand.length && newDiscard.length > oldDiscard.length) {
-                        const discardedCard = newDiscard[newDiscard.length - 1];
-                        
-                        // Look up estimate source index layout slot coordinates
-                        const oldHandIndex = oldHand.length - 1;
-                        const sourceLayout = this.getHandCardLayout(oldHandIndex, oldHand.length, isLocal);
-                        const startHandPos = {
-                            x: sourceLayout.x,
-                            y: c.handStart.y + sourceLayout.y
-                        };
-                        const endDiscardPos = c.discard;
-
-                        this.lastReceivedState = sanitizedState;
-
-                        // Discards are public knowledge (always face-up)
-                        this.animateCardFlight(startHandPos, endDiscardPos, discardedCard, false, 300);
-                        return; 
-                    }
-                }
-            }
-
-            // Default baseline immediate rendering pass if no delta triggers trip
+            // 3. Fallback: If it's a static update pass, execute the direct screen paint right away
             this.lastReceivedState = sanitizedState;
             this.handleStateRenderingLoop(sanitizedState);
         });
@@ -1828,5 +1778,125 @@ class GameScene extends Phaser.Scene {
         });
     }
 
+    calculateZoneCoordinates(roleKey, zoneKey, itemIndex, currentCount) {
+        const isLocal = roleKey === this.role;
+        const c = isLocal ? this.fieldCoordinates.local : this.fieldCoordinates.remote;
+
+        switch (zoneKey) {
+            case "deck":
+                return c.deck;
+            case "discard":
+                return c.discard;
+            case "defeated":
+                return c.defeated;
+            case "stage":
+                return c.stage;
+            case "fighterA":
+                return c.fighterA;
+            case "fighterB":
+                return c.fighterB;
+            case "support":
+                return {
+                    x: c.supportStart.x + (itemIndex * c.supportOverlap),
+                    y: c.supportStart.y
+                };
+            case "hand":
+                const layout = this.getHandCardLayout(itemIndex, currentCount, isLocal);
+                return {
+                    x: layout.x,
+                    y: c.handStart.y + layout.y
+                };
+            default:
+                return { x: 0, y: 0 };
+        }
+    }
+
+    checkAndAnimateStateChanges(sanitizedState) {
+        if (!this.lastReceivedState) return false;
+
+        const rolesToCheck = ["playerA", "playerB"];
+        
+        for (const targetRole of rolesToCheck) {
+            const oldState = this.lastReceivedState[targetRole] || {};
+            const newState = sanitizedState[targetRole] || {};
+
+            const oldHand = oldState.hand || [];
+            const newHand = newState.hand || [];
+            const oldDiscard = oldState.discard || [];
+            const newDiscard = newState.discard || [];
+            const oldSupport = oldState.support || [];
+            const newSupport = newState.support || [];
+            const oldDefeated = oldState.defeated || [];
+            const newDefeated = newState.defeated || [];
+
+            const oldBZone = oldState.battleZone || {};
+            const newBZone = newState.battleZone || {};
+
+            // 1. DRAW CARD (Hand Grew)
+            if (newHand.length > oldHand.length) {
+                const start = this.calculateZoneCoordinates(targetRole, "deck");
+                const end = this.calculateZoneCoordinates(targetRole, "hand", newHand.length - 1, newHand.length);
+                
+                this.lastReceivedState = sanitizedState;
+                this.animateCardFlight(start, end, newHand[newHand.length - 1], this.role !== "spectator", 350);
+                return true;
+            }
+
+            // 2. DISCARD FROM HAND (Hand Shrank & Discard Grew)
+            if (newHand.length < oldHand.length && newDiscard.length > oldDiscard.length) {
+                const start = this.calculateZoneCoordinates(targetRole, "hand", oldHand.length - 1, oldHand.length);
+                const end = this.calculateZoneCoordinates(targetRole, "discard");
+                
+                this.lastReceivedState = sanitizedState;
+                this.animateCardFlight(start, end, newDiscard[newDiscard.length - 1], false, 300);
+                return true;
+            }
+
+            // 3. HAND TO SUPPORT TRAY (Hand Shrank & Support Grew)
+            if (newHand.length < oldHand.length && newSupport.length > oldSupport.length) {
+                const supportIdx = newSupport.length - 1;
+                const start = this.calculateZoneCoordinates(targetRole, "hand", oldHand.length - 1, oldHand.length);
+                const end = this.calculateZoneCoordinates(targetRole, "support", supportIdx);
+
+                this.lastReceivedState = sanitizedState;
+                this.animateCardFlight(start, end, newSupport[supportIdx], false, 300);
+                return true;
+            }
+
+            // 4. HAND TO FIGHTER SLOT (Hand Shrank & Fighter Slot Filled)
+            const slots = ["fighterA", "fighterB"];
+            for (const slotKey of slots) {
+                const oldCard = oldBZone[slotKey]?.card;
+                const newCard = newBZone[slotKey]?.card;
+
+                if (newHand.length < oldHand.length && !oldCard && newCard) {
+                    const start = this.calculateZoneCoordinates(targetRole, "hand", oldHand.length - 1, oldHand.length);
+                    const end = this.calculateZoneCoordinates(targetRole, slotKey);
+
+                    this.lastReceivedState = sanitizedState;
+                    this.animateCardFlight(start, end, newCard, newCard.isFaceDown, 300);
+                    return true;
+                }
+            }
+
+            // 5. FIGHTER TO DEFEATED ZONE (Fighter Emptied & Defeated Grew)
+            for (const slotKey of slots) {
+                const oldCard = oldBZone[slotKey]?.card;
+                const newCard = newBZone[slotKey]?.card;
+
+                if (oldCard && !newCard && newDefeated.length > oldDefeated.length) {
+                    const start = this.calculateZoneCoordinates(targetRole, slotKey);
+                    const end = this.calculateZoneCoordinates(targetRole, "defeated");
+                    const defeatedCard = newDefeated[newDefeated.length - 1];
+
+                    this.lastReceivedState = sanitizedState;
+                    this.animateCardFlight(start, end, defeatedCard, false, 350);
+                    return true;
+                }
+            }
+        }
+
+        return false; // Return false if no structural animation changes occurred
+    }
 
 }
