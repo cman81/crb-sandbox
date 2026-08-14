@@ -86,22 +86,67 @@ class GameScene extends Phaser.Scene {
         }
 
         this.socket.on("stateUpdate", sanitizedState => {
-            this.lastReceivedState = sanitizedState;
-
-            // AUTO-COLLAPSE SAFEGUARD: If the drawer is open on a recycled pile that is now empty,
-            // collapse it instantly to keep the visual layer pristine.
-            if (this.drawerState && this.drawerState.isOpen) {
-                const currentZone = this.drawerState.zoneType;
-                const currentSeat = this.drawerState.playerKey;
-                const currentPile = sanitizedState[currentSeat]?.[currentZone] || [];
+            if (this.lastReceivedState) {
+                // Iterate symmetrically through both seat states to catch remote actions
+                const rolesToCheck = ["playerA", "playerB"];
                 
-                if (currentPile.length === 0) {
-                    this.toggleStackDrawer(null); // Smoothly slide the drawer away
+                for (const targetRole of rolesToCheck) {
+                    const oldHand = this.lastReceivedState[targetRole]?.hand || [];
+                    const newHand = sanitizedState[targetRole]?.hand || [];
+                    const oldDiscard = this.lastReceivedState[targetRole]?.discard || [];
+                    const newDiscard = sanitizedState[targetRole]?.discard || [];
+
+                    const isLocal = targetRole === this.role;
+                    const c = isLocal ? this.fieldCoordinates.local : this.fieldCoordinates.remote;
+
+                    // CASE 1: ANY PLAYER DRAWS A CARD (Hand Size Increased)
+                    if (newHand.length > oldHand.length) {
+                        const startDeckPos = c.deck;
+                        
+                        // Calculate destination grid coordinates based on seat perspective parameters
+                        const targetLayout = this.getHandCardLayout(newHand.length - 1, newHand.length, isLocal);
+                        const endHandPos = {
+                            x: targetLayout.x,
+                            y: c.handStart.y + targetLayout.y
+                        };
+
+                        this.lastReceivedState = sanitizedState;
+                        
+                        // Draws are face-down animations unless you are spectating true values
+                        const shouldHide = this.role !== "spectator";
+                        const freshCard = newHand[newHand.length - 1];
+
+                        this.animateCardFlight(startDeckPos, endHandPos, freshCard, shouldHide, 350);
+                        return; // Break frame progression to yield to the active tween thread
+                    }
+
+                    // CASE 2: ANY PLAYER DISCARDS A CARD (Hand Size Decreased & Discard Stack Grew)
+                    if (newHand.length < oldHand.length && newDiscard.length > oldDiscard.length) {
+                        const discardedCard = newDiscard[newDiscard.length - 1];
+                        
+                        // Look up estimate source index layout slot coordinates
+                        const oldHandIndex = oldHand.length - 1;
+                        const sourceLayout = this.getHandCardLayout(oldHandIndex, oldHand.length, isLocal);
+                        const startHandPos = {
+                            x: sourceLayout.x,
+                            y: c.handStart.y + sourceLayout.y
+                        };
+                        const endDiscardPos = c.discard;
+
+                        this.lastReceivedState = sanitizedState;
+
+                        // Discards are public knowledge (always face-up)
+                        this.animateCardFlight(startHandPos, endDiscardPos, discardedCard, false, 300);
+                        return; 
+                    }
                 }
             }
 
+            // Default baseline immediate rendering pass if no delta triggers trip
+            this.lastReceivedState = sanitizedState;
             this.handleStateRenderingLoop(sanitizedState);
         });
+
 
         this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
 
@@ -1758,5 +1803,30 @@ class GameScene extends Phaser.Scene {
         const tagText = this.add.text(0, Math.floor(16 * scaleFactor), "Sandbox", tagStyle).setOrigin(0.5);
         container.add(tagText);
     }
+
+    animateCardFlight(startPos, endPos, cardData, isFaceDown = false, duration = 350) {
+        // 1. Resolve template profile data
+        const templateCard = isFaceDown ? { title: "Card Back", isFaceDown: true } : cardData;
+        
+        // 2. Spawn a single temporary visual asset for the flight duration
+        const flyingCard = this.renderCardSprite(startPos.x, startPos.y, templateCard, false, "field");
+        flyingCard.setDepth(3000); // Glides clean on top of field boards
+
+        // 3. Move across coordinate paths linearly
+        this.tweens.add({
+            targets: flyingCard,
+            x: endPos.x,
+            y: endPos.y,
+            duration: duration,
+            ease: 'Cubic.easeOut',
+            onComplete: () => {
+                flyingCard.destroy(); // Purge asset out of memory
+                
+                // Unfreeze and execute final authoritative state paint pass
+                this.handleStateRenderingLoop(this.lastReceivedState);
+            }
+        });
+    }
+
 
 }
