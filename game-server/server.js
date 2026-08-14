@@ -1,1061 +1,1035 @@
 const PORT = process.env.PORT || 3000;
 const io = require("socket.io")(process.env.PORT || 3000, {
-  cors: {
-    origin: [
-      "https://github.io",       // Your GHP URL
-      "http://localhost:8000",          // Standard Localhost port
-      "http://127.0.0.1:8000",          // Alternate loopback IP port
-      "http://localhost",               // Bare localhost address
-      "http://127.0.0.1"
-    ],
-    methods: ["GET", "POST"],
-    credentials: true
-  },
-  transports: ['websocket'] // Mirror the client setting on the server layer
+    cors: {
+        origin: [
+            "https://github.io",       // Your GHP URL
+            "http://localhost:8000",          // Standard Localhost port
+            "http://127.0.0.1:8000",          // Alternate loopback IP port
+            "http://localhost",               // Bare localhost address
+            "http://127.0.0.1"
+        ],
+        methods: ["GET", "POST"],
+        credentials: true
+    },
+    transports: ['websocket'] // Mirror the client setting on the server layer
 });
 
 
 const { v4: uuidv4 } = require('uuid');
 
 const tables = Array.from({ length: 8 }, (_, i) => ({
-  id: i + 1, 
-  playerA: null, 
-  playerB: null, 
-  spectators: [],
-  endGameSignals: {
-    playerA: false,
-    playerB: false
-  },
-  gameState: {
-    playerA: {
-      hand: [], deck: [], extraDeck: [], discard: [], support: [], defeated: [],
-      defeatedPoints: 0,
-      battleZone: {
-        fighterA: { card: null, faceDownStack: [] },
-        fighterB: { card: null, faceDownStack: [] },
-        stage: null
-      }
-    },
-    playerB: {
-      hand: [], deck: [], extraDeck: [], discard: [], support: [], defeated: [],
-      defeatedPoints: 0,
-      battleZone: {
-        fighterA: { card: null, faceDownStack: [] },
-        fighterB: { card: null, faceDownStack: [] },
-        stage: null
-      }
+    id: i + 1,
+    playerA: [], // <--- Changed from null to []
+    playerB: [], // <--- Changed from null to []
+    spectators: [],
+    endGameSignals: { playerA: false, playerB: false },
+    gameState: {
+        playerA: {
+            hand: [], deck: [], extraDeck: [], discard: [], support: [], defeated: [],
+            defeatedPoints: 0, battleZone: {
+                fighterA: { card: null, faceDownStack: [] },
+                fighterB: { card: null, faceDownStack: [] },
+                stage: null
+            }
+        },
+        playerB: {
+            hand: [], deck: [], extraDeck: [], discard: [], support: [], defeated: [],
+            defeatedPoints: 0, battleZone: {
+                fighterA: { card: null, faceDownStack: [] },
+                fighterB: { card: null, faceDownStack: [] },
+                stage: null
+            }
+        }
     }
-  }
 }));
 
+
 function sendSanitizedState(socket, table, role) {
-  const maskCard = () => ({ name: "Card Back", isFaceDown: true });
-  
-  const sanitizeZone = (zone, isVisible) => {
-    if (isVisible) return zone;
-    return Array.isArray(zone) ? zone.map(maskCard) : (Object.keys(zone).length ? maskCard() : {});
-  };
+    const maskCard = () => ({ name: "Card Back", isFaceDown: true });
 
-  // --- Fixed, Secure Role-Aware BattleZone Masking ---
-  const sanitizeBattleZone = (battleZone, zoneOwner, viewerRole) => {
-    if (!battleZone) return null;
-    
-    const isSpec = viewerRole === 'spectator';
-    const isOwner = viewerRole === zoneOwner;
-
-    // Helper function to hide a single card if it's face down and viewed by an opponent
-    const maskIfHidden = (card) => {
-      if (!card || Object.keys(card).length === 0) return null;
-      if (card.isFaceDown && !isOwner && !isSpec) return maskCard();
-      return card;
+    const sanitizeZone = (zone, isVisible) => {
+        if (isVisible) return zone;
+        return Array.isArray(zone) ? zone.map(maskCard) : (Object.keys(zone).length ? maskCard() : {});
     };
 
-    return {
-      stage: battleZone.stage,
-      fighterA: {
-        card: maskIfHidden(battleZone.fighterA.card),
-        // CHANGE: Only spectators see the real cards inside the stack. 
-        // Players (even the owner) only see card backs!
-        faceDownStack: isSpec 
-          ? battleZone.fighterA.faceDownStack 
-          : battleZone.fighterA.faceDownStack.map(maskCard)
-      },
-      fighterB: {
-        card: maskIfHidden(battleZone.fighterB.card),
-        // CHANGE: Applied identically to fighterB's stack
-        faceDownStack: isSpec 
-          ? battleZone.fighterB.faceDownStack 
-          : battleZone.fighterB.faceDownStack.map(maskCard)
-      }
+    // --- Fixed, Secure Role-Aware BattleZone Masking ---
+    const sanitizeBattleZone = (battleZone, zoneOwner, viewerRole) => {
+        if (!battleZone) return null;
+
+        const isSpec = viewerRole === 'spectator';
+        const isOwner = viewerRole === zoneOwner;
+
+        // Helper function to hide a single card if it's face down and viewed by an opponent
+        const maskIfHidden = (card) => {
+            if (!card || Object.keys(card).length === 0) return null;
+            if (card.isFaceDown && !isOwner && !isSpec) return maskCard();
+            return card;
+        };
+
+        return {
+            stage: battleZone.stage,
+            fighterA: {
+                card: maskIfHidden(battleZone.fighterA.card),
+                // CHANGE: Only spectators see the real cards inside the stack. 
+                // Players (even the owner) only see card backs!
+                faceDownStack: isSpec
+                    ? battleZone.fighterA.faceDownStack
+                    : battleZone.fighterA.faceDownStack.map(maskCard)
+            },
+            fighterB: {
+                card: maskIfHidden(battleZone.fighterB.card),
+                // CHANGE: Applied identically to fighterB's stack
+                faceDownStack: isSpec
+                    ? battleZone.fighterB.faceDownStack
+                    : battleZone.fighterB.faceDownStack.map(maskCard)
+            }
+        };
     };
-  };
 
-  const isSpec = role === 'spectator';
-  const canSeeA = isSpec || role === 'playerA';
-  const canSeeB = isSpec || role === 'playerB';
-  const state = table.gameState;
+    const isSpec = role === 'spectator';
+    const canSeeA = isSpec || role === 'playerA';
+    const canSeeB = isSpec || role === 'playerB';
+    const state = table.gameState;
 
-  socket.emit('stateUpdate', {
-    playerA: {
-      hand: sanitizeZone(state.playerA.hand, canSeeA),
-      deck: sanitizeZone(state.playerA.deck, isSpec),
-      extraDeck: sanitizeZone(state.playerA.extraDeck, canSeeA),
-      discard: state.playerA.discard,
-      support: state.playerA.support,
-      defeated: state.playerA.defeated,
-      // Pass 'playerA' as the zone owner to check permissions against the viewer's role
-      battleZone: sanitizeBattleZone(state.playerA.battleZone, 'playerA', role)
-    },
-    playerB: {
-      hand: sanitizeZone(state.playerB.hand, canSeeB),
-      deck: sanitizeZone(state.playerB.deck, isSpec),
-      extraDeck: sanitizeZone(state.playerB.extraDeck, canSeeB),
-      discard: state.playerB.discard,
-      support: state.playerB.support,
-      defeated: state.playerB.defeated,
-      // Pass 'playerB' as the zone owner to check permissions against the viewer's role
-      battleZone: sanitizeBattleZone(state.playerB.battleZone, 'playerB', role)
-    }
-  });
+    socket.emit('stateUpdate', {
+        playerA: {
+            hand: sanitizeZone(state.playerA.hand, canSeeA),
+            deck: sanitizeZone(state.playerA.deck, isSpec),
+            extraDeck: sanitizeZone(state.playerA.extraDeck, canSeeA),
+            discard: state.playerA.discard,
+            support: state.playerA.support,
+            defeated: state.playerA.defeated,
+            // Pass 'playerA' as the zone owner to check permissions against the viewer's role
+            battleZone: sanitizeBattleZone(state.playerA.battleZone, 'playerA', role)
+        },
+        playerB: {
+            hand: sanitizeZone(state.playerB.hand, canSeeB),
+            deck: sanitizeZone(state.playerB.deck, isSpec),
+            extraDeck: sanitizeZone(state.playerB.extraDeck, canSeeB),
+            discard: state.playerB.discard,
+            support: state.playerB.support,
+            defeated: state.playerB.defeated,
+            // Pass 'playerB' as the zone owner to check permissions against the viewer's role
+            battleZone: sanitizeBattleZone(state.playerB.battleZone, 'playerB', role)
+        }
+    });
 }
 
 function leaveAll(socketId) {
-  tables.forEach(t => {
-    if (t.playerA === socketId) t.playerA = null;
-    if (t.playerB === socketId) t.playerB = null;
-    t.spectators = t.spectators.filter(id => id !== socketId);
-    // Automatic broadcast tracking completely removed here
-  });
+    tables.forEach(t => {
+        t.playerA = t.playerA.filter(id => id !== socketId);
+        t.playerB = t.playerB.filter(id => id !== socketId);
+        t.spectators = t.spectators.filter(id => id !== socketId);
+    });
 }
 
-io.on('connection', (socket) => {
-  socket.on("joinTable", ({ tableId, role }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit("errorMsg", "Table not found.");
-    
-    // Clear out stale variable trackers
-    leaveAll(socket.id);
-
-    // 1. Assign the player identifier string references
-    if (role === "playerA" && !table.playerA) table.playerA = socket.id;
-    else if (role === "playerB" && !table.playerB) table.playerB = socket.id;
-    else if (role === "spectator") table.spectators.push(socket.id);
-    else return socket.emit("errorMsg", "Seat taken.");
-
-    // 2. THE FIX: Channel the socket into a dedicated, predictable Room Name string
-    const targetRoomName = `table-${tableId}-${role}`;
-    socket.join(targetRoomName);
-    
-    console.log(`📡 [ROOM JOIN]: Socket ${socket.id} locked into room: ${targetRoomName}`);
-
-    if (role === "playerA" || role === "playerB") {
-        table.endGameSignals[role] = false;
-    }
-});
-
-  socket.on('leaveTable', () => leaveAll(socket.id));
-  socket.on('disconnect', () => leaveAll(socket.id));
-
-  socket.on('loadDeck', ({ tableId, targetPlayer, deckList }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-    if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') return socket.emit('errorMsg', 'Invalid target player.');
-
-    // Map over the incoming array payload structures
-    table.gameState[targetPlayer].deck = deckList.map(cardObj => ({
-      id: cardObj.id,
-      title: cardObj.title, // Cache the clean captured title string safely
-      name: `Card ${cardObj.id}`, // Maintain previous placeholder legacy support compatibility
-      isFaceDown: true,
-      isTapped: false
-    }));
-
-    socket.emit('serverNotice', `Deck loaded with ${deckList.length} uniquely titled cards.`);
-  });
-
-  socket.on('getGameState', ({ tableId, role }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-    
-    sendSanitizedState(socket, table, role);
-  });
-
-  socket.on('shuffleDeck', ({ tableId, targetPlayer }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-    
-    const deck = table.gameState[targetPlayer]?.deck;
-    if (!deck || deck.length === 0) {
-      return socket.emit('errorMsg', `No cards found in ${targetPlayer}'s deck to shuffle.`);
-    }
-
-    deck.forEach(card => {
-      card.shuffleId = uuidv4(); // Assign a random unique string identifier
-    });
-
-    deck.sort((a, b) => a.shuffleId.localeCompare(b.shuffleId));
-
-    deck.forEach((card) => {
-      delete card.shuffleId; // Keep the game state payload clean
-    });
-
-    socket.emit('serverNotice', `Deck shuffled successfully using random UUID sort!`);
-  });
-
-  socket.on("drawCard", ({ tableId, targetPlayer }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit("errorMsg", "Table not found.");
-
-    const deck = table.gameState[targetPlayer]?.deck;
-    const hand = table.gameState[targetPlayer]?.hand;
-
-    if (!deck || deck.length === 0) {
-      return socket.emit("errorMsg", `${targetPlayer}'s deck is empty! Cannot draw.`);
-    }
-
-    const drawnCard = deck.pop();
-    drawnCard.isFaceDown = false;
-    hand.push(drawnCard);
-
-    // FIX: Using name string to match your updated schema choice
-    const maskCard = () => ({ name: "Card Back", isFaceDown: true });
-    
-    const ownerPayload = { targetPlayer: targetPlayer, card: drawnCard, deckCount: deck.length };
-    const opponentPayload = { targetPlayer: targetPlayer, card: maskCard(), deckCount: deck.length };
-
-    // Define room locations
-    const ownerRoom = `table-${tableId}-${targetPlayer}`;
-    const opponentPlayerKey = targetPlayer === "playerA" ? "playerB" : "playerA";
-    const opponentRoom = `table-${tableId}-${opponentPlayerKey}`;
-
-    // 1. BROADCAST TO ROOMS (For synchronization across multiple hosted clients)
-    io.to(ownerRoom).emit("cardDrawnUpdate", ownerPayload);
-    io.to(opponentRoom).emit("cardDrawnUpdate", opponentPayload);
-
-    // 2. THE CRUCIAL DIRECT ROUTE FIX: Force a direct message to the clicking socket.
-    // This guarantees your local machine catches the event instantly, regardless of room state rules.
-    socket.emit("cardDrawnUpdate", ownerPayload);
-
-    // Stream to spectators room
-    table.spectators.forEach(specId => {
-      io.to(specId).emit("cardDrawnUpdate", ownerPayload);
-    });
-
-    socket.emit("serverNotice", `${targetPlayer} successfully drew 1 card.`);
-  });
-
-  socket.on("draw6Cards", ({ tableId, targetPlayer }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit("errorMsg", "Table not found.");
-
-    const deck = table.gameState[targetPlayer]?.deck;
-    const hand = table.gameState[targetPlayer]?.hand;
-
-    if (!deck || deck.length < 6) {
-      return socket.emit("errorMsg", `Not enough cards in ${targetPlayer}'s deck to draw 6!`);
-    }
-
-    const maskCard = () => ({ name: "Card Back", isFaceDown: true });
-    
-    const ownerRoom = `table-${tableId}-${targetPlayer}`;
-    const opponentPlayerKey = targetPlayer === "playerA" ? "playerB" : "playerA";
-    const opponentRoom = `table-${tableId}-${opponentPlayerKey}`;
-
-    console.log(`⚡ [SERVER MACRO]: Processing 6-card opening hand block draw loop for ${targetPlayer}...`);
-
-    for (let i = 0; i < 6; i++) {
-      const drawnCard = deck.pop();
-      drawnCard.isFaceDown = false;
-      hand.push(drawnCard);
-
-      const ownerPayload = { targetPlayer: targetPlayer, card: drawnCard, deckCount: deck.length };
-      const opponentPayload = { targetPlayer: targetPlayer, card: maskCard(), deckCount: deck.length };
-
-      // 1. Send to rooms
-      io.to(ownerRoom).emit("cardDrawnUpdate", ownerPayload);
-      io.to(opponentRoom).emit("cardDrawnUpdate", opponentPayload);
-
-      // 2. THE CRUCIAL DIRECT ROUTE FIX: Mirror directly to the local clicking socket
-      socket.emit("cardDrawnUpdate", ownerPayload);
-
-      table.spectators.forEach(specId => {
-        io.to(specId).emit("cardDrawnUpdate", ownerPayload);
-      });
-    }
-
-    socket.emit("serverNotice", `${targetPlayer} successfully drew a 6-card opening hand.`);
-  });
-
-  socket.on("executeDevMulligan", ({ tableId, targetPlayer }) => {
-      const table = tables.find(t => t.id === parseInt(tableId));
-      if (!table) return socket.emit("errorMsg", "Table not found.");
-      
-      const pState = table.gameState[targetPlayer];
-      if (!pState) return socket.emit("errorMsg", "Invalid player slot targeted.");
-
-      console.log(`⚡ [DEV MACRO]: Processing atomic Mulligan matrix loop for player slot: ${targetPlayer}`);
-
-      // 1. Flush hand cards face-down back into the deck's tail boundary array
-      while (pState.hand.length > 0) {
-          const card = pState.hand.pop();
-          card.isFaceDown = true;
-          card.isTapped = false;
-          pState.deck.push(card);
-      }
-
-      // 2. Execute program shuffle scramble with alphabetic UUID sorting rules
-      pState.deck.forEach(card => { card.shuffleId = uuidv4(); });
-      pState.deck.sort((a, b) => a.shuffleId.localeCompare(b.shuffleId));
-      pState.deck.forEach(card => { delete card.shuffleId; });
-
-      // 3. Pop 6 fresh top deck cards into the player hand
-      for (let i = 0; i < 6; i++) {
-          if (pState.deck.length > 0) {
-              const drawnCard = pState.deck.pop();
-              drawnCard.isFaceDown = false;
-              pState.hand.push(drawnCard);
-          }
-      }
-
-      // 4. Dispatch synchronized sanitization states across all active sockets
-      const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean);
-      targetSockets.forEach(sockId => {
-          const targetSock = io.sockets.sockets.get(sockId);
-          if (targetSock) {
-              let viewerRole = "spectator";
-              if (sockId === table.playerA) viewerRole = "playerA";
-              if (sockId === table.playerB) viewerRole = "playerB";
-              sendSanitizedState(targetSock, table, viewerRole);
-          }
-      });
-
-      socket.emit("serverNotice", `Mulligan completed! Hand returned to deck tail, scrambled via UUID, and 6 cards redrawn.`);
-  });
-
-  socket.on("playCardFaceDown", ({ tableId, targetPlayer, handIndex }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit("errorMsg", "Table not found.");
-    
-    const hand = table.gameState[targetPlayer]?.hand;
-    const battleZone = table.gameState[targetPlayer]?.battleZone;
-    if (!hand || hand.length === 0) return socket.emit("errorMsg", "Hand is empty! Cannot place a fighter card.");
-    
-    const idx = parseInt(handIndex);
-    if (isNaN(idx) || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid hand position!");
-    
-    // Check if slot is occupied
-    if (battleZone.fighterA.card && Object.keys(battleZone.fighterA.card).length > 0) {
-        return socket.emit("errorMsg", "Fighter A slot is already occupied!");
-    }
-
-    const [cardToPlay] = hand.splice(idx, 1);
-    cardToPlay.isFaceDown = true;
-    cardToPlay.isTapped = false;
-    battleZone.fighterA.card = cardToPlay;
-
-    // Fog of War Payloads
-    const maskCard = () => ({ name: "Card Back", isFaceDown: true });
-    const ownerPayload = { targetPlayer: targetPlayer, card: cardToPlay, handCount: hand.length };
-    const opponentPayload = { targetPlayer: targetPlayer, card: maskCard(), handCount: hand.length };
-
-    // Broadcast to matching seats
-    if (targetPlayer === "playerA") {
-        if (table.playerA) io.to(table.playerA).emit("cardPlayedFaceDownUpdate", ownerPayload);
-        if (table.playerB) io.to(table.playerB).emit("cardPlayedFaceDownUpdate", opponentPayload);
-    } else {
-        if (table.playerA) io.to(table.playerA).emit("cardPlayedFaceDownUpdate", opponentPayload);
-        if (table.playerB) io.to(table.playerB).emit("cardPlayedFaceDownUpdate", ownerPayload);
-    }
-    table.spectators.forEach(specId => io.to(specId).emit("cardPlayedFaceDownUpdate", ownerPayload));
-    
-    socket.emit("serverNotice", `Placed card from hand index ${idx} face down into ${targetPlayer}'s fighterA position.`);
-  });
-
-  socket.on("flipCardFaceUp", ({ tableId, targetPlayer }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit("errorMsg", "Table not found.");
-    
-    const fighterACard = table.gameState[targetPlayer]?.battleZone?.fighterA?.card;
-    if (!fighterACard || Object.keys(fighterACard).length === 0) {
-        return socket.emit("errorMsg", "No card found in fighterA to flip face up!");
-    }
-
-    fighterACard.isFaceDown = false;
-
-    const payload = { targetPlayer: targetPlayer, card: fighterACard };
-    if (table.playerA) io.to(table.playerA).emit("cardFlippedFaceUpUpdate", payload);
-    if (table.playerB) io.to(table.playerB).emit("cardFlippedFaceUpUpdate", payload);
-    table.spectators.forEach(specId => io.to(specId).emit("cardFlippedFaceUpUpdate", payload));
-
-    socket.emit("serverNotice", `Flipped ${targetPlayer}'s active fighterA card face up.`);
-  });
-
-
-  socket.on('placeDeckCardToStack', ({ tableId, targetPlayer, targetSlot }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-    if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') return socket.emit('errorMsg', 'Invalid target.');
-
-    const deck = table.gameState[targetPlayer]?.deck;
-    const battleZone = table.gameState[targetPlayer]?.battleZone;
-
-    if (!deck || deck.length === 0) {
-      return socket.emit('errorMsg', `Your deck is empty!`);
-    }
-
-    if (targetSlot !== 'fighterA' && targetSlot !== 'fighterB') {
-      return socket.emit('errorMsg', 'Invalid target stack slot.');
-    }
-
-    // Top of deck stack pops out from the end of the array tail (.pop())
-    const cardToStack = deck.pop(); 
-    cardToStack.isFaceDown = true; 
-
-    // Appends to the end (top) of the stack array
-    if (!battleZone[targetSlot].faceDownStack) {
-      battleZone[targetSlot].faceDownStack = [];
-    }
-    battleZone[targetSlot].faceDownStack.push(cardToStack);
-
-    // Dynamic notifications: Everyone gets a masked update except spectators
-    const maskCard = () => ({ name: "Card Back", isFaceDown: true });
-    const maskedStack = battleZone[targetSlot].faceDownStack.map(maskCard);
-
-    const activePlayersPayload = { 
-      targetPlayer, 
-      targetSlot, 
-      updatedStack: maskedStack,
-      deckCount: deck.length // <-- FIX: Package the remaining deck count here
-    };
-    
-    const spectatorPayload = { 
-      targetPlayer, 
-      targetSlot, 
-      updatedStack: battleZone[targetSlot].faceDownStack,
-      deckCount: deck.length // <-- FIX: Package the remaining deck count here
-    };
-
-    if (table.playerA) io.to(table.playerA).emit('cardStackedUpdate', activePlayersPayload);
-    if (table.playerB) io.to(table.playerB).emit('cardStackedUpdate', activePlayersPayload);
-    
-    table.spectators.forEach(specId => {
-      io.to(specId).emit('cardStackedUpdate', spectatorPayload);
-    });
-
-    socket.emit('serverNotice', `Moved card from deck to ${targetSlot}'s face-down stack.`);
-  });
-
-  socket.on('playCardToSupport', ({ tableId, targetPlayer, handIndex }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-
-    const hand = table.gameState[targetPlayer]?.hand;
-    const support = table.gameState[targetPlayer]?.support;
-
-    if (!hand || hand.length === 0) {
-      return socket.emit('errorMsg', `Hand is empty! No card to play.`);
-    }
-
-    const idx = parseInt(handIndex);
-    if (isNaN(idx) || idx < 0 || idx >= hand.length) {
-      return socket.emit('errorMsg', `Invalid hand position! Choose an index between 0 and ${hand.length - 1}.`);
-    }
-
-    // Explicitly remove the card at that index from the hand array
-    const [cardToPlay] = hand.splice(idx, 1);
-    
-    // Support cards are played face up on the table
-    cardToPlay.isFaceDown = false; 
-
-    // Append to the end of the support array lane
-    support.push(cardToPlay);
-
-    // Build the payload (since it's a public zone, everybody gets the raw card info)
-    const payload = {
-      targetPlayer,
-      card: cardToPlay,
-      supportCount: support.length,
-      handCount: hand.length
-    };
-
-    // Broadcast the live update instantly to all table positions
-    if (table.playerA) io.to(table.playerA).emit('cardPlayedToSupportUpdate', payload);
-    if (table.playerB) io.to(table.playerB).emit('cardPlayedToSupportUpdate', payload);
-    table.spectators.forEach(specId => {
-      io.to(specId).emit('cardPlayedToSupportUpdate', payload);
-    });
-
-    socket.emit('serverNotice', `Played card from hand index ${idx} face up into ${targetPlayer}'s support zone.`);
-  });
-
-  socket.on('toggleCardTap', ({ tableId, targetPlayer, zone, supportIndex }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-
-    const battleZone = table.gameState[targetPlayer]?.battleZone;
-    const support = table.gameState[targetPlayer]?.support;
-    let targetCard = null;
-
-    // 1. Locate the physical target card based on the user's selected zone criteria
-    if (zone === 'fighterA') {
-      targetCard = battleZone?.fighterA?.card;
-    } else if (zone === 'fighterB') {
-      targetCard = battleZone?.fighterB?.card;
-    } else if (zone === 'stage') {
-      // 🌟 ADDED STAGE LAYER EVALUATION
-      targetCard = battleZone?.stage;
-    } else if (zone === 'support') {
-      const idx = parseInt(supportIndex);
-      if (!support || isNaN(idx) || idx < 0 || idx >= support.length) {
-        return socket.emit('errorMsg', 'Invalid support lane index.');
-      }
-      targetCard = support[idx];
-    }
-
-    if (!targetCard || Object.keys(targetCard).length === 0) {
-      return socket.emit('errorMsg', `No card found in ${zone} to tap/untap.`);
-    }
-
-    // 2. Flip the boolean value state parameter
-    targetCard.isTapped = !targetCard.isTapped;
-
-    // 3. Construct a public broadcast payload notice
-    const payload = {
-      targetPlayer,
-      zone,
-      supportIndex: zone === 'support' ? parseInt(supportIndex) : null,
-      isTapped: targetCard.isTapped
-    };
-
-    if (table.playerA) io.to(table.playerA).emit('cardTapUpdated', payload);
-    if (table.playerB) io.to(table.playerB).emit('cardTapUpdated', payload);
-    table.spectators.forEach(specId => io.to(specId).emit('cardTapUpdated', payload));
-
-    socket.emit('serverNotice', `Toggled tap state for card in ${zone} to: ${targetCard.isTapped}`);
-  });
-
-  socket.on('playCardToFighter', ({ tableId, targetPlayer, handIndex, targetSlot }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-
-    const hand = table.gameState[targetPlayer]?.hand;
-    const battleZone = table.gameState[targetPlayer]?.battleZone;
-
-    if (!hand || hand.length === 0) {
-      return socket.emit('errorMsg', `Hand is empty! No card to play.`);
-    }
-
-    const idx = parseInt(handIndex);
-    if (isNaN(idx) || idx < 0 || idx >= hand.length) {
-      return socket.emit('errorMsg', `Invalid hand position! Choose an index between 0 and ${hand.length - 1}.`);
-    }
-
-    if (targetSlot !== 'fighterA' && targetSlot !== 'fighterB') {
-      return socket.emit('errorMsg', 'Invalid fighter target slot.');
-    }
-
-    // Check if slot is already occupied
-    if (battleZone[targetSlot].card && Object.keys(battleZone[targetSlot].card).length > 0) {
-      return socket.emit('errorMsg', `${targetSlot} is already occupied! Move or discard the current card first.`);
-    }
-
-    // Extract card from hand array
-    const [cardToPlay] = hand.splice(idx, 1);
-    
-    // Normal mid-game plays from hand onto the field are face-up
-    cardToPlay.isFaceDown = false; 
-    cardToPlay.isTapped = false; // Freshly played cards start untapped
-
-    // Commit to the target battle slot object
-    battleZone[targetSlot].card = cardToPlay;
-
-    // Public zone payload data
-    const payload = {
-      targetPlayer,
-      targetSlot,
-      card: cardToPlay,
-      handCount: hand.length
-    };
-
-    // Broadcast update across the room
-    if (table.playerA) io.to(table.playerA).emit('cardPlayedToFighterUpdate', payload);
-    if (table.playerB) io.to(table.playerB).emit('cardPlayedToFighterUpdate', payload);
-    table.spectators.forEach(specId => io.to(specId).emit('cardPlayedToFighterUpdate', payload));
-
-    socket.emit('serverNotice', `Played card from hand index ${idx} face up into ${targetPlayer}'s ${targetSlot} slot.`);
-  });
-
-  socket.on('moveFighterToDefeated', ({ tableId, targetPlayer, slot }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-
-    const playerState = table.gameState[targetPlayer];
-    if (!playerState) return socket.emit('errorMsg', 'Player state not found.');
-
-    const battleZone = playerState.battleZone;
-    const defeatedZone = playerState.defeated;
-
-    if (slot !== 'fighterA' && slot !== 'fighterB') {
-      return socket.emit('errorMsg', 'Invalid fighter slot selection.');
-    }
-
-    const targetCard = battleZone[slot].card;
-    if (!targetCard || Object.keys(targetCard).length === 0) {
-      return socket.emit('errorMsg', `No card found in ${slot} to move to defeated.`);
-    }
-
-    // Shift card off the battle field slot out into public defeated pile lane
-    battleZone[slot].card = null;
-    targetCard.isFaceDown = false;
-    targetCard.isTapped = false;
-    defeatedZone.push(targetCard);
-
-    const payload = {
-      targetPlayer,
-      slot,
-      card: targetCard,
-      defeatedCount: defeatedZone.length
-    };
-
-    if (table.playerA) io.to(table.playerA).emit('cardMovedToDefeatedZone', payload);
-    if (table.playerB) io.to(table.playerB).emit('cardMovedToDefeatedZone', payload);
-    table.spectators.forEach(specId => io.to(specId).emit('cardMovedToDefeatedZone', payload));
-
-    socket.emit('serverNotice', `Moved card from ${slot} to ${targetPlayer}'s defeated zone pile.`);
-  });
-
-  socket.on('adjustDefeatedPoints', ({ tableId, targetPlayer, amount }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-
-    const playerState = table.gameState[targetPlayer];
-    if (!playerState) return socket.emit('errorMsg', 'Player state not found.');
-
-    // Adjust points, ensuring they never drop below zero
-    playerState.defeatedPoints = Math.max(0, playerState.defeatedPoints + parseInt(amount));
-
-    const payload = {
-      targetPlayer,
-      totalDefeatedPoints: playerState.defeatedPoints,
-      isEliminated: playerState.defeatedPoints >= 10
-    };
-
-    if (table.playerA) io.to(table.playerA).emit('defeatedPointsTickedUpdate', payload);
-    if (table.playerB) io.to(table.playerB).emit('defeatedPointsTickedUpdate', payload);
-    table.spectators.forEach(specId => io.to(specId).emit('defeatedPointsTickedUpdate', payload));
-
-    let notice = `${targetPlayer}'s Defeated Points updated to: ${playerState.defeatedPoints}`;
-    if (playerState.defeatedPoints >= 10) notice += " 🚨 CRITICAL LIMIT HIT! Player Loses!";
-    socket.emit('serverNotice', notice);
-  });
-
-  socket.on('discardCardFromHand', ({ tableId, targetPlayer, handIndex }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-
-    const hand = table.gameState[targetPlayer]?.hand;
-    const discard = table.gameState[targetPlayer]?.discard;
-
-    if (!hand || hand.length === 0) {
-      return socket.emit('errorMsg', `Hand is empty! No card to discard.`);
-    }
-
-    const idx = parseInt(handIndex);
-    if (isNaN(idx) || idx < 0 || idx >= hand.length) {
-      return socket.emit('errorMsg', `Invalid hand position! Choose an index between 0 and ${hand.length - 1}.`);
-    }
-
-    // Extract the card from the hand array
-    const [cardToDiscard] = hand.splice(idx, 1);
-    
-    // Cards in the discard pile are public and face up
-    cardToDiscard.isFaceDown = false; 
-    cardToDiscard.isTapped = false; // Reset orientation when discarded
-
-    // Append to the end of the public discard pile array stack
-    discard.push(cardToDiscard);
-
-    // Build public payload broadcast
-    const payload = {
-      targetPlayer,
-      card: cardToDiscard,
-      discardCount: discard.length,
-      handCount: hand.length
-    };
-
-    if (table.playerA) io.to(table.playerA).emit('cardDiscardedUpdate', payload);
-    if (table.playerB) io.to(table.playerB).emit('cardDiscardedUpdate', payload);
-    table.spectators.forEach(specId => io.to(specId).emit('cardDiscardedUpdate', payload));
-
-    socket.emit('serverNotice', `Discarded card from hand index ${idx} to ${targetPlayer}'s discard pile.`);
-  });
-
-  socket.on('playHandToTopDeck', ({ tableId, targetPlayer, handIndex }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-
-    const hand = table.gameState[targetPlayer]?.hand;
-    const deck = table.gameState[targetPlayer]?.deck;
-
-    if (!hand || hand.length === 0) return socket.emit('errorMsg', 'Hand is empty!');
-
-    const idx = parseInt(handIndex);
-    if (isNaN(idx) || idx < 0 || idx >= hand.length) {
-      return socket.emit('errorMsg', 'Invalid hand position.');
-    }
-
-    // Splice the card from the hand array
-    const [cardToDeck] = hand.splice(idx, 1);
-    cardToDeck.isFaceDown = true; // Enforce face down parameter
-
-    // Standardized: Top of the deck stack is the END of the array
-    deck.push(cardToDeck);
-
-    // Emit minimal targeted layout notifications
-    const maskCard = () => ({ name: "Card Back", isFaceDown: true });
-    const standardPayload = { targetPlayer, card: maskCard(), deckCount: deck.length, handCount: hand.length, location: 'top' };
-    const spectatorPayload = { targetPlayer, card: cardToDeck, deckCount: deck.length, handCount: hand.length, location: 'top' };
-
-    if (table.playerA) io.to(table.playerA).emit('handToDeckUpdate', standardPayload);
-    if (table.playerB) io.to(table.playerB).emit('handToDeckUpdate', standardPayload);
-    table.spectators.forEach(id => io.to(id).emit('handToDeckUpdate', spectatorPayload));
-
-    socket.emit('serverNotice', `Moved card from hand index ${idx} face down to the TOP of the deck.`);
-  });
-
-  socket.on('playHandToBottomDeck', ({ tableId, targetPlayer, handIndex }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-
-    const hand = table.gameState[targetPlayer]?.hand;
-    const deck = table.gameState[targetPlayer]?.deck;
-
-    if (!hand || hand.length === 0) return socket.emit('errorMsg', 'Hand is empty!');
-
-    const idx = parseInt(handIndex);
-    if (isNaN(idx) || idx < 0 || idx >= hand.length) {
-      return socket.emit('errorMsg', 'Invalid hand position.');
-    }
-
-    const [cardToDeck] = hand.splice(idx, 1);
-    cardToDeck.isFaceDown = true;
-
-    // Standardized: Bottom of the deck stack is index 0 (the BEGINNING) of the array
-    deck.unshift(cardToDeck);
-
-    const maskCard = () => ({ name: "Card Back", isFaceDown: true });
-    const standardPayload = { targetPlayer, card: maskCard(), deckCount: deck.length, handCount: hand.length, location: 'bottom' };
-    const spectatorPayload = { targetPlayer, card: cardToDeck, deckCount: deck.length, handCount: hand.length, location: 'bottom' };
-
-    if (table.playerA) io.to(table.playerA).emit('handToDeckUpdate', standardPayload);
-    if (table.playerB) io.to(table.playerB).emit('handToDeckUpdate', standardPayload);
-    table.spectators.forEach(id => io.to(id).emit('handToDeckUpdate', spectatorPayload));
-
-    socket.emit('serverNotice', `Moved card from hand index ${idx} face down to the BOTTOM of the deck.`);
-  });
-
-  socket.on('flipAndDiscardFromStack', ({ tableId, targetPlayer, targetSlot }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-    if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') return socket.emit('errorMsg', 'Invalid target.');
-
-    const battleZone = table.gameState[targetPlayer]?.battleZone;
-    const discard = table.gameState[targetPlayer]?.discard;
-
-    if (targetSlot !== 'fighterA' && targetSlot !== 'fighterB') {
-      return socket.emit('errorMsg', 'Invalid stack slot selection.');
-    }
-
-    const stack = battleZone[targetSlot]?.faceDownStack;
-    if (!stack || stack.length === 0) {
-      return socket.emit('errorMsg', `The face-down stack next to ${targetSlot} is completely empty!`);
-    }
-
-    // Peel the true topmost item off the end of the array tail (.pop())
-    const poppedCard = stack.pop();
-    poppedCard.isFaceDown = false;
-    poppedCard.isTapped = false;
-
-    // Append directly onto the public discard pile stack (.push())
-    discard.push(poppedCard);
-
-    const maskCard = () => ({ name: "Card Back", isFaceDown: true });
-    const maskedStack = stack.map(maskCard);
-
-    const activePlayersPayload = { targetPlayer, targetSlot, updatedStack: maskedStack, updatedDiscard: discard };
-    const spectatorPayload = { targetPlayer, targetSlot, updatedStack: stack, updatedDiscard: discard };
-
-    if (table.playerA) io.to(table.playerA).emit('stackFlippedAndDiscardedUpdate', activePlayersPayload);
-    if (table.playerB) io.to(table.playerB).emit('stackFlippedAndDiscardedUpdate', activePlayersPayload);
-    table.spectators.forEach(specId => io.to(specId).emit('stackFlippedAndDiscardedUpdate', spectatorPayload));
-
-    socket.emit('serverNotice', `Peeled top card from ${targetPlayer}'s ${targetSlot} stack and flipped it face up into the discard pile.`);
-  });
-
-  socket.on('recycleDiscardToDeck', ({ tableId, targetPlayer }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-
-    const playerState = table.gameState[targetPlayer];
-    if (!playerState) return socket.emit('errorMsg', `Player state not found.`);
-
-    const deck = playerState.deck;
-    const discard = playerState.discard;
-
-    if (!discard || discard.length === 0) {
-      return socket.emit('errorMsg', `Discard pile is empty! Nothing to recycle.`);
-    }
-
-    const recycledCount = discard.length;
-
-    // 1. Empty out the entire discard array right onto the deck pile tail bounds
-    while (discard.length > 0) {
-      const card = discard.pop(); 
-      card.isFaceDown = true;     
-      card.isTapped = false;       
-      deck.push(card);            
-    }
-
-    // 2. Execute automated UUID-based shuffle scramble
-    deck.forEach(card => { card.shuffleId = uuidv4(); });
-    deck.sort((a, b) => a.shuffleId.localeCompare(b.shuffleId));
-    deck.forEach(card => { delete card.shuffleId; });
-
-    // 3. FIX: Structure the payload event arguments to pass explicit structural sync values
-    const cleanPayload = {
-      targetPlayer,
-      deckCount: deck.length,
-      discardCount: 0,
-      updatedDiscard: [] // <-- FIX: Explicitly send down an empty payload matrix map
-    };
-
-    if (table.playerA) io.to(table.playerA).emit('discardRecycledUpdate', cleanPayload);
-    if (table.playerB) io.to(table.playerB).emit('discardRecycledUpdate', cleanPayload);
-    table.spectators.forEach(id => io.to(id).emit('discardRecycledUpdate', cleanPayload));
-
-    socket.emit('serverNotice', `Recycled all ${recycledCount} cards from discard to deck face down, and fully shuffled the deck!`);
-  });
-
-  socket.on('moveDiscardToDefeated', ({ tableId, targetPlayer, discardIndex }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-
-    const playerState = table.gameState[targetPlayer];
-    if (!playerState) return socket.emit('errorMsg', 'Player state structural map not found.');
-
-    const discard = playerState.discard;
-    const defeated = playerState.defeated;
-
-    if (!discard || discard.length === 0) {
-      return socket.emit('errorMsg', 'Discard pile is completely empty!');
-    }
-
-    const idx = parseInt(discardIndex);
-    if (isNaN(idx) || idx < 0 || idx >= discard.length) {
-      return socket.emit('errorMsg', `Invalid discard index choice! Please choose between 0 and ${discard.length - 1}.`);
-    }
-
-    // 1. Extract the card from the discard pile array using index splicing rules
-    const [retiredCard] = discard.splice(idx, 1);
-    
-    // 2. Clear face-down tracking properties for public view
-    retiredCard.isFaceDown = false;
-    retiredCard.isTapped = false;
-
-    // 3. Commit cleanly to the defeated array pile tail bounds
-    defeated.push(retiredCard);
-
-    // 4. Construct synchronized payloads to broadcast down the network pipes
-    const payload = {
-      targetPlayer,
-      card: retiredCard,
-      discardCount: discard.length,
-      defeatedCount: defeated.length
-    };
-
-    // Broadcast the state update instantly to update everyone's grid counts
-    if (table.playerA) io.to(table.playerA).emit('discardToDefeatedUpdate', payload);
-    if (table.playerB) io.to(table.playerB).emit('discardToDefeatedUpdate', payload);
-    table.spectators.forEach(id => io.to(id).emit('discardToDefeatedUpdate', payload));
-
-    socket.emit('serverNotice', `Successfully extracted card from discard index ${idx} to defeated zone.`);
-  });
-
-  socket.on("checkTableStatus", ({ tableId: tableId, role: role }) => {
-      const table = tables.find(t => t.id === parseInt(tableId));
-      if (!table) return socket.emit("errorMsg", "Table not found.");
-      
-      const targetPlayerState = table.gameState[role];
-      
-      // Evaluate if ANY zone contains cards to determine if a deck was loaded for this match
-      let hasDeckLoaded = false;
-      if (targetPlayerState) {
-          const bZone = targetPlayerState.battleZone || {};
-          
-          const hasDeckCards = !!(targetPlayerState.deck && targetPlayerState.deck.length > 0);
-          const hasHandCards = !!(targetPlayerState.hand && targetPlayerState.hand.length > 0);
-          const hasDiscardCards = !!(targetPlayerState.discard && targetPlayerState.discard.length > 0);
-          const hasSupportCards = !!(targetPlayerState.support && targetPlayerState.support.length > 0);
-          const hasDefeatedCards = !!(targetPlayerState.defeated && targetPlayerState.defeated.length > 0);
-          
-          const hasFighterA = !!(bZone.fighterA && bZone.fighterA.card);
-          const hasFighterB = !!(bZone.fighterB && bZone.fighterB.card);
-          const hasStage = !!bZone.stage;
-          
-          const hasStackA = !!(bZone.fighterA && bZone.fighterA.faceDownStack && bZone.fighterA.faceDownStack.length > 0);
-          const hasStackB = !!(bZone.fighterB && bZone.fighterB.faceDownStack && bZone.fighterB.faceDownStack.length > 0);
-
-          hasDeckLoaded = hasDeckCards || hasHandCards || hasDiscardCards || 
-                          hasSupportCards || hasDefeatedCards || hasFighterA || 
-                          hasFighterB || hasStage || hasStackA || hasStackB;
-      }
-
-      socket.emit("tableStatusResponse", {
-          tableId: table.id,
-          role: role,
-          hasDeckLoaded: hasDeckLoaded
-      });
-  });
-
-  /**
-   * Action: Sets the target player's end game proposal flag to true.
-   * If both players agree, it hard-scrubs the table state and demotes players to spectators.
-   */
-  socket.on('signalEndGame', ({ tableId, targetPlayer }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-    if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') {
-      return socket.emit('errorMsg', 'Invalid player role targeted.');
-    }
-
-    // 1. Commit the pending intent signal flag to the staging map
-    table.endGameSignals[targetPlayer] = true;
-    
-    // Broadcast status to the developer stream and active clients
-    const signalStatus = `Player A: ${table.endGameSignals.playerA ? '🚨' : '🟢'} | Player B: ${table.endGameSignals.playerB ? '🚨' : '🟢'}`;
-    io.emit('serverNotice', `[TABLE ${tableId} ADMIN]: Match end proposed. Current matrix: ${signalStatus}`);
-    
-    // Dispatch a targeted logging update for the developer mode console listeners
-    const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean);
-    targetSockets.forEach(sockId => {
-      const sock = io.sockets.sockets.get(sockId);
-      if (sock) sock.emit('endGameSignalUpdate', { tableId: table.id, ...table.endGameSignals });
-    });
-
-    // 2. RESOLUTION RESOLVER: Check if BOTH active seats have consented to clear the table
-    if (table.endGameSignals.playerA && table.endGameSignals.playerB) {
-      console.log(`🧼 [SYSTEM RESET TRIPPED]: Mutual consent achieved on Table ${tableId}. Clearing board...`);
-
-      // Demote active seats to spectators list if they are currently connected
-      if (table.playerA) {
-        table.spectators.push(table.playerA);
-        table.playerA = null;
-      }
-      if (table.playerB) {
-        table.spectators.push(table.playerB);
-        table.playerB = null;
-      }
-
-      // Reset staging environment flags back to default factory baseline
-      table.endGameSignals.playerA = false;
-      table.endGameSignals.playerB = false;
-
-      // Hard-scrub all game state nested data structures
-      const baselineState = () => ({
-        hand: [], deck: [], extraDeck: [], discard: [], support: [], defeated: [],
-        defeatedPoints: 0,
-        battleZone: {
-          fighterA: { card: null, faceDownStack: [] },
-          fighterB: { card: null, faceDownStack: [] },
-          stage: null
+io.on("connection", socket => {
+    socket.on("joinTable", ({ tableId: tableId, role: role }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+
+        leaveAll(socket.id);
+
+        // 2. REFACTOR: Push sockets into array clusters instead of overwriting a single value
+        if (role === "playerA") {
+            table.playerA.push(socket.id);
+        } else if (role === "playerB") {
+            table.playerB.push(socket.id);
+        } else if (role === "spectator") {
+            table.spectators.push(socket.id);
+        } else {
+            return socket.emit("errorMsg", "Invalid role definition.");
         }
-      });
 
-      table.gameState.playerA = baselineState();
-      table.gameState.playerB = baselineState();
+        if (role === "playerA" || role === "playerB") {
+            table.endGameSignals[role] = false;
+        }
 
-      // 3. MULTI-CHANNEL BROADCAST RIPPLE EFFECT
-      // Send specialized developer logger packet
-      targetSockets.forEach(sockId => {
-        const sock = io.sockets.sockets.get(sockId);
-        if (!sock) return;
-
-        sock.emit('tableClearedReset', { tableId: table.id });
-
-        // Force a soft redraw pass. Because players are now spectators, 
-        // they will instantly see a pristine, completely blank screen area.
-        let viewerRole = 'spectator';
-        if (sockId === table.playerA) viewerRole = 'playerA';
-        if (sockId === table.playerB) viewerRole = 'playerB';
-        sendSanitizedState(sock, table, viewerRole);
-      });
-    }
-  });
-
-  /**
-   * Action: Revokes a previously submitted end-game signal, returning the flag to false.
-   */
-  socket.on('revokeEndGame', ({ tableId, targetPlayer }) => {
-    const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
-    if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') {
-      return socket.emit('errorMsg', 'Invalid player role targeted.');
-    }
-
-    // Retract the signal flag back to idle status
-    table.endGameSignals[targetPlayer] = false;
-
-    const signalStatus = `Player A: ${table.endGameSignals.playerA ? '🚨' : '🟢'} | Player B: ${table.endGameSignals.playerB ? '🚨' : '🟢'}`;
-    io.emit('serverNotice', `[TABLE ${tableId} ADMIN]: Match end proposal revoked. Current matrix: ${signalStatus}`);
-
-    // Update logging streams across developer consoles
-    const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean);
-    targetSockets.forEach(sockId => {
-      const sock = io.sockets.sockets.get(sockId);
-      if (sock) sock.emit('endGameSignalUpdate', { tableId: table.id, ...table.endGameSignals });
+        console.log(`📡 [STAGE 2 SEAT]: Added socket ${socket.id} to the list for ${role}`);
     });
-  });
 
-  socket.on("playCardToStage", ({ tableId, targetPlayer, handIndex }) => {
-      const table = tables.find(t => t.id === parseInt(tableId));
-      if (!table) return socket.emit("errorMsg", "Table not found.");
-      
-      const hand = table.gameState[targetPlayer]?.hand;
-      const battleZone = table.gameState[targetPlayer]?.battleZone;
-      if (!hand || hand.length === 0) {
-          return socket.emit("errorMsg", `Hand is completely empty! Cannot place card onto the stage.`);
-      }
+    socket.on("leaveTable", () => leaveAll(socket.id));
+    socket.on("disconnect", () => leaveAll(socket.id));
 
-      const idx = parseInt(handIndex);
-      if (isNaN(idx) || idx < 0 || idx >= hand.length) {
-          return socket.emit("errorMsg", `Invalid hand position index! Choose between 0 and ${hand.length - 1}.`);
-      }
+    socket.on('loadDeck', ({ tableId, targetPlayer, deckList }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit('errorMsg', 'Table not found.');
+        if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') return socket.emit('errorMsg', 'Invalid target player.');
 
-      // Verify if target stage slot is currently empty
-      if (battleZone.stage && Object.keys(battleZone.stage).length > 0) {
-          return socket.emit("errorMsg", "The Stage zone position is already occupied! Discard or move it first.");
-      }
+        // Map over the incoming array payload structures
+        table.gameState[targetPlayer].deck = deckList.map(cardObj => ({
+            id: cardObj.id,
+            title: cardObj.title, // Cache the clean captured title string safely
+            name: `Card ${cardObj.id}`, // Maintain previous placeholder legacy support compatibility
+            isFaceDown: true,
+            isTapped: false
+        }));
 
-      // Slice card out of hand and push to public Stage configuration state
-      const [cardToStage] = hand.splice(idx, 1);
-      cardToStage.isFaceDown = false;
-      cardToStage.isTapped = false;
-      battleZone.stage = cardToStage;
+        socket.emit('serverNotice', `Deck loaded with ${deckList.length} uniquely titled cards.`);
+    });
 
-      // Trigger universal room broadcast to update public viewports
-      const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean);
-      targetSockets.forEach(sockId => {
-          const targetSock = io.sockets.sockets.get(sockId);
-          if (targetSock) {
-              let viewerRole = "spectator";
-              if (sockId === table.playerA) viewerRole = "playerA";
-              if (sockId === table.playerB) viewerRole = "playerB";
-              sendSanitizedState(targetSock, table, viewerRole);
-          }
-      });
+    socket.on('getGameState', ({ tableId, role }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit('errorMsg', 'Table not found.');
 
-      socket.emit("serverNotice", `Successfully placed card from hand index ${idx} face up into ${targetPlayer}'s stage position.`);
-  });
+        sendSanitizedState(socket, table, role);
+    });
+
+    socket.on('shuffleDeck', ({ tableId, targetPlayer }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+        const deck = table.gameState[targetPlayer]?.deck;
+        if (!deck || deck.length === 0) {
+            return socket.emit('errorMsg', `No cards found in ${targetPlayer}'s deck to shuffle.`);
+        }
+
+        deck.forEach(card => {
+            card.shuffleId = uuidv4(); // Assign a random unique string identifier
+        });
+
+        deck.sort((a, b) => a.shuffleId.localeCompare(b.shuffleId));
+
+        deck.forEach((card) => {
+            delete card.shuffleId; // Keep the game state payload clean
+        });
+
+        socket.emit('serverNotice', `Deck shuffled successfully using random UUID sort!`);
+    });
+
+    socket.on("drawCard", ({ tableId: tableId, targetPlayer: targetPlayer }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+
+        const deck = table.gameState[targetPlayer]?.deck;
+        const hand = table.gameState[targetPlayer]?.hand;
+        if (!deck || deck.length === 0) {
+            return socket.emit("errorMsg", `${targetPlayer}'s deck is empty! Cannot draw.`);
+        }
+
+        const drawnCard = deck.pop();
+        drawnCard.isFaceDown = false;
+        hand.push(drawnCard);
+
+        // Schema match choice variable config
+        const maskCard = () => ({ name: "Card Back", isFaceDown: true });
+        const ownerPayload = { targetPlayer: targetPlayer, card: drawnCard, deckCount: deck.length };
+        const opponentPayload = { targetPlayer: targetPlayer, card: maskCard(), deckCount: deck.length };
+        const spectatorPayload = { targetPlayer: targetPlayer, card: drawnCard, deckCount: deck.length };
+
+        // 1. THE FIX: Loop through playerA's socket list using .forEach()
+        if (targetPlayer === "playerA") {
+            table.playerA.forEach(socketId => io.to(socketId).emit("cardDrawnUpdate", ownerPayload));
+            table.playerB.forEach(socketId => io.to(socketId).emit("cardDrawnUpdate", opponentPayload));
+        } else {
+            table.playerA.forEach(socketId => io.to(socketId).emit("cardDrawnUpdate", opponentPayload));
+            table.playerB.forEach(socketId => io.to(socketId).emit("cardDrawnUpdate", ownerPayload));
+        }
+
+        // 2. Loop through spectator sockets safely
+        table.spectators.forEach(specId => {
+            io.to(specId).emit("cardDrawnUpdate", spectatorPayload);
+        });
+
+        socket.emit("serverNotice", `${targetPlayer} successfully drew 1 card.`);
+    });
+
+
+    socket.on("draw6Cards", ({ tableId: tableId, targetPlayer: targetPlayer }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+        const deck = table.gameState[targetPlayer]?.deck;
+        const hand = table.gameState[targetPlayer]?.hand;
+        if (!deck || deck.length < 6) {
+            return socket.emit("errorMsg", `Not enough cards in ${targetPlayer}'s deck to draw 6!`);
+        }
+
+        const maskCard = () => ({ name: "Card Back", isFaceDown: true });
+
+        for (let i = 0; i < 6; i++) {
+            const drawnCard = deck.pop();
+            drawnCard.isFaceDown = false;
+            hand.push(drawnCard);
+
+            const ownerPayload = { targetPlayer: targetPlayer, card: drawnCard, deckCount: deck.length };
+            const opponentPayload = { targetPlayer: targetPlayer, card: maskCard(), deckCount: deck.length };
+            const spectatorPayload = { targetPlayer: targetPlayer, card: drawnCard, deckCount: deck.length };
+
+            // FIX: Multi-socket array loops for opening hands
+            if (targetPlayer === "playerA") {
+                table.playerA.forEach(sid => io.to(sid).emit("cardDrawnUpdate", ownerPayload));
+                table.playerB.forEach(sid => io.to(sid).emit("cardDrawnUpdate", opponentPayload));
+            } else {
+                table.playerA.forEach(sid => io.to(sid).emit("cardDrawnUpdate", opponentPayload));
+                table.playerB.forEach(sid => io.to(sid).emit("cardDrawnUpdate", ownerPayload));
+            }
+            table.spectators.forEach(specId => {
+                io.to(specId).emit("cardDrawnUpdate", spectatorPayload);
+            });
+        }
+        socket.emit("serverNotice", `${targetPlayer} successfully drew a 6-card opening hand.`);
+    });
+
+    socket.on("executeDevMulligan", ({ tableId, targetPlayer }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+
+        const pState = table.gameState[targetPlayer];
+        if (!pState) return socket.emit("errorMsg", "Invalid player slot targeted.");
+
+        console.log(`⚡ [DEV MACRO]: Processing atomic Mulligan matrix loop for player slot: ${targetPlayer}`);
+
+        // 1. Flush hand cards face-down back into the deck's tail boundary array
+        while (pState.hand.length > 0) {
+            const card = pState.hand.pop();
+            card.isFaceDown = true;
+            card.isTapped = false;
+            pState.deck.push(card);
+        }
+
+        // 2. Execute program shuffle scramble with alphabetic UUID sorting rules
+        pState.deck.forEach(card => { card.shuffleId = uuidv4(); });
+        pState.deck.sort((a, b) => a.shuffleId.localeCompare(b.shuffleId));
+        pState.deck.forEach(card => { delete card.shuffleId; });
+
+        // 3. Pop 6 fresh top deck cards into the player hand
+        for (let i = 0; i < 6; i++) {
+            if (pState.deck.length > 0) {
+                const drawnCard = pState.deck.pop();
+                drawnCard.isFaceDown = false;
+                pState.hand.push(drawnCard);
+            }
+        }
+
+        // 4. Dispatch synchronized sanitization states across all active sockets
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean);
+        targetSockets.forEach(sockId => {
+            const targetSock = io.sockets.sockets.get(sockId);
+            if (targetSock) {
+                let viewerRole = "spectator";
+                if (sockId === table.playerA) viewerRole = "playerA";
+                if (sockId === table.playerB) viewerRole = "playerB";
+                sendSanitizedState(targetSock, table, viewerRole);
+            }
+        });
+
+        socket.emit("serverNotice", `Mulligan completed! Hand returned to deck tail, scrambled via UUID, and 6 cards redrawn.`);
+    });
+
+    socket.on("playCardFaceDown", ({ tableId, targetPlayer, handIndex }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+
+        const hand = table.gameState[targetPlayer]?.hand;
+        const battleZone = table.gameState[targetPlayer]?.battleZone;
+        if (!hand || hand.length === 0) return socket.emit("errorMsg", "Hand is empty! Cannot place a fighter card.");
+
+        const idx = parseInt(handIndex);
+        if (isNaN(idx) || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid hand position!");
+
+        // Check if slot is occupied
+        if (battleZone.fighterA.card && Object.keys(battleZone.fighterA.card).length > 0) {
+            return socket.emit("errorMsg", "Fighter A slot is already occupied!");
+        }
+
+        const [cardToPlay] = hand.splice(idx, 1);
+        cardToPlay.isFaceDown = true;
+        cardToPlay.isTapped = false;
+        battleZone.fighterA.card = cardToPlay;
+
+        // Fog of War Payloads
+        const maskCard = () => ({ name: "Card Back", isFaceDown: true });
+        const ownerPayload = { targetPlayer: targetPlayer, card: cardToPlay, handCount: hand.length };
+        const opponentPayload = { targetPlayer: targetPlayer, card: maskCard(), handCount: hand.length };
+
+        // Broadcast to matching seats
+        if (targetPlayer === "playerA") {
+            if (table.playerA) io.to(table.playerA).emit("cardPlayedFaceDownUpdate", ownerPayload);
+            if (table.playerB) io.to(table.playerB).emit("cardPlayedFaceDownUpdate", opponentPayload);
+        } else {
+            if (table.playerA) io.to(table.playerA).emit("cardPlayedFaceDownUpdate", opponentPayload);
+            if (table.playerB) io.to(table.playerB).emit("cardPlayedFaceDownUpdate", ownerPayload);
+        }
+        table.spectators.forEach(specId => io.to(specId).emit("cardPlayedFaceDownUpdate", ownerPayload));
+
+        socket.emit("serverNotice", `Placed card from hand index ${idx} face down into ${targetPlayer}'s fighterA position.`);
+    });
+
+    socket.on("flipCardFaceUp", ({ tableId, targetPlayer }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+
+        const fighterACard = table.gameState[targetPlayer]?.battleZone?.fighterA?.card;
+        if (!fighterACard || Object.keys(fighterACard).length === 0) {
+            return socket.emit("errorMsg", "No card found in fighterA to flip face up!");
+        }
+
+        fighterACard.isFaceDown = false;
+
+        const payload = { targetPlayer: targetPlayer, card: fighterACard };
+        if (table.playerA) io.to(table.playerA).emit("cardFlippedFaceUpUpdate", payload);
+        if (table.playerB) io.to(table.playerB).emit("cardFlippedFaceUpUpdate", payload);
+        table.spectators.forEach(specId => io.to(specId).emit("cardFlippedFaceUpUpdate", payload));
+
+        socket.emit("serverNotice", `Flipped ${targetPlayer}'s active fighterA card face up.`);
+    });
+
+
+    socket.on('placeDeckCardToStack', ({ tableId, targetPlayer, targetSlot }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit('errorMsg', 'Table not found.');
+        if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') return socket.emit('errorMsg', 'Invalid target.');
+
+        const deck = table.gameState[targetPlayer]?.deck;
+        const battleZone = table.gameState[targetPlayer]?.battleZone;
+
+        if (!deck || deck.length === 0) {
+            return socket.emit('errorMsg', `Your deck is empty!`);
+        }
+
+        if (targetSlot !== 'fighterA' && targetSlot !== 'fighterB') {
+            return socket.emit('errorMsg', 'Invalid target stack slot.');
+        }
+
+        // Top of deck stack pops out from the end of the array tail (.pop())
+        const cardToStack = deck.pop();
+        cardToStack.isFaceDown = true;
+
+        // Appends to the end (top) of the stack array
+        if (!battleZone[targetSlot].faceDownStack) {
+            battleZone[targetSlot].faceDownStack = [];
+        }
+        battleZone[targetSlot].faceDownStack.push(cardToStack);
+
+        // Dynamic notifications: Everyone gets a masked update except spectators
+        const maskCard = () => ({ name: "Card Back", isFaceDown: true });
+        const maskedStack = battleZone[targetSlot].faceDownStack.map(maskCard);
+
+        const activePlayersPayload = {
+            targetPlayer,
+            targetSlot,
+            updatedStack: maskedStack,
+            deckCount: deck.length // <-- FIX: Package the remaining deck count here
+        };
+
+        const spectatorPayload = {
+            targetPlayer,
+            targetSlot,
+            updatedStack: battleZone[targetSlot].faceDownStack,
+            deckCount: deck.length // <-- FIX: Package the remaining deck count here
+        };
+
+        if (table.playerA) io.to(table.playerA).emit('cardStackedUpdate', activePlayersPayload);
+        if (table.playerB) io.to(table.playerB).emit('cardStackedUpdate', activePlayersPayload);
+
+        table.spectators.forEach(specId => {
+            io.to(specId).emit('cardStackedUpdate', spectatorPayload);
+        });
+
+        socket.emit('serverNotice', `Moved card from deck to ${targetSlot}'s face-down stack.`);
+    });
+
+    socket.on('playCardToSupport', ({ tableId, targetPlayer, handIndex }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+        const hand = table.gameState[targetPlayer]?.hand;
+        const support = table.gameState[targetPlayer]?.support;
+
+        if (!hand || hand.length === 0) {
+            return socket.emit('errorMsg', `Hand is empty! No card to play.`);
+        }
+
+        const idx = parseInt(handIndex);
+        if (isNaN(idx) || idx < 0 || idx >= hand.length) {
+            return socket.emit('errorMsg', `Invalid hand position! Choose an index between 0 and ${hand.length - 1}.`);
+        }
+
+        // Explicitly remove the card at that index from the hand array
+        const [cardToPlay] = hand.splice(idx, 1);
+
+        // Support cards are played face up on the table
+        cardToPlay.isFaceDown = false;
+
+        // Append to the end of the support array lane
+        support.push(cardToPlay);
+
+        // Build the payload (since it's a public zone, everybody gets the raw card info)
+        const payload = {
+            targetPlayer,
+            card: cardToPlay,
+            supportCount: support.length,
+            handCount: hand.length
+        };
+
+        // Broadcast the live update instantly to all table positions
+        if (table.playerA) io.to(table.playerA).emit('cardPlayedToSupportUpdate', payload);
+        if (table.playerB) io.to(table.playerB).emit('cardPlayedToSupportUpdate', payload);
+        table.spectators.forEach(specId => {
+            io.to(specId).emit('cardPlayedToSupportUpdate', payload);
+        });
+
+        socket.emit('serverNotice', `Played card from hand index ${idx} face up into ${targetPlayer}'s support zone.`);
+    });
+
+    socket.on('toggleCardTap', ({ tableId, targetPlayer, zone, supportIndex }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+        const battleZone = table.gameState[targetPlayer]?.battleZone;
+        const support = table.gameState[targetPlayer]?.support;
+        let targetCard = null;
+
+        // 1. Locate the physical target card based on the user's selected zone criteria
+        if (zone === 'fighterA') {
+            targetCard = battleZone?.fighterA?.card;
+        } else if (zone === 'fighterB') {
+            targetCard = battleZone?.fighterB?.card;
+        } else if (zone === 'stage') {
+            // 🌟 ADDED STAGE LAYER EVALUATION
+            targetCard = battleZone?.stage;
+        } else if (zone === 'support') {
+            const idx = parseInt(supportIndex);
+            if (!support || isNaN(idx) || idx < 0 || idx >= support.length) {
+                return socket.emit('errorMsg', 'Invalid support lane index.');
+            }
+            targetCard = support[idx];
+        }
+
+        if (!targetCard || Object.keys(targetCard).length === 0) {
+            return socket.emit('errorMsg', `No card found in ${zone} to tap/untap.`);
+        }
+
+        // 2. Flip the boolean value state parameter
+        targetCard.isTapped = !targetCard.isTapped;
+
+        // 3. Construct a public broadcast payload notice
+        const payload = {
+            targetPlayer,
+            zone,
+            supportIndex: zone === 'support' ? parseInt(supportIndex) : null,
+            isTapped: targetCard.isTapped
+        };
+
+        if (table.playerA) io.to(table.playerA).emit('cardTapUpdated', payload);
+        if (table.playerB) io.to(table.playerB).emit('cardTapUpdated', payload);
+        table.spectators.forEach(specId => io.to(specId).emit('cardTapUpdated', payload));
+
+        socket.emit('serverNotice', `Toggled tap state for card in ${zone} to: ${targetCard.isTapped}`);
+    });
+
+    socket.on('playCardToFighter', ({ tableId, targetPlayer, handIndex, targetSlot }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+        const hand = table.gameState[targetPlayer]?.hand;
+        const battleZone = table.gameState[targetPlayer]?.battleZone;
+
+        if (!hand || hand.length === 0) {
+            return socket.emit('errorMsg', `Hand is empty! No card to play.`);
+        }
+
+        const idx = parseInt(handIndex);
+        if (isNaN(idx) || idx < 0 || idx >= hand.length) {
+            return socket.emit('errorMsg', `Invalid hand position! Choose an index between 0 and ${hand.length - 1}.`);
+        }
+
+        if (targetSlot !== 'fighterA' && targetSlot !== 'fighterB') {
+            return socket.emit('errorMsg', 'Invalid fighter target slot.');
+        }
+
+        // Check if slot is already occupied
+        if (battleZone[targetSlot].card && Object.keys(battleZone[targetSlot].card).length > 0) {
+            return socket.emit('errorMsg', `${targetSlot} is already occupied! Move or discard the current card first.`);
+        }
+
+        // Extract card from hand array
+        const [cardToPlay] = hand.splice(idx, 1);
+
+        // Normal mid-game plays from hand onto the field are face-up
+        cardToPlay.isFaceDown = false;
+        cardToPlay.isTapped = false; // Freshly played cards start untapped
+
+        // Commit to the target battle slot object
+        battleZone[targetSlot].card = cardToPlay;
+
+        // Public zone payload data
+        const payload = {
+            targetPlayer,
+            targetSlot,
+            card: cardToPlay,
+            handCount: hand.length
+        };
+
+        // Broadcast update across the room
+        if (table.playerA) io.to(table.playerA).emit('cardPlayedToFighterUpdate', payload);
+        if (table.playerB) io.to(table.playerB).emit('cardPlayedToFighterUpdate', payload);
+        table.spectators.forEach(specId => io.to(specId).emit('cardPlayedToFighterUpdate', payload));
+
+        socket.emit('serverNotice', `Played card from hand index ${idx} face up into ${targetPlayer}'s ${targetSlot} slot.`);
+    });
+
+    socket.on('moveFighterToDefeated', ({ tableId, targetPlayer, slot }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+        const playerState = table.gameState[targetPlayer];
+        if (!playerState) return socket.emit('errorMsg', 'Player state not found.');
+
+        const battleZone = playerState.battleZone;
+        const defeatedZone = playerState.defeated;
+
+        if (slot !== 'fighterA' && slot !== 'fighterB') {
+            return socket.emit('errorMsg', 'Invalid fighter slot selection.');
+        }
+
+        const targetCard = battleZone[slot].card;
+        if (!targetCard || Object.keys(targetCard).length === 0) {
+            return socket.emit('errorMsg', `No card found in ${slot} to move to defeated.`);
+        }
+
+        // Shift card off the battle field slot out into public defeated pile lane
+        battleZone[slot].card = null;
+        targetCard.isFaceDown = false;
+        targetCard.isTapped = false;
+        defeatedZone.push(targetCard);
+
+        const payload = {
+            targetPlayer,
+            slot,
+            card: targetCard,
+            defeatedCount: defeatedZone.length
+        };
+
+        if (table.playerA) io.to(table.playerA).emit('cardMovedToDefeatedZone', payload);
+        if (table.playerB) io.to(table.playerB).emit('cardMovedToDefeatedZone', payload);
+        table.spectators.forEach(specId => io.to(specId).emit('cardMovedToDefeatedZone', payload));
+
+        socket.emit('serverNotice', `Moved card from ${slot} to ${targetPlayer}'s defeated zone pile.`);
+    });
+
+    socket.on('adjustDefeatedPoints', ({ tableId, targetPlayer, amount }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+        const playerState = table.gameState[targetPlayer];
+        if (!playerState) return socket.emit('errorMsg', 'Player state not found.');
+
+        // Adjust points, ensuring they never drop below zero
+        playerState.defeatedPoints = Math.max(0, playerState.defeatedPoints + parseInt(amount));
+
+        const payload = {
+            targetPlayer,
+            totalDefeatedPoints: playerState.defeatedPoints,
+            isEliminated: playerState.defeatedPoints >= 10
+        };
+
+        if (table.playerA) io.to(table.playerA).emit('defeatedPointsTickedUpdate', payload);
+        if (table.playerB) io.to(table.playerB).emit('defeatedPointsTickedUpdate', payload);
+        table.spectators.forEach(specId => io.to(specId).emit('defeatedPointsTickedUpdate', payload));
+
+        let notice = `${targetPlayer}'s Defeated Points updated to: ${playerState.defeatedPoints}`;
+        if (playerState.defeatedPoints >= 10) notice += " 🚨 CRITICAL LIMIT HIT! Player Loses!";
+        socket.emit('serverNotice', notice);
+    });
+
+    socket.on('discardCardFromHand', ({ tableId, targetPlayer, handIndex }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+        const hand = table.gameState[targetPlayer]?.hand;
+        const discard = table.gameState[targetPlayer]?.discard;
+
+        if (!hand || hand.length === 0) {
+            return socket.emit('errorMsg', `Hand is empty! No card to discard.`);
+        }
+
+        const idx = parseInt(handIndex);
+        if (isNaN(idx) || idx < 0 || idx >= hand.length) {
+            return socket.emit('errorMsg', `Invalid hand position! Choose an index between 0 and ${hand.length - 1}.`);
+        }
+
+        // Extract the card from the hand array
+        const [cardToDiscard] = hand.splice(idx, 1);
+
+        // Cards in the discard pile are public and face up
+        cardToDiscard.isFaceDown = false;
+        cardToDiscard.isTapped = false; // Reset orientation when discarded
+
+        // Append to the end of the public discard pile array stack
+        discard.push(cardToDiscard);
+
+        // Build public payload broadcast
+        const payload = {
+            targetPlayer,
+            card: cardToDiscard,
+            discardCount: discard.length,
+            handCount: hand.length
+        };
+
+        if (table.playerA) io.to(table.playerA).emit('cardDiscardedUpdate', payload);
+        if (table.playerB) io.to(table.playerB).emit('cardDiscardedUpdate', payload);
+        table.spectators.forEach(specId => io.to(specId).emit('cardDiscardedUpdate', payload));
+
+        socket.emit('serverNotice', `Discarded card from hand index ${idx} to ${targetPlayer}'s discard pile.`);
+    });
+
+    socket.on('playHandToTopDeck', ({ tableId, targetPlayer, handIndex }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+        const hand = table.gameState[targetPlayer]?.hand;
+        const deck = table.gameState[targetPlayer]?.deck;
+
+        if (!hand || hand.length === 0) return socket.emit('errorMsg', 'Hand is empty!');
+
+        const idx = parseInt(handIndex);
+        if (isNaN(idx) || idx < 0 || idx >= hand.length) {
+            return socket.emit('errorMsg', 'Invalid hand position.');
+        }
+
+        // Splice the card from the hand array
+        const [cardToDeck] = hand.splice(idx, 1);
+        cardToDeck.isFaceDown = true; // Enforce face down parameter
+
+        // Standardized: Top of the deck stack is the END of the array
+        deck.push(cardToDeck);
+
+        // Emit minimal targeted layout notifications
+        const maskCard = () => ({ name: "Card Back", isFaceDown: true });
+        const standardPayload = { targetPlayer, card: maskCard(), deckCount: deck.length, handCount: hand.length, location: 'top' };
+        const spectatorPayload = { targetPlayer, card: cardToDeck, deckCount: deck.length, handCount: hand.length, location: 'top' };
+
+        if (table.playerA) io.to(table.playerA).emit('handToDeckUpdate', standardPayload);
+        if (table.playerB) io.to(table.playerB).emit('handToDeckUpdate', standardPayload);
+        table.spectators.forEach(id => io.to(id).emit('handToDeckUpdate', spectatorPayload));
+
+        socket.emit('serverNotice', `Moved card from hand index ${idx} face down to the TOP of the deck.`);
+    });
+
+    socket.on('playHandToBottomDeck', ({ tableId, targetPlayer, handIndex }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+        const hand = table.gameState[targetPlayer]?.hand;
+        const deck = table.gameState[targetPlayer]?.deck;
+
+        if (!hand || hand.length === 0) return socket.emit('errorMsg', 'Hand is empty!');
+
+        const idx = parseInt(handIndex);
+        if (isNaN(idx) || idx < 0 || idx >= hand.length) {
+            return socket.emit('errorMsg', 'Invalid hand position.');
+        }
+
+        const [cardToDeck] = hand.splice(idx, 1);
+        cardToDeck.isFaceDown = true;
+
+        // Standardized: Bottom of the deck stack is index 0 (the BEGINNING) of the array
+        deck.unshift(cardToDeck);
+
+        const maskCard = () => ({ name: "Card Back", isFaceDown: true });
+        const standardPayload = { targetPlayer, card: maskCard(), deckCount: deck.length, handCount: hand.length, location: 'bottom' };
+        const spectatorPayload = { targetPlayer, card: cardToDeck, deckCount: deck.length, handCount: hand.length, location: 'bottom' };
+
+        if (table.playerA) io.to(table.playerA).emit('handToDeckUpdate', standardPayload);
+        if (table.playerB) io.to(table.playerB).emit('handToDeckUpdate', standardPayload);
+        table.spectators.forEach(id => io.to(id).emit('handToDeckUpdate', spectatorPayload));
+
+        socket.emit('serverNotice', `Moved card from hand index ${idx} face down to the BOTTOM of the deck.`);
+    });
+
+    socket.on('flipAndDiscardFromStack', ({ tableId, targetPlayer, targetSlot }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit('errorMsg', 'Table not found.');
+        if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') return socket.emit('errorMsg', 'Invalid target.');
+
+        const battleZone = table.gameState[targetPlayer]?.battleZone;
+        const discard = table.gameState[targetPlayer]?.discard;
+
+        if (targetSlot !== 'fighterA' && targetSlot !== 'fighterB') {
+            return socket.emit('errorMsg', 'Invalid stack slot selection.');
+        }
+
+        const stack = battleZone[targetSlot]?.faceDownStack;
+        if (!stack || stack.length === 0) {
+            return socket.emit('errorMsg', `The face-down stack next to ${targetSlot} is completely empty!`);
+        }
+
+        // Peel the true topmost item off the end of the array tail (.pop())
+        const poppedCard = stack.pop();
+        poppedCard.isFaceDown = false;
+        poppedCard.isTapped = false;
+
+        // Append directly onto the public discard pile stack (.push())
+        discard.push(poppedCard);
+
+        const maskCard = () => ({ name: "Card Back", isFaceDown: true });
+        const maskedStack = stack.map(maskCard);
+
+        const activePlayersPayload = { targetPlayer, targetSlot, updatedStack: maskedStack, updatedDiscard: discard };
+        const spectatorPayload = { targetPlayer, targetSlot, updatedStack: stack, updatedDiscard: discard };
+
+        if (table.playerA) io.to(table.playerA).emit('stackFlippedAndDiscardedUpdate', activePlayersPayload);
+        if (table.playerB) io.to(table.playerB).emit('stackFlippedAndDiscardedUpdate', activePlayersPayload);
+        table.spectators.forEach(specId => io.to(specId).emit('stackFlippedAndDiscardedUpdate', spectatorPayload));
+
+        socket.emit('serverNotice', `Peeled top card from ${targetPlayer}'s ${targetSlot} stack and flipped it face up into the discard pile.`);
+    });
+
+    socket.on("recycleDiscardToDeck", ({tableId: tableId, targetPlayer: targetPlayer}) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+        const playerState = table.gameState[targetPlayer];
+        if (!playerState) return socket.emit("errorMsg", `Player state not found.`);
+
+        const deck = playerState.deck;
+        const discard = playerState.discard;
+        if (!discard || discard.length === 0) {
+            return socket.emit("errorMsg", `Discard pile is empty! Nothing to recycle.`);
+        }
+
+        const recycledCount = discard.length;
+        while (discard.length > 0) {
+            const card = discard.pop();
+            card.isFaceDown = true;
+            card.isTapped = false;
+            deck.push(card);
+        }
+
+        deck.forEach(card => { card.shuffleId = uuidv4() });
+        deck.sort((a, b) => a.shuffleId.localeCompare(b.shuffleId));
+        deck.forEach(card => { delete card.shuffleId });
+
+        const cleanPayload = {targetPlayer: targetPlayer, deckCount: deck.length, discardCount: 0, updatedDiscard: []};
+
+        // FIX: Multi-socket array loops for discard recycling
+        table.playerA.forEach(sid => io.to(sid).emit("discardRecycledUpdate", cleanPayload));
+        table.playerB.forEach(sid => io.to(sid).emit("discardRecycledUpdate", cleanPayload));
+        table.spectators.forEach(sid => io.to(sid).emit("discardRecycledUpdate", cleanPayload));
+
+        socket.emit("serverNotice", `Recycled all ${recycledCount} cards from discard to deck face down, and fully shuffled the deck!`);
+    });
+
+    socket.on('moveDiscardToDefeated', ({ tableId, targetPlayer, discardIndex }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit('errorMsg', 'Table not found.');
+
+        const playerState = table.gameState[targetPlayer];
+        if (!playerState) return socket.emit('errorMsg', 'Player state structural map not found.');
+
+        const discard = playerState.discard;
+        const defeated = playerState.defeated;
+
+        if (!discard || discard.length === 0) {
+            return socket.emit('errorMsg', 'Discard pile is completely empty!');
+        }
+
+        const idx = parseInt(discardIndex);
+        if (isNaN(idx) || idx < 0 || idx >= discard.length) {
+            return socket.emit('errorMsg', `Invalid discard index choice! Please choose between 0 and ${discard.length - 1}.`);
+        }
+
+        // 1. Extract the card from the discard pile array using index splicing rules
+        const [retiredCard] = discard.splice(idx, 1);
+
+        // 2. Clear face-down tracking properties for public view
+        retiredCard.isFaceDown = false;
+        retiredCard.isTapped = false;
+
+        // 3. Commit cleanly to the defeated array pile tail bounds
+        defeated.push(retiredCard);
+
+        // 4. Construct synchronized payloads to broadcast down the network pipes
+        const payload = {
+            targetPlayer,
+            card: retiredCard,
+            discardCount: discard.length,
+            defeatedCount: defeated.length
+        };
+
+        // Broadcast the state update instantly to update everyone's grid counts
+        if (table.playerA) io.to(table.playerA).emit('discardToDefeatedUpdate', payload);
+        if (table.playerB) io.to(table.playerB).emit('discardToDefeatedUpdate', payload);
+        table.spectators.forEach(id => io.to(id).emit('discardToDefeatedUpdate', payload));
+
+        socket.emit('serverNotice', `Successfully extracted card from discard index ${idx} to defeated zone.`);
+    });
+
+    socket.on("checkTableStatus", ({ tableId: tableId, role: role }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+
+        const targetPlayerState = table.gameState[role];
+
+        // Evaluate if ANY zone contains cards to determine if a deck was loaded for this match
+        let hasDeckLoaded = false;
+        if (targetPlayerState) {
+            const bZone = targetPlayerState.battleZone || {};
+
+            const hasDeckCards = !!(targetPlayerState.deck && targetPlayerState.deck.length > 0);
+            const hasHandCards = !!(targetPlayerState.hand && targetPlayerState.hand.length > 0);
+            const hasDiscardCards = !!(targetPlayerState.discard && targetPlayerState.discard.length > 0);
+            const hasSupportCards = !!(targetPlayerState.support && targetPlayerState.support.length > 0);
+            const hasDefeatedCards = !!(targetPlayerState.defeated && targetPlayerState.defeated.length > 0);
+
+            const hasFighterA = !!(bZone.fighterA && bZone.fighterA.card);
+            const hasFighterB = !!(bZone.fighterB && bZone.fighterB.card);
+            const hasStage = !!bZone.stage;
+
+            const hasStackA = !!(bZone.fighterA && bZone.fighterA.faceDownStack && bZone.fighterA.faceDownStack.length > 0);
+            const hasStackB = !!(bZone.fighterB && bZone.fighterB.faceDownStack && bZone.fighterB.faceDownStack.length > 0);
+
+            hasDeckLoaded = hasDeckCards || hasHandCards || hasDiscardCards ||
+                hasSupportCards || hasDefeatedCards || hasFighterA ||
+                hasFighterB || hasStage || hasStackA || hasStackB;
+        }
+
+        socket.emit("tableStatusResponse", {
+            tableId: table.id,
+            role: role,
+            hasDeckLoaded: hasDeckLoaded
+        });
+    });
+
+    /**
+     * Action: Sets the target player's end game proposal flag to true.
+     * If both players agree, it hard-scrubs the table state and demotes players to spectators.
+     */
+    socket.on('signalEndGame', ({ tableId, targetPlayer }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit('errorMsg', 'Table not found.');
+        if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') {
+            return socket.emit('errorMsg', 'Invalid player role targeted.');
+        }
+
+        // 1. Commit the pending intent signal flag to the staging map
+        table.endGameSignals[targetPlayer] = true;
+
+        // Broadcast status to the developer stream and active clients
+        const signalStatus = `Player A: ${table.endGameSignals.playerA ? '🚨' : '🟢'} | Player B: ${table.endGameSignals.playerB ? '🚨' : '🟢'}`;
+        io.emit('serverNotice', `[TABLE ${tableId} ADMIN]: Match end proposed. Current matrix: ${signalStatus}`);
+
+        // Dispatch a targeted logging update for the developer mode console listeners
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean);
+        targetSockets.forEach(sockId => {
+            const sock = io.sockets.sockets.get(sockId);
+            if (sock) sock.emit('endGameSignalUpdate', { tableId: table.id, ...table.endGameSignals });
+        });
+
+        // 2. RESOLUTION RESOLVER: Check if BOTH active seats have consented to clear the table
+        if (table.endGameSignals.playerA && table.endGameSignals.playerB) {
+            console.log(`🧼 [SYSTEM RESET TRIPPED]: Mutual consent achieved on Table ${tableId}. Clearing board...`);
+
+            // Demote active seats to spectators list if they are currently connected
+            if (table.playerA) {
+                table.spectators.push(table.playerA);
+                table.playerA = null;
+            }
+            if (table.playerB) {
+                table.spectators.push(table.playerB);
+                table.playerB = null;
+            }
+
+            // Reset staging environment flags back to default factory baseline
+            table.endGameSignals.playerA = false;
+            table.endGameSignals.playerB = false;
+
+            // Hard-scrub all game state nested data structures
+            const baselineState = () => ({
+                hand: [], deck: [], extraDeck: [], discard: [], support: [], defeated: [],
+                defeatedPoints: 0,
+                battleZone: {
+                    fighterA: { card: null, faceDownStack: [] },
+                    fighterB: { card: null, faceDownStack: [] },
+                    stage: null
+                }
+            });
+
+            table.gameState.playerA = baselineState();
+            table.gameState.playerB = baselineState();
+
+            // 3. MULTI-CHANNEL BROADCAST RIPPLE EFFECT
+            // Send specialized developer logger packet
+            targetSockets.forEach(sockId => {
+                const sock = io.sockets.sockets.get(sockId);
+                if (!sock) return;
+
+                sock.emit('tableClearedReset', { tableId: table.id });
+
+                // Force a soft redraw pass. Because players are now spectators, 
+                // they will instantly see a pristine, completely blank screen area.
+                let viewerRole = 'spectator';
+                if (sockId === table.playerA) viewerRole = 'playerA';
+                if (sockId === table.playerB) viewerRole = 'playerB';
+                sendSanitizedState(sock, table, viewerRole);
+            });
+        }
+    });
+
+    /**
+     * Action: Revokes a previously submitted end-game signal, returning the flag to false.
+     */
+    socket.on('revokeEndGame', ({ tableId, targetPlayer }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit('errorMsg', 'Table not found.');
+        if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') {
+            return socket.emit('errorMsg', 'Invalid player role targeted.');
+        }
+
+        // Retract the signal flag back to idle status
+        table.endGameSignals[targetPlayer] = false;
+
+        const signalStatus = `Player A: ${table.endGameSignals.playerA ? '🚨' : '🟢'} | Player B: ${table.endGameSignals.playerB ? '🚨' : '🟢'}`;
+        io.emit('serverNotice', `[TABLE ${tableId} ADMIN]: Match end proposal revoked. Current matrix: ${signalStatus}`);
+
+        // Update logging streams across developer consoles
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean);
+        targetSockets.forEach(sockId => {
+            const sock = io.sockets.sockets.get(sockId);
+            if (sock) sock.emit('endGameSignalUpdate', { tableId: table.id, ...table.endGameSignals });
+        });
+    });
+
+    socket.on("playCardToStage", ({ tableId, targetPlayer, handIndex }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+
+        const hand = table.gameState[targetPlayer]?.hand;
+        const battleZone = table.gameState[targetPlayer]?.battleZone;
+        if (!hand || hand.length === 0) {
+            return socket.emit("errorMsg", `Hand is completely empty! Cannot place card onto the stage.`);
+        }
+
+        const idx = parseInt(handIndex);
+        if (isNaN(idx) || idx < 0 || idx >= hand.length) {
+            return socket.emit("errorMsg", `Invalid hand position index! Choose between 0 and ${hand.length - 1}.`);
+        }
+
+        // Verify if target stage slot is currently empty
+        if (battleZone.stage && Object.keys(battleZone.stage).length > 0) {
+            return socket.emit("errorMsg", "The Stage zone position is already occupied! Discard or move it first.");
+        }
+
+        // Slice card out of hand and push to public Stage configuration state
+        const [cardToStage] = hand.splice(idx, 1);
+        cardToStage.isFaceDown = false;
+        cardToStage.isTapped = false;
+        battleZone.stage = cardToStage;
+
+        // Trigger universal room broadcast to update public viewports
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean);
+        targetSockets.forEach(sockId => {
+            const targetSock = io.sockets.sockets.get(sockId);
+            if (targetSock) {
+                let viewerRole = "spectator";
+                if (sockId === table.playerA) viewerRole = "playerA";
+                if (sockId === table.playerB) viewerRole = "playerB";
+                sendSanitizedState(targetSock, table, viewerRole);
+            }
+        });
+
+        socket.emit("serverNotice", `Successfully placed card from hand index ${idx} face up into ${targetPlayer}'s stage position.`);
+    });
 
 });
 
