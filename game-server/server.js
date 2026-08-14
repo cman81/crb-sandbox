@@ -124,18 +124,22 @@ function leaveAll(socketId) {
 }
 
 io.on("connection", socket => {
-    socket.on("joinTable", ({ tableId: tableId, role: role }) => {
+    socket.on("joinTable", ({tableId: tableId, role: role}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
+        
+        // 1. Wipe this socket ID from all tables completely before seating it
+        leaveAll(socket.id); 
 
-        leaveAll(socket.id);
-
-        // 2. REFACTOR: Push sockets into array clusters instead of overwriting a single value
+        // 2. Clear out any ghost duplicates from this target seat list before pushing
         if (role === "playerA") {
+            table.playerA = table.playerA.filter(id => id !== socket.id);
             table.playerA.push(socket.id);
         } else if (role === "playerB") {
+            table.playerB = table.playerB.filter(id => id !== socket.id);
             table.playerB.push(socket.id);
         } else if (role === "spectator") {
+            table.spectators = table.spectators.filter(id => id !== socket.id);
             table.spectators.push(socket.id);
         } else {
             return socket.emit("errorMsg", "Invalid role definition.");
@@ -144,11 +148,11 @@ io.on("connection", socket => {
         if (role === "playerA" || role === "playerB") {
             table.endGameSignals[role] = false;
         }
-
-        console.log(`📡 [STAGE 2 SEAT]: Added socket ${socket.id} to the list for ${role}`);
+        console.log(`📡 [STAGE 2 SEAT]: Added socket ${socket.id} uniquely to the list for ${role}`);
     });
 
     socket.on("leaveTable", () => leaveAll(socket.id));
+
     socket.on("disconnect", () => leaveAll(socket.id));
 
     socket.on('loadDeck', ({ tableId, targetPlayer, deckList }) => {
@@ -748,20 +752,17 @@ io.on("connection", socket => {
         // 2. RESOLUTION RESOLVER: Check if BOTH active seats have consented to clear the table
         if (table.endGameSignals.playerA && table.endGameSignals.playerB) {
             console.log(`🧼 [SYSTEM RESET TRIPPED]: Mutual consent achieved on Table ${tableId}. Clearing board...`);
-
-            // Demote active seats to spectators list if they are currently connected
-            if (table.playerA) {
-                table.spectators.push(table.playerA);
-                table.playerA = null;
-            }
-            if (table.playerB) {
-                table.spectators.push(table.playerB);
-                table.playerB = null;
-            }
-
-            // Reset staging environment flags back to default factory baseline
+            
+            // Use spread syntax to cleanly flatten multi-socket arrays into spectators
+            if (Array.isArray(table.playerA)) table.spectators.push(...table.playerA);
+            if (Array.isArray(table.playerB)) table.spectators.push(...table.playerB);
+            
+            // RESET SEATS TO RE-INITIALIZED ARRAYS, NEVER NULL
+            table.playerA = [];
+            table.playerB = [];
             table.endGameSignals.playerA = false;
             table.endGameSignals.playerB = false;
+
 
             // Hard-scrub all game state nested data structures
             const baselineState = () => ({

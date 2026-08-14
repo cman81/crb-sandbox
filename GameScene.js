@@ -194,20 +194,43 @@ class GameScene extends Phaser.Scene {
             }
         });
 
-        this.socket.on('discardToDefeatedUpdate', (defeatEvent) => {
+        this.socket.on("discardToDefeatedUpdate", defeatEvent => {
             console.log(`📡 [NETWORK RECEIVE]: discardToDefeatedUpdate caught for ${defeatEvent.targetPlayer}`);
             if (!this.lastReceivedState) return;
+            
             const targetState = this.lastReceivedState[defeatEvent.targetPlayer];
-            if (targetState) {
-                if (Array.isArray(targetState.discard)) {
-                    // Update discard length to match server context
-                    targetState.discard.length = defeatEvent.discardCount; 
-                }
-                if (!Array.isArray(targetState.defeated)) targetState.defeated = [];
-                targetState.defeated.push(defeatEvent.card);
+            if (targetState && Array.isArray(targetState.discard)) {
                 
-                // Re-render the visual display terminal loop state instantly
+                // FIX: Find the exact card instance inside your local discard cache using its unique database ID string
+                const localTargetIdx = targetState.discard.findIndex(c => c.id === defeatEvent.card.id);
+                
+                if (localTargetIdx !== -1) {
+                    // Cleanly slice the specific card out of your local cache array memory space
+                    targetState.discard.splice(localTargetIdx, 1);
+                    console.log(`🧼 [ENGINE VISUAL SYNC]: Cleaned card ${defeatEvent.card.id} out of local discard cache.`);
+                } else {
+                    // Fallback: If a duplicate card mismatch occurs, fallback to matching the server's count parameters
+                    targetState.discard.length = defeatEvent.discardCount;
+                }
+
+                // Synchronize the defeated pile array memory listings
+                if (!Array.isArray(targetState.defeated)) targetState.defeated = [];
+                
+                // Double-check to prevent duplicate push loops
+                const isAlreadyDefeated = targetState.defeated.some(c => c.id === defeatEvent.card.id);
+                if (!isAlreadyDefeated) {
+                    targetState.defeated.push(defeatEvent.card);
+                }
+
+                this.input.clear(this.drawerContainer);
+
+                // Force a total layout refresh pass to sync the canvas graphics instantly
                 this.handleStateRenderingLoop(this.lastReceivedState);
+
+                // If the drawer menu matches the modified player, repaint its interior grid items
+                if (this.drawerState && this.drawerState.isOpen && this.drawerState.playerKey === defeatEvent.targetPlayer) {
+                    this.renderDrawerContents();
+                }
             }
         });
 
@@ -574,6 +597,27 @@ class GameScene extends Phaser.Scene {
                 gameObject.setDepth(0);
             }
         });
+
+        this.input.on('pointerdown', (pointer) => {
+            if (this.role === "spectator" || !this.lastReceivedState) return;
+
+            // Isolate the physical boundary coordinates for your local deck
+            const deckCoord = this.fieldCoordinates.local.deck;
+            const halfW = this.cardWidth / 2;
+            const halfH = this.cardHeight / 2;
+
+            // Check if the click occurred exactly within the local deck's rectangular bounds
+            if (pointer.x >= deckCoord.x - halfW && pointer.x <= deckCoord.x + halfW &&
+                pointer.y >= deckCoord.y - halfH && pointer.y <= deckCoord.y + halfH) {
+                
+                // Prevent event propagation if an overlay/drawer is open
+                if (this.drawerState && this.drawerState.isOpen) return;
+
+                console.log("🎲 [DECOUPLED INPUT]: Clean singular deck draw event issued via permanent listener.");
+                this.socket.emit("drawCard", { tableId: this.tableId, targetPlayer: this.role });
+            }
+        });
+
 
     }
 
@@ -1033,48 +1077,32 @@ class GameScene extends Phaser.Scene {
     /**
      * Handles deck size indicators and single-card draw hitboxes.
      */
-    renderDeckZoneStack(point, deckArray, isLocalSeat) {
+    renderDeckZoneStack(point, deckArray, isLocalSeat){
         const totalDeckCount = deckArray ? deckArray.length || 0 : 0;
         const countYOffset = -this.cardHeight / 2 - 15;
-
-        // 1. Render the structural deck size tracking label text
+        
         this.add.text(point.x, point.y + countYOffset, `DECK: ${totalDeckCount}`, {
             fontSize: "11px",
             fontFamily: "monospace",
             fill: "#64748b",
             fontWeight: "bold"
-        }).setOrigin(0.5);
+        }).setOrigin(.5);
 
-        // 2. Setup the unified interaction hit zone for the player seat
-        if (isLocalSeat && this.role !== "spectator") {
-            if (this.localDeckHitZone) this.localDeckHitZone.destroy();
-            
-            // This zone handles ALL deck mouse click processing cleanly
-            this.localDeckHitZone = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
-            this.localDeckHitZone.setInteractive({ useHandCursor: true });
-            
-            this.localDeckHitZone.on("pointerdown", () => {
-                console.log("🎲 [ENGINE CLICK]: Clean singular deck draw event issued.");
-                this.socket.emit("drawCard", { tableId: this.tableId, targetPlayer: this.role });
-            });
-
-            // Setup untap macro helper button layout
+        if(isLocalSeat && this.role !== "spectator"){
             const untapStyle = { fontSize: "11px", fontFamily: "monospace", fill: "#10b981", fontWeight: "bold", backgroundColor: "#064e3b", padding: { x: 8, y: 4 } };
-            const untapAllBtn = this.add.text(point.x - 75, point.y + countYOffset, "UNTAP ALL", untapStyle).setOrigin(0.5);
+            const untapAllBtn = this.add.text(point.x - 75, point.y + countYOffset, "UNTAP ALL", untapStyle).setOrigin(.5);
             this.fieldGraphics.lineStyle(1, 1096065, .5);
             this.fieldGraphics.strokeRect(untapAllBtn.x - untapAllBtn.width / 2, untapAllBtn.y - untapAllBtn.height / 2, untapAllBtn.width, untapAllBtn.height);
-            
             untapAllBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
                 this.executeUntapAllMacro();
             });
         }
 
-        // 3. Render visual deck pile asset placeholder using your fallback layout manager
-        if (totalDeckCount > 0) {
-            // FIX: Simply draw the card back. DO NOT call .setInteractive() or attach pointer listeners here!
+        if(totalDeckCount > 0){
             this.renderCardSprite(point.x, point.y, { title: "Card Back", isFaceDown: true }, false);
         }
     }
+
 
     /**
      * Safely renders the topmost item of a public pile lane face up on the grid coordinates.
@@ -1083,9 +1111,9 @@ class GameScene extends Phaser.Scene {
         if (pileArray && pileArray.length > 0) {
             const topCard = pileArray[pileArray.length - 1];
             if (topCard) {
-                // ROUTING FIX: Routes the top card of the discard/defeated stack 
-                // directly into the central fallback checker
-                this.renderCardSprite(point.x, point.y, topCard, topCard.isTapped);
+                // FIX: Route the top card of the stack directly into your unified 
+                // fallback card checker so it renders an off-white block instantly!
+                this.renderCardSprite(point.x, point.y, topCard, topCard.isTapped || false, "field");
             }
         }
     }
@@ -1557,7 +1585,6 @@ class GameScene extends Phaser.Scene {
     renderDrawerContents() {
         if (!this.drawerContainer || !this.drawerState.isOpen) return;
         
-        // Clear out stale container objects safely
         this.drawerContainer.removeAll(true);
 
         const playerKey = this.drawerState.playerKey;
@@ -1565,15 +1592,13 @@ class GameScene extends Phaser.Scene {
         const targetState = this.lastReceivedState && this.lastReceivedState[playerKey] ? this.lastReceivedState[playerKey] : {};
         const cardList = zoneType === "defeated" ? targetState.defeated || [] : targetState.discard || [];
 
-        // 1. Draw solid background blocker plate
         const bgPlate = this.add.graphics();
-        bgPlate.fillStyle(0x0f172a, 0.98); // Solid charcoal block surface
+        bgPlate.fillStyle(0x0f172a, 0.98); 
         bgPlate.fillRect(0, 0, 1536, 1080);
         bgPlate.lineStyle(4, 0x38bdf8, 1);
         bgPlate.lineBetween(1536, 0, 1536, 1080);
         this.drawerContainer.add(bgPlate);
 
-        // 2. Render administrative header label components
         const zoneTitle = zoneType === "defeated" ? "DEFEATED PILE" : "DISCARD CEMETERY PILE";
         const headerText = this.make.text({
             x: 40, y: 30,
@@ -1595,7 +1620,6 @@ class GameScene extends Phaser.Scene {
         });
         this.drawerContainer.add(subText);
 
-        // 3. Render close button interface window
         const closeBtn = this.make.text({
             x: 1480, y: 25,
             text: "❌ CLOSE",
@@ -1605,7 +1629,6 @@ class GameScene extends Phaser.Scene {
         closeBtn.on("pointerdown", () => this.toggleStackDrawer(null));
         this.drawerContainer.add(closeBtn);
 
-        // 4. Render conditional pile recycling command button macros
         if (cardList.length > 0 && isOwner && !isDefeatedView && this.role !== "spectator") {
             const recycleBtn = this.make.text({
                 x: 40, y: 110,
@@ -1619,41 +1642,53 @@ class GameScene extends Phaser.Scene {
             this.drawerContainer.add(recycleBtn);
         }
 
-        // 5. Generate items inside the container view using the unified fallback engine
         const gridStartX = 80;
         const gridStartY = 250;
         const spacingX = 135;
         const spacingY = 185;
         const colsPerLine = 10;
 
-        cardList.forEach((card, index) => {
+        // Apply your standard top-to-bottom reversed convention rule across all drawers smoothly
+        const displayedCards = cardList.slice().reverse();
+
+        displayedCards.forEach((card, index) => {
             const col = index % colsPerLine;
             const row = Math.floor(index / colsPerLine);
             const posX = gridStartX + col * spacingX;
             const posY = gridStartY + row * spacingY;
 
-            // Capture child list index parameters prior to pushing the object
             const baseIndexBeforeRender = this.children.list.length;
 
-            // Render card block (handles fallback logic natively)
-            this.renderCardSprite(posX, posY, card, false);
-
-            // Fetch the generated card layout asset out of global memory space
-            const drawerCardImg = this.children.list[baseIndexBeforeRender];
+            // Render card block (generates fallback container natively)
+            const drawerCardImg = this.renderCardSprite(posX, posY, card, false, "field");
 
             if (drawerCardImg) {
                 drawerCardImg.setData("drawerCardRef", card);
-                drawerCardImg.setData("drawerCardIndex", index);
+                
+                // Recompute original array indexes mathematically to preserve flawless targeting
+                const originalIndex = (cardList.length - 1) - index;
+                drawerCardImg.setData("drawerCardIndex", originalIndex);
 
-                // Handle input actions for the viewer role types
+                // FIX: Split interaction attachment logic completely away from rendering steps
+                // This ensures cards are ALWAYS displayed in the drawer tree container loop
                 if (isOwner && !isDefeatedView && this.role !== "spectator") {
-                    drawerCardImg.setInteractive(new Phaser.Geom.Rectangle(-this.cardWidth/2, -this.cardHeight/2, this.cardWidth, this.cardHeight), Phaser.Geom.Rectangle.Contains);
+                    if (drawerCardImg.type === "Container") {
+                        drawerCardImg.setInteractive(
+                            new Phaser.Geom.Rectangle(-this.cardWidth / 2, -this.cardHeight / 2, this.cardWidth, this.cardHeight), 
+                            Phaser.Geom.Rectangle.Contains
+                        );
+                    } else {
+                        drawerCardImg.setInteractive({ useHandCursor: true });
+                    }
+
                     drawerCardImg.on("pointerdown", () => {
-                        this.socket.emit("moveDiscardToDefeated", { tableId: this.tableId, targetPlayer: playerKey, discardIndex: index });
+                        console.log(`📡 [ENGINE DRAWER EMIT]: Moving original index ${originalIndex} from discard to defeated...`);
+                        this.socket.emit("moveDiscardToDefeated", { tableId: this.tableId, targetPlayer: playerKey, discardIndex: originalIndex });
                     });
                 }
 
-                // Remove item from primary rendering layer and nest it inside our sliding sub-container group
+                // CRUCIAL POSITION FIX: Moved outside the conditional block so that cards 
+                // are safely nested inside the drawer menu tree layer no matter what!
                 this.children.remove(drawerCardImg);
                 this.drawerContainer.add(drawerCardImg);
             }
