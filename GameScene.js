@@ -760,18 +760,22 @@ class GameScene extends Phaser.Scene {
         const childrenToDestroy = [];
 
         this.children.list.forEach(child => {
-            // Retain static layout UI text anchors
+            // 1. Preserve static text labeling blocks
             if (child.type === "Text" && (child.text.includes("HAND") || child.text.includes("ARENA ZONE") || child.text.includes("INSPECTION"))) {
                 return;
             }
             
-            // Target standard flat graphic items
+            // 2. Queue standard loose rendering components
             if (child.type === "Text" || child.type === "Image") {
                 childrenToDestroy.push(child);
             }
             
-            // FIX: Explicitly target and destroy fallback card containers to prevent clone ghosts
+            // 3. FIX: Only clear out the dynamic card fallback containers. 
+            // Explicitly shield your main menu UI layer from being wiped by keyboard refreshes!
             if (child.type === "Container") {
+                if (this.drawerContainer && child === this.drawerContainer) {
+                    return; // Safeguard the global menu container instance from deletion
+                }
                 childrenToDestroy.push(child);
             }
         });
@@ -947,76 +951,72 @@ class GameScene extends Phaser.Scene {
      * Establishes the Phaser Drop Zones and interactive stack manipulation panels (+1, -1, ☠️).
      */
     configureLocalSlotInteractivity(point, zoneKey, stateKey) {
-        // 1. Build Drag-Drop Catch Zone Regions for Fighter Slots
         if (zoneKey === "fighterA" || zoneKey === "fighterB") {
             const propName = `localDrop_${zoneKey}`;
             if (this[propName]) this[propName].destroy();
-
             this[propName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
             this[propName].setRectangleDropZone(this.cardWidth, this.cardHeight);
             this[propName].setData("zoneKey", zoneKey);
 
-            // 2. Spawn Sub-Stack Floating Controls (+1, -1)
             const btnY = point.y - this.cardHeight / 2 - 22;
             const btnStyle = { fontSize: "13px", fontFamily: "monospace", fill: "#38bdf8", fontWeight: "bold", backgroundColor: "#1e293b", padding: { x: 8, y: 4 } };
-
+            
             const addBtn = this.add.text(point.x - 30, btnY, "+1", btnStyle).setOrigin(0.5);
-            this.fieldGraphics.lineStyle(1, 3718648, 0.6);
+            this.fieldGraphics.lineStyle(1, 3718648, .6);
             this.fieldGraphics.strokeRect(addBtn.x - addBtn.width / 2, addBtn.y - addBtn.height / 2, addBtn.width, addBtn.height);
             addBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
-                this.socket.emit("placeDeckCardToStack", { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
+                this.socket.emit("placeDeckCardToStack", { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey })
             });
 
             const remBtn = this.add.text(point.x + 30, btnY, "-1", btnStyle).setOrigin(0.5);
-            this.fieldGraphics.lineStyle(1, 3718648, 0.6);
+            this.fieldGraphics.lineStyle(1, 3718648, .6);
             this.fieldGraphics.strokeRect(remBtn.x - remBtn.width / 2, remBtn.y - remBtn.height / 2, remBtn.width, remBtn.height);
             remBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
-                this.socket.emit("flipAndDiscardFromStack", { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
+                this.socket.emit("flipAndDiscardFromStack", { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey })
             });
 
-            // 3. Spawn Defeated Death Shifter Trigger Button (☠️)
             const styleDefeat = { fontSize: "14px", fontFamily: "monospace", fill: "#ef4444", fontWeight: "bold", backgroundColor: "#1e1b4b", padding: { x: 8, y: 4 } };
             const defeatBtn = this.add.text(point.x - 85, point.y, "☠️", styleDefeat).setOrigin(0.5);
-            this.fieldGraphics.lineStyle(1, 15680580, 0.6);
+            this.fieldGraphics.lineStyle(1, 15680580, .6);
             this.fieldGraphics.strokeRect(defeatBtn.x - defeatBtn.width / 2, defeatBtn.y - defeatBtn.height / 2, defeatBtn.width, defeatBtn.height);
             defeatBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
-                this.socket.emit("moveFighterToDefeated", { tableId: this.tableId, targetPlayer: this.role, slot: zoneKey });
+                this.socket.emit("moveFighterToDefeated", { tableId: this.tableId, targetPlayer: this.role, slot: zoneKey })
             });
         }
 
-        // 4. Build Hitbox Zones For Public Pile Sliders (Clicking deploys Stack Drawer)
         if (zoneKey === "discard" || zoneKey === "defeated") {
-            const hitName = `${zoneKey}Hit_${stateKey}`;
-            if (this[hitName]) this[hitName].destroy();
-
-            this[hitName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
+            // 1. CLEANUP: Wipe out any existing click or drop zones for this slot position
+            const clickHitName = `${zoneKey}ClickHit_${stateKey}`;
+            const dropHitName = `${zoneKey}DropHit_${stateKey}`;
             
+            if (this[clickHitName]) { this[clickHitName].destroy(); this[clickHitName] = null; }
+            if (this[dropHitName]) { this[dropHitName].destroy(); this[dropHitName] = null; }
+
+            // 2. THE DROP ZONE LAYER: Built exclusively to process card drag drops safely
             if (zoneKey === "discard") {
-                // Register as drop zone frame
-                this[hitName].setRectangleDropZone(this.cardWidth, this.cardHeight);
-                
-                // FIX: Set a massive depth layer so face-up card sprites cannot cover it and block your drops!
-                this[hitName].setDepth(150); 
-            } else {
-                this[hitName].setInteractive({ useHandCursor: true });
+                this[dropHitName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
+                this[dropHitName].setRectangleDropZone(this.cardWidth, this.cardHeight);
+                this[dropHitName].setData("zoneKey", zoneKey);
+                this[dropHitName].setDepth(100);
             }
-            
-            this[hitName].setData("zoneKey", zoneKey);
 
-            // Standardized pointerdown trigger pass for opening the slide drawer
-            this[hitName].on("pointerdown", (pointer) => {
-                // FIX: Only trigger the slide drawer click if we aren't currently carrying a dragged card sprite!
-                if (this.input.dragactive) return;
+            // 3. THE CLICK ZONE LAYER: Built as a separate object strictly to listen for mouse clicks
+            this[clickHitName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
+            this[clickHitName].setInteractive({ useHandCursor: true });
+            this[clickHitName].setData("zoneKey", zoneKey);
+            this[clickHitName].setDepth(150); // Layered slightly HIGHER to catch immediate pointer clicks cleanly
+
+            // Hook up the toggle event listener to our dedicated click zone tracker
+            this[clickHitName].on("pointerdown", pointer => {
+                if (this.input.dragactive) return; // Ignore clicks if the user is in the middle of dragging an item
+                console.log(`🎯 [ENGINE CLICK]: Click caught on dedicated ${zoneKey} zone layer! Opening drawer...`);
                 this.toggleStackDrawer(stateKey, zoneKey);
             });
         }
 
-        // --- Register the stage target drop zone system ---
         if (zoneKey === "stage") {
             const propName = `localDrop_${zoneKey}`;
             if (this[propName]) this[propName].destroy();
-            
-            // Create drop zone matching card dimensions over the stage coordinates
             this[propName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
             this[propName].setRectangleDropZone(this.cardWidth, this.cardHeight);
             this[propName].setData("zoneKey", zoneKey);
@@ -1491,19 +1491,26 @@ class GameScene extends Phaser.Scene {
      * @param {string|null} playerKey - 'playerA' or 'playerB' to display, or null to close.
      * @param {string} zoneType - 'discard' or 'defeated' depending on origin clicked.
      */
-    toggleStackDrawer(playerKey, zoneType = 'discard') {
-        if (!this.drawerContainer) {
-            this.drawerContainer = this.add.container(-1536, 0); 
-            this.drawerContainer.setDepth(2000); 
-            this.drawerState = { isOpen: false, playerKey: null, zoneType: 'discard' };
+    toggleStackDrawer(playerKey, zoneType = "discard") {
+        // If the container doesn't exist, or was cleared, force clean baseline definitions
+        if (!this.drawerContainer || !this.drawerContainer.scene) {
+            this.drawerContainer = this.add.container(-1536, 0);
+            this.drawerContainer.setDepth(2000);
+            this.drawerState = {
+                isOpen: false,
+                playerKey: null,
+                zoneType: "discard"
+            };
         }
 
+        // 1. CLOSING PATH
         if (!playerKey) {
+            this.tweens.killTweensOf(this.drawerContainer);
             this.tweens.add({
                 targets: this.drawerContainer,
                 x: -1536,
                 duration: 350,
-                ease: 'Cubic.easeIn',
+                ease: "Cubic.easeIn",
                 onComplete: () => {
                     this.drawerState.isOpen = false;
                     this.drawerState.playerKey = null;
@@ -1513,18 +1520,24 @@ class GameScene extends Phaser.Scene {
             return;
         }
 
+        // 2. OPENING PATH
+        this.tweens.killTweensOf(this.drawerContainer);
+        
+        // Clear out spatial positions to guarantee a clean entry path alignment
+        this.drawerContainer.x = -1536;
+        this.drawerContainer.setVisible(true); 
+        
         this.drawerState.isOpen = true;
         this.drawerState.playerKey = playerKey;
-        this.drawerState.zoneType = zoneType; // Stash context string securely
+        this.drawerState.zoneType = zoneType;
+
         this.renderDrawerContents();
-        
-        this.drawerContainer.setVisible(true);
 
         this.tweens.add({
             targets: this.drawerContainer,
-            x: 0, 
+            x: 0,
             duration: 400,
-            ease: 'Cubic.easeOut'
+            ease: "Cubic.easeOut"
         });
     }
 
@@ -1841,20 +1854,16 @@ class GameScene extends Phaser.Scene {
 
         for (let index = hand.length - 1; index >= 0; index--) {
             const card = hand[index];
-            
-            // Use the centralized layout engine
             const layout = this.getHandCardLayout(index, hand.length, true);
             const cardX = layout.x;
             const cardY = c.handStart.y + layout.y;
             const halfW = layout.width / 2;
             const halfH = layout.height / 2;
 
-            if (mouseX >= cardX - halfW && mouseX <= cardX + halfW && 
-                mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
-                
+            if (mouseX >= cardX - halfW && mouseX <= cardX + halfW && mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
                 console.log(`♻️ [KEYBOARD DISCARD]: Detected hit on card index ${index}. Executing instant discard...`);
                 
-                // Client-Side Prediction Splice
+                // 1. Slice element from local cache predictively
                 const [discardedCardData] = hand.splice(index, 1);
                 discardedCardData.isFaceDown = false;
                 discardedCardData.isTapped = false;
@@ -1864,14 +1873,17 @@ class GameScene extends Phaser.Scene {
                 }
                 state[this.role].discard.push(discardedCardData);
                 
-                // Network Pipeline Emitter
-                this.socket.emit("discardCardFromHand", { tableId: this.tableId, targetPlayer: this.role, handIndex: index });
+                // 2. Fire network event to server
+                this.socket.emit("discardCardFromHand", { 
+                    tableId: this.tableId, 
+                    targetPlayer: this.role, 
+                    handIndex: index 
+                });
                 this.handleStateRenderingLoop(state);
                 return;
             }
         }
     }
-
 
     /**
      * Scans local hand cards under cursor to move a card to the top or bottom of the deck.
