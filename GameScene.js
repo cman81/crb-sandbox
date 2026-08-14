@@ -129,46 +129,6 @@ class GameScene extends Phaser.Scene {
             }
         });
 
-        this.socket.on("cardPlayedFaceDownUpdate", faceDownEvent => {
-            console.log(`📡 [NETWORK RECEIVE]: cardPlayedFaceDownUpdate caught for seat: ${faceDownEvent.targetPlayer}`);
-            if (!this.lastReceivedState) return;
-
-            // 1. Locate the state block belonging to the player who played the card
-            const targetState = this.lastReceivedState[faceDownEvent.targetPlayer];
-            if (targetState) {
-                if (!targetState.battleZone) targetState.battleZone = {};
-                if (!targetState.battleZone.fighterA) {
-                    targetState.battleZone.fighterA = { card: null, faceDownStack: [] };
-                }
-
-                // 2. Map the incoming face-down card details (Opponent gets a masked "Card Back" object)
-                targetState.battleZone.fighterA.card = faceDownEvent.card;
-
-                // 3. Compress their hand count size locally to keep everything in sync
-                if (Array.isArray(targetState.hand)) {
-                    // Only force length if it's the other player (owner already prediction-spliced it)
-                    if (faceDownEvent.targetPlayer !== this.role) {
-                        targetState.hand.length = faceDownEvent.handCount;
-                    }
-                }
-
-                // 4. Force a clean rendering loop pass to paint the changes on screen
-                this.handleStateRenderingLoop(this.lastReceivedState);
-            }
-        });
-        // --- END OF NEW SOCKET LISTENER ---
-
-        this.socket.on("cardFlippedFaceUpUpdate", flipEvent => {
-            console.log(`📡 [NETWORK RECEIVE]: cardFlippedFaceUpUpdate caught for ${flipEvent.targetPlayer}`);
-            if (!this.lastReceivedState) return;
-            const targetState = this.lastReceivedState[flipEvent.targetPlayer];
-            if (targetState && targetState.battleZone && targetState.battleZone.fighterA) {
-                targetState.battleZone.fighterA.card = flipEvent.card;
-                this.handleStateRenderingLoop(this.lastReceivedState);
-            }
-        });
-
-
         this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
 
         this.selectedPreviewCard = null; // Caches the active card loaded into Column 3
@@ -1628,6 +1588,7 @@ class GameScene extends Phaser.Scene {
 
     handleKeyboardFaceDownAction(mouseX, mouseY) {
         if (!this.lastReceivedState || !this.lastReceivedState[this.role]) return;
+        
         const state = this.lastReceivedState;
         const c = this.fieldCoordinates.local;
         const hand = state[this.role].hand || [];
@@ -1639,27 +1600,22 @@ class GameScene extends Phaser.Scene {
             const halfW = layout.width / 2;
             const halfH = layout.height / 2;
 
-            if (mouseX >= cardX - halfW && mouseX <= cardX + halfW && 
+            if (mouseX >= cardX - halfW && mouseX <= cardX + halfW &&
                 mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
                 
-                console.log(`🎴 [KEYBOARD FACE DOWN]: Predictive hand slice for index ${index}...`);
+                console.log(`📡 [DECOUPLED TRICKERY EMIT]: Sending request to play hand index ${index} face down.`);
                 
-                // Client-Side Prediction Splice
-                const [faceDownCardData] = hand.splice(index, 1);
-                faceDownCardData.isFaceDown = true;
-                faceDownCardData.isTapped = false;
-                
-                if (!state[this.role].battleZone) state[this.role].battleZone = {};
-                if (!state[this.role].battleZone.fighterA) state[this.role].battleZone.fighterA = { card: null, faceDownStack: [] };
-                state[this.role].battleZone.fighterA.card = faceDownCardData;
-
-                // Transmit request
-                this.socket.emit("playCardFaceDown", { tableId: this.tableId, targetPlayer: this.role, handIndex: index });
-                this.handleStateRenderingLoop(state);
+                // EMIT ONLY: Let the server process the transaction safely
+                this.socket.emit("playCardFaceDown", {
+                    tableId: this.tableId,
+                    targetPlayer: this.role,
+                    handIndex: index
+                });
                 return;
             }
         }
     }
+
 
     handleKeyboardToStageAction(mouseX, mouseY) {
         if (!this.lastReceivedState || !this.lastReceivedState[this.role]) return;

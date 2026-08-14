@@ -268,39 +268,62 @@ io.on("connection", socket => {
     socket.on("playCardFaceDown", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
+
         const hand = table.gameState[targetPlayer]?.hand;
         const bZone = table.gameState[targetPlayer]?.battleZone;
         const idx = parseInt(handIndex);
-        if (!hand || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid index.");
+        
+        if (!hand || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid hand index selection.");
 
+        // 1. Execute the mutation directly on the server database
         const [cardToPlay] = hand.splice(idx, 1);
         cardToPlay.isFaceDown = true;
         cardToPlay.isTapped = false;
+        
+        // Mount the trickery card face down specifically to fighterA
         bZone.fighterA.card = cardToPlay;
 
-        const maskCard = () => ({name: "Card Back", isFaceDown: true});
-        const ownerPayload = {targetPlayer: targetPlayer, card: cardToPlay, handCount: hand.length};
-        const opponentPayload = {targetPlayer: targetPlayer, card: maskCard(), handCount: hand.length};
+        // 2. Aggregate all multi-socket connections for this table instance
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
 
-        // FIX: Loop arrays while routing proper masked payloads by seat perspective
-        table.playerA.forEach(sid => io.to(sid).emit("cardPlayedFaceDownUpdate", targetPlayer === "playerA" ? ownerPayload : opponentPayload));
-        table.playerB.forEach(sid => io.to(sid).emit("cardPlayedFaceDownUpdate", targetPlayer === "playerB" ? ownerPayload : opponentPayload));
-        table.spectators.forEach(sid => io.to(sid).emit("cardPlayedFaceDownUpdate", ownerPayload));
+        // 3. Dispatch individualized, secure views via your serialization engine
+        targetSockets.forEach(sockId => {
+            const sock = io.sockets.sockets.get(sockId);
+            if (sock) {
+                let viewerRole = "spectator";
+                if (table.playerA.includes(sockId)) viewerRole = "playerA";
+                if (table.playerB.includes(sockId)) viewerRole = "playerB";
+                sendSanitizedState(sock, table, viewerRole);
+            }
+        });
     });
 
     socket.on("flipCardFaceUp", ({tableId: tableId, targetPlayer: targetPlayer}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
-        const card = table.gameState[targetPlayer]?.battleZone?.fighterA?.card;
-        if (!card) return socket.emit("errorMsg", "No card found.");
 
+        const card = table.gameState[targetPlayer]?.battleZone?.fighterA?.card;
+        if (!card) return socket.emit("errorMsg", "No card found in Fighter A slot to flip.");
+
+        // 1. Permanently remove the face-down mask condition on the server model
         card.isFaceDown = false;
-        const payload = {targetPlayer: targetPlayer, card: card};
-        
-        // FIX: Loop arrays to reveal the flipped card to everyone simultaneously
-        table.playerA.forEach(sid => io.to(sid).emit("cardFlippedFaceUpUpdate", payload));
-        table.playerB.forEach(sid => io.to(sid).emit("cardFlippedFaceUpUpdate", payload));
-        table.spectators.forEach(sid => io.to(sid).emit("cardFlippedFaceUpUpdate", payload));
+
+        console.log(`📡 [DECOUPLED FLIP]: Fighter A card flipped face up for ${targetPlayer}. Broadcasting state...`);
+
+        // 2. Aggregate all multi-socket connections for this table instance
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
+
+        // 3. Re-serialize and distribute safe, updated views to everyone via your central engine
+        targetSockets.forEach(sockId => {
+            const sock = io.sockets.sockets.get(sockId);
+            if (sock) {
+                let viewerRole = "spectator";
+                if (table.playerA.includes(sockId)) viewerRole = "playerA";
+                if (table.playerB.includes(sockId)) viewerRole = "playerB";
+                
+                sendSanitizedState(sock, table, viewerRole);
+            }
+        });
     });
 
     socket.on("playHandToTopDeck", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex}) => {
