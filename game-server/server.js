@@ -368,24 +368,34 @@ io.on("connection", socket => {
     socket.on("toggleCardTap", ({tableId: tableId, targetPlayer: targetPlayer, zone: zone, supportIndex: supportIndex}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
+
         const bZone = table.gameState[targetPlayer]?.battleZone;
         const support = table.gameState[targetPlayer]?.support;
-        
         let targetCard = null;
+
         if (zone === "fighterA") targetCard = bZone?.fighterA?.card;
         else if (zone === "fighterB") targetCard = bZone?.fighterB?.card;
         else if (zone === "stage") targetCard = bZone?.stage;
-        else if (zone === "support") targetCard = support[parseInt(supportIndex)];
+        else if (zone === "support" && Array.isArray(support)) targetCard = support[parseInt(supportIndex)];
 
-        if (!targetCard) return socket.emit("errorMsg", "Card not found.");
+        if (!targetCard) return socket.emit("errorMsg", "Target card not found to tap.");
+
+        // Execute the orientation mutation on the server data model
         targetCard.isTapped = !targetCard.isTapped;
 
-        const payload = {targetPlayer: targetPlayer, zone: zone, supportIndex: zone === "support" ? parseInt(supportIndex) : null, isTapped: targetCard.isTapped};
-        
-        // FIX: Loop through player arrays instead of targeting a single string ID
-        table.playerA.forEach(sid => io.to(sid).emit("cardTapUpdated", payload));
-        table.playerB.forEach(sid => io.to(sid).emit("cardTapUpdated", payload));
-        table.spectators.forEach(sid => io.to(sid).emit("cardTapUpdated", payload));
+        // Aggregate all multi-socket connections
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
+
+        // Broadcast safe, secure, role-aware frames via your serialization engine
+        targetSockets.forEach(sockId => {
+            const sock = io.sockets.sockets.get(sockId);
+            if (sock) {
+                let viewerRole = "spectator";
+                if (table.playerA.includes(sockId)) viewerRole = "playerA";
+                if (table.playerB.includes(sockId)) viewerRole = "playerB";
+                sendSanitizedState(sock, table, viewerRole);
+            }
+        });
     });
 
     socket.on("playCardToSupport", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex}) => {

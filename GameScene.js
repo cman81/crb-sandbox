@@ -129,34 +129,6 @@ class GameScene extends Phaser.Scene {
             }
         });
 
-        this.socket.on('cardTapUpdated', (tapEvent) => {
-            console.log(`📡 [NETWORK RECEIVE]: cardTapUpdated caught for ${tapEvent.targetPlayer} on zone ${tapEvent.zone}`);
-            if (!this.lastReceivedState) return;
-
-            const targetState = this.lastReceivedState[tapEvent.targetPlayer];
-            if (targetState) {
-                const bZone = targetState.battleZone || {};
-
-                // 1. Route the incoming boolean tap state directly to the matching backend array mapping
-                if (tapEvent.zone === 'fighterA' && bZone.fighterA && bZone.fighterA.card) {
-                    bZone.fighterA.card.isTapped = tapEvent.isTapped;
-                } 
-                else if (tapEvent.zone === 'fighterB' && bZone.fighterB && bZone.fighterB.card) {
-                    bZone.fighterB.card.isTapped = tapEvent.isTapped;
-                } 
-                else if (tapEvent.zone === 'support' && Array.isArray(targetState.support)) {
-                    const idx = parseInt(tapEvent.supportIndex);
-                    if (!isNaN(idx) && targetState.support[idx]) {
-                        targetState.support[idx].isTapped = tapEvent.isTapped;
-                    }
-                }
-
-                // 2. FORCE SCREEN RE-RENDER: Forces the canvas layer layout matrix to repaint immediately
-                // This updates the orientation angle parameter to -90 degrees CCW inside renderCardSprite()
-                this.handleStateRenderingLoop(this.lastReceivedState);
-            }
-        });
-
         this.socket.on("cardPlayedFaceDownUpdate", faceDownEvent => {
             console.log(`📡 [NETWORK RECEIVE]: cardPlayedFaceDownUpdate caught for seat: ${faceDownEvent.targetPlayer}`);
             if (!this.lastReceivedState) return;
