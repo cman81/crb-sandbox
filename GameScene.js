@@ -245,51 +245,6 @@ class GameScene extends Phaser.Scene {
             }
         });
 
-        // --- NETWORK LISTENER: HAND TO DECK SYNC PACKETS ---
-        this.socket.on("handToDeckUpdate", (deckEvent) => {
-            console.log(`📡 [NETWORK RECEIVE]: handToDeckUpdate caught for ${deckEvent.targetPlayer} to ${deckEvent.location}`);
-            
-            if (!this.lastReceivedState) return;
-            const targetState = this.lastReceivedState[deckEvent.targetPlayer];
-            
-            if (targetState) {
-                // 1. Sync hand size count
-                if (typeof deckEvent.handCount !== "undefined" && Array.isArray(targetState.hand)) {
-                    // For the remote player, shrink their tracked hand array length
-                    if (deckEvent.targetPlayer !== this.role) {
-                        targetState.hand.length = deckEvent.handCount;
-                    }
-                }
-
-                // 2. Sync deck size count
-                if (!Array.isArray(targetState.deck)) {
-                    targetState.deck = [];
-                }
-                
-                // Active players don't get card details, spectators get full X-Ray data via deckEvent.card
-                const freshCard = deckEvent.card || { name: "Card Back", isFaceDown: true };
-                freshCard.isFaceDown = true;
-                freshCard.isTapped = false;
-
-                // 3. Local prediction guard: skip pushing if we are the one who already performed it locally
-                if (deckEvent.targetPlayer !== this.role || this.role === "spectator") {
-                    if (deckEvent.location === "top") {
-                        targetState.deck.push(freshCard); // Array tail is top of deck
-                    } else {
-                        targetState.deck.unshift(freshCard); // Index 0 is bottom of deck
-                    }
-                }
-
-                // Force precise deck length validation from server metric
-                if (typeof deckEvent.deckCount !== "undefined") {
-                    targetState.deck.length = deckEvent.deckCount;
-                }
-
-                // 4. Force visual frame update pass
-                this.handleStateRenderingLoop(this.lastReceivedState);
-            }
-        });
-
         this.socket.on("cardPlayedFaceDownUpdate", faceDownEvent => {
             console.log(`📡 [NETWORK RECEIVE]: cardPlayedFaceDownUpdate caught for seat: ${faceDownEvent.targetPlayer}`);
             if (!this.lastReceivedState) return;
@@ -1816,42 +1771,29 @@ class GameScene extends Phaser.Scene {
      */
     handleHandToDeckShortcut(mouseX, mouseY, destination) {
         if (!this.lastReceivedState || !this.lastReceivedState[this.role]) return;
+        
         const state = this.lastReceivedState;
         const c = this.fieldCoordinates.local;
         const hand = state[this.role].hand || [];
 
         for (let index = hand.length - 1; index >= 0; index--) {
-            // Use the centralized layout engine
             const layout = this.getHandCardLayout(index, hand.length, true);
             const cardX = layout.x;
             const cardY = c.handStart.y + layout.y;
             const halfW = layout.width / 2;
             const halfH = layout.height / 2;
 
-            if (mouseX >= cardX - halfW && mouseX <= cardX + halfW && 
+            if (mouseX >= cardX - halfW && mouseX <= cardX + halfW &&
                 mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
                 
-                console.log(`🗂️ [KEYBOARD DECK MOVE]: Target card index ${index} moving to ${destination} deck stack.`);
+                console.log(`📡 [DECOUPLED DECK MOVE EMIT]: Moving hand index ${index} to ${destination} of deck.`);
                 
-                // Client-Side Prediction Splice
-                const [cardToDeck] = hand.splice(index, 1);
-                cardToDeck.isFaceDown = true;
-                cardToDeck.isTapped = false;
-                
-                if (!Array.isArray(state[this.role].deck)) {
-                    state[this.role].deck = [];
-                }
-                
-                // Handle Top vs Bottom Array Index Positioning Rules
+                // EMIT INTENT ONLY: Let the server process the transaction safely
                 if (destination === "top") {
-                    state[this.role].deck.push(cardToDeck);
                     this.socket.emit("playHandToTopDeck", { tableId: this.tableId, targetPlayer: this.role, handIndex: index });
                 } else {
-                    state[this.role].deck.unshift(cardToDeck);
                     this.socket.emit("playHandToBottomDeck", { tableId: this.tableId, targetPlayer: this.role, handIndex: index });
                 }
-                
-                this.handleStateRenderingLoop(state);
                 return;
             }
         }

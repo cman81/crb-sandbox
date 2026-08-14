@@ -350,45 +350,63 @@ io.on("connection", socket => {
     socket.on("playHandToTopDeck", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
+
         const hand = table.gameState[targetPlayer]?.hand;
         const deck = table.gameState[targetPlayer]?.deck;
+        
         const idx = parseInt(handIndex);
-        if (!hand || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid index.");
+        if (!hand || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid hand index selection.");
 
+        // 1. Mutate the server model (Push to the end of the deck array)
         const [cardToDeck] = hand.splice(idx, 1);
         cardToDeck.isFaceDown = true;
+        cardToDeck.isTapped = false;
         deck.push(cardToDeck);
 
-        const maskCard = () => ({name: "Card Back", isFaceDown: true});
-        const standardPayload = {targetPlayer: targetPlayer, card: maskCard(), deckCount: deck.length, handCount: hand.length, location: "top"};
-        const spectatorPayload = {targetPlayer: targetPlayer, card: cardToDeck, deckCount: deck.length, handCount: hand.length, location: "top"};
+        // 2. Aggregate all multi-socket connections
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
 
-        // FIX: Multi-socket array iteration loops
-        table.playerA.forEach(sid => io.to(sid).emit("handToDeckUpdate", standardPayload));
-        table.playerB.forEach(sid => io.to(sid).emit("handToDeckUpdate", standardPayload));
-        table.spectators.forEach(sid => io.to(sid).emit("handToDeckUpdate", spectatorPayload));
+        // 3. Broadcast clean, role-aware frames via your serialization engine
+        targetSockets.forEach(sockId => {
+            const sock = io.sockets.sockets.get(sockId);
+            if (sock) {
+                let viewerRole = "spectator";
+                if (table.playerA.includes(sockId)) viewerRole = "playerA";
+                if (table.playerB.includes(sockId)) viewerRole = "playerB";
+                sendSanitizedState(sock, table, viewerRole);
+            }
+        });
     });
 
     socket.on("playHandToBottomDeck", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
+
         const hand = table.gameState[targetPlayer]?.hand;
         const deck = table.gameState[targetPlayer]?.deck;
+        
         const idx = parseInt(handIndex);
-        if (!hand || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid index.");
+        if (!hand || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid hand index selection.");
 
+        // 1. Mutate the server model (Unshift to the front of the deck array)
         const [cardToDeck] = hand.splice(idx, 1);
         cardToDeck.isFaceDown = true;
+        cardToDeck.isTapped = false;
         deck.unshift(cardToDeck);
 
-        const maskCard = () => ({name: "Card Back", isFaceDown: true});
-        const standardPayload = {targetPlayer: targetPlayer, card: maskCard(), deckCount: deck.length, handCount: hand.length, location: "bottom"};
-        const spectatorPayload = {targetPlayer: targetPlayer, card: cardToDeck, deckCount: deck.length, handCount: hand.length, location: "bottom"};
+        // 2. Aggregate connections
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
 
-        // FIX: Multi-socket array iteration loops
-        table.playerA.forEach(sid => io.to(sid).emit("handToDeckUpdate", standardPayload));
-        table.playerB.forEach(sid => io.to(sid).emit("handToDeckUpdate", standardPayload));
-        table.spectators.forEach(sid => io.to(sid).emit("handToDeckUpdate", spectatorPayload));
+        // 3. Broadcast securely
+        targetSockets.forEach(sockId => {
+            const sock = io.sockets.sockets.get(sockId);
+            if (sock) {
+                let viewerRole = "spectator";
+                if (table.playerA.includes(sockId)) viewerRole = "playerA";
+                if (table.playerB.includes(sockId)) viewerRole = "playerB";
+                sendSanitizedState(sock, table, viewerRole);
+            }
+        });
     });
 
     socket.on("flipAndDiscardFromStack", ({tableId: tableId, targetPlayer: targetPlayer, targetSlot: targetSlot}) => {
