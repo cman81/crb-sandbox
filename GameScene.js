@@ -86,17 +86,79 @@ class GameScene extends Phaser.Scene {
         }
 
         this.socket.on("stateUpdate", sanitizedState => {
-            // 1. Hand off the incoming state array frame to the decoupled Analyzer
+            // 1. Hand off the incoming state array frame to your decoupled Motion Analyzer
             const didTriggerAnimation = this.checkAndAnimateStateChanges(sanitizedState);
             
-            // 2. If an active flight path animation is underway, exit early to allow the tween thread to complete
+            // 2. If a card flight (draw/discard/deploy) animation is running, yield early
             if (didTriggerAnimation) return;
 
-            // 3. Fallback: If it's a static update pass, execute the direct screen paint right away
+            // 3. Fallback: Execute the definitive visual paint pass immediately
             this.lastReceivedState = sanitizedState;
             this.handleStateRenderingLoop(sanitizedState);
         });
 
+        this.socket.on("cardTap", tapData => {
+            console.log(`📡 [NETWORK RECEIVE]: UUID cardTap caught for token: ${tapData.uuid}`);
+
+            // Initialize our tracking list inside create() if it doesn't exist yet
+            if (!this.animatingUuids) {
+                this.animatingUuids = [];
+            }
+
+            let matchedObject = null;
+            
+            // Scan all active children on the canvas to locate the asset by its exact data signature
+            this.children.list.forEach(child => {
+                if (child.data && child.data.get("uuid") === tapData.uuid) {
+                    matchedObject = child;
+                }
+            });
+
+            if (!matchedObject) {
+                console.warn("⚠️ [ANIMATION ABORT]: Could not locate matching UUID asset: " + tapData.uuid);
+                return;
+            }
+
+            // 1. LOCK VISIBILITY: Register this card's unique UUID as actively animating
+            this.animatingUuids.push(tapData.uuid);
+
+            const finalAngle = tapData.isTapped ? -450 : 360;
+            const startAngle = tapData.isTapped ? 0 : -90;
+
+            matchedObject.setAngle(startAngle);
+            matchedObject.setDepth(3000); // Elevate above everything else while spinning
+
+            this.tweens.add({
+                targets: matchedObject,
+                angle: finalAngle,
+                duration: 500,
+                ease: 'Cubic.easeInOut',
+                onComplete: () => {
+                    matchedObject.setAngle(tapData.isTapped ? -90 : 0);
+                    
+                    // Manually sync local cache data arrays to match the server model
+                    if (this.lastReceivedState && this.lastReceivedState[tapData.targetPlayer]) {
+                        const targetState = this.lastReceivedState[tapData.targetPlayer];
+                        const bZone = targetState.battleZone || {};
+                        
+                        if (tapData.zone === "fighterA" && bZone.fighterA && bZone.fighterA.card) bZone.fighterA.card.isTapped = tapData.isTapped;
+                        else if (tapData.zone === "fighterB" && bZone.fighterB && bZone.fighterB.card) bZone.fighterB.card.isTapped = tapData.isTapped;
+                        else if (tapData.zone === "stage" && bZone.stage) bZone.stage.isTapped = tapData.isTapped;
+                        else if (tapData.zone === "support" && Array.isArray(targetState.support) && targetState.support[tapData.supportIndex]) {
+                            targetState.support[tapData.supportIndex].isTapped = tapData.isTapped;
+                        }
+                    }
+
+                    // 2. UNLOCK VISIBILITY: Remove the UUID from our lock list
+                    if (this.animatingUuids) {
+                        this.animatingUuids = this.animatingUuids.filter(id => id !== tapData.uuid);
+                    }
+
+                    // Force a clean visual paint pass so the real card shows back up at its perfect final position
+                    this.handleStateRenderingLoop(this.lastReceivedState);
+                }
+            });
+        });
 
         this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
 
@@ -236,22 +298,19 @@ class GameScene extends Phaser.Scene {
         let bundleKey = "system_ui";
         let frameKey = "card_back";
         let useFallback = false;
-
         let appliedWidth = this.cardWidth;
         let appliedHeight = this.cardHeight;
         let currentScaleFactor = 1;
 
         const isCardBack = !card || card.title === "Card Back" || card.name === "Card Back" || card.isFaceDown;
-        
+
         if (this.lastReceivedState && card && !isCardBack && currentZone === "hand") {
             const playerState = this.lastReceivedState[this.role] || {};
             const handArray = playerState.hand || [];
-            
-            const handIndex = handArray.findIndex(c => c.id === card.id);
+            const cardIdToMatch = card.id || "";
+            const handIndex = handArray.findIndex(c => c && c.id === cardIdToMatch);
             if (handIndex !== -1) {
-                const isLocalSeat = true;
-                const layout = this.getHandCardLayout(handIndex, handArray.length, isLocalSeat);
-                
+                const layout = this.getHandCardLayout(handIndex, handArray.length, true);
                 appliedWidth = layout.width;
                 appliedHeight = layout.height;
                 currentScaleFactor = layout.width / this.cardWidth;
@@ -261,7 +320,6 @@ class GameScene extends Phaser.Scene {
         if (!isCardBack) {
             const cardId = card.id || "";
             frameKey = cardId;
-            
             if (cardId.startsWith("BS1-")) bundleKey = "BS01_cards";
             else if (cardId.startsWith("BS2-")) bundleKey = "BS02_cards";
             else if (cardId.startsWith("BS3-")) bundleKey = "BS03_cards";
@@ -272,60 +330,76 @@ class GameScene extends Phaser.Scene {
             useFallback = true;
         }
 
-        // Path A: Render Normal Card Sprite
+        const targetAngle = (isTapped || card?.isTapped) ? -90 : 0;
+
+        // PATH 1: Real Texture Image Generation Pass
         if (!useFallback) {
             const cardSprite = this.add.image(x, y, bundleKey, frameKey);
             cardSprite.setDisplaySize(appliedWidth, appliedHeight);
-            cardSprite.setAngle(isTapped || card?.isTapped ? -90 : 0);
+            cardSprite.setAngle(targetAngle);
+            cardSprite.setDepth(baseDepth);
             
-            // FIX: Explicitly enforce the dynamic loop depth on the Image asset
-            cardSprite.setDepth(baseDepth); 
-            return cardSprite;
+            if (card && card.uuid) {
+                cardSprite.setData("uuid", card.uuid);
+            }
+            
+            // FIX: Check if this image asset is currently in our animation list
+            if (card && card.uuid && this.animatingUuids && this.animatingUuids.indexOf(card.uuid) !== -1) {
+                cardSprite.setAlpha(0); // Force the background clone to hide
+            }
+            
+            return cardSprite; 
         }
 
-        // Path B: Programmatic Vector Fallback Container
+
+        // PATH 2: Decoupled Vector Fallback Container Pass
         const fallbackContainer = this.add.container(x, y);
-        fallbackContainer.setDepth(baseDepth); 
+        fallbackContainer.setDepth(baseDepth);
 
         const halfW = appliedWidth / 2;
         const halfH = appliedHeight / 2;
-        const cardShape = this.add.graphics();
-        
+
         if (isCardBack) {
-            // FIX: Leverage our newly extracted method to decouple card back graphics completely
             this.drawVectorCardBack(fallbackContainer, appliedWidth, appliedHeight, currentScaleFactor);
         } else {
-            cardShape.fillStyle(0xF5F5F5, 1);       
-            cardShape.lineStyle(2, 0x94a3b8, 1);    
+            const cardShape = this.add.graphics();
+            cardShape.fillStyle(16119285, 1);
+            cardShape.lineStyle(2, 9741240, 1);
             cardShape.fillRoundedRect(-halfW, -halfH, appliedWidth, appliedHeight, 6);
             cardShape.strokeRoundedRect(-halfW, -halfH, appliedWidth, appliedHeight, 6);
             fallbackContainer.add(cardShape);
 
             const titleFontSize = Math.max(7, Math.floor(10 * currentScaleFactor));
             const rawTitle = card.title || card.name || "Unknown Card";
-            const titleStyle = { 
-                fontSize: `${titleFontSize}px`, 
-                fontFamily: "monospace", 
-                fill: "#1e293b", 
-                fontWeight: "bold", 
-                align: "center", 
-                wordWrap: { width: appliedWidth - 8 } 
-            };
-            const titleText = this.add.text(0, -halfH + Math.floor(12 * currentScaleFactor), rawTitle, titleStyle).setOrigin(0.5, 0);
+            const titleStyle = { fontSize: `${titleFontSize}px`, fontFamily: "monospace", fill: "#1e293b", fontWeight: "bold", align: "center", wordWrap: { width: appliedWidth - 8 } };
+            const titleText = this.add.text(0, -halfH + Math.floor(12 * currentScaleFactor), rawTitle, titleStyle).setOrigin(.5, 0);
             fallbackContainer.add(titleText);
 
             const idFontSize = Math.max(6, Math.floor(9 * currentScaleFactor));
             const idStyle = { fontSize: `${idFontSize}px`, fontFamily: "monospace", fill: "#64748b", fontWeight: "bold" };
-            const idText = this.add.text(-halfW + Math.floor(6 * currentScaleFactor), halfH - Math.floor(10 * currentScaleFactor), card.id || "N/A", idStyle).setOrigin(0, 0.5);
+            const idText = this.add.text(-halfW + Math.floor(6 * currentScaleFactor), halfH - Math.floor(10 * currentScaleFactor), card.id || "N/A", idStyle).setOrigin(0, .5);
             fallbackContainer.add(idText);
         }
 
-        fallbackContainer.setAngle(isTapped || card?.isTapped ? -90 : 0);
+        fallbackContainer.setAngle(targetAngle);
+        
+        // STAMP UUID FOR FALLBACK CARDS: Attach unique data tokens
+        if (card && card.uuid) {
+            fallbackContainer.setData("uuid", card.uuid);
+        }
+        fallbackContainer.setData("cardData", card);
         fallbackContainer.setData("computedWidth", appliedWidth);
         fallbackContainer.setData("computedHeight", appliedHeight);
+        
+        // Check if this specific card's unique UUID is currently in our animation list
+        if (card && card.uuid && this.animatingUuids && this.animatingUuids.indexOf(card.uuid) !== -1) {
+            // Force the background clone card to be completely invisible while the spin happens
+            fallbackContainer.setAlpha(0);
+        }
 
-        return fallbackContainer; // FIX: Return the container instance explicitly
+        return fallbackContainer; 
     }
+
 
     getHandCardLayout(index, totalCards, isLocalSeat) {
         let gridDim = 3;
@@ -367,11 +441,10 @@ class GameScene extends Phaser.Scene {
         };
     }
 
-    handleStateRenderingLoop(state){
+    handleStateRenderingLoop(state) {
         this.resetRenderLayer();
-        this.drawPanelDividers(); // Draws your section split borders
+        this.drawPanelDividers();
         
-        // FIX: Set a safe baseline global thickness right before passing to the field builders
         if (this.fieldGraphics) {
             this.fieldGraphics.lineStyle(2, 16777215, .15);
         }
@@ -379,12 +452,16 @@ class GameScene extends Phaser.Scene {
         this.drawFieldBoard(state);
         this.drawPreviewPanel();
         
-        if(this.drawerContainer&&this.drawerState&&this.drawerState.isOpen){
+        if (this.drawerContainer && this.drawerState && this.drawerState.isOpen) {
             this.renderDrawerContents();
             this.drawerContainer.setVisible(true);
-        } else if(this.drawerContainer){
+        } else if (this.drawerContainer) {
             this.drawerContainer.setVisible(false);
         }
+
+        // FIX: Commit the newly rendered state to your historical cache 
+        // at the very end of the pass, preserving delta accuracy during drawings!
+        this.lastReceivedState = state;
     }
 
     // --- SUB-ROUTINE 1: LAYER RESET ---
@@ -1755,14 +1832,22 @@ class GameScene extends Phaser.Scene {
     }
 
     animateCardFlight(startPos, endPos, cardData, isFaceDown = false, duration = 350) {
-        // 1. Resolve template profile data
         const templateCard = isFaceDown ? { title: "Card Back", isFaceDown: true } : cardData;
         
-        // 2. Spawn a single temporary visual asset for the flight duration
+        // Generate the temporary animation asset
         const flyingCard = this.renderCardSprite(startPos.x, startPos.y, templateCard, false, "field");
-        flyingCard.setDepth(3000); // Glides clean on top of field boards
+        
+        // SAFETY GATING: If the factory returned a null/undefined object, bypass the animation 
+        // gracefully and force a direct screen refresh to keep the match alive!
+        if (!flyingCard) {
+            console.warn("⚠️ [ANIMATION EYE]: Render factory returned invalid object. Bypassing flight path animation.");
+            this.handleStateRenderingLoop(this.lastReceivedState);
+            return;
+        }
 
-        // 3. Move across coordinate paths linearly
+        flyingCard.setDepth(3000); // Perfectly safe to set now
+
+        // Execute the translation tween path
         this.tweens.add({
             targets: flyingCard,
             x: endPos.x,
@@ -1770,9 +1855,7 @@ class GameScene extends Phaser.Scene {
             duration: duration,
             ease: 'Cubic.easeOut',
             onComplete: () => {
-                flyingCard.destroy(); // Purge asset out of memory
-                
-                // Unfreeze and execute final authoritative state paint pass
+                flyingCard.destroy();
                 this.handleStateRenderingLoop(this.lastReceivedState);
             }
         });

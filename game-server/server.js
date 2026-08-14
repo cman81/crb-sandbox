@@ -43,7 +43,6 @@ const tables = Array.from({ length: 8 }, (_, i) => ({
     }
 }));
 
-
 function sendSanitizedState(socket, table, role){
     const maskCard = () => ({ name: "Card Back", isFaceDown: true });
     const sanitizeZone = (zone, isVisible) => {
@@ -145,21 +144,21 @@ io.on("connection", socket => {
 
     socket.on("disconnect", () => leaveAll(socket.id));
 
-    socket.on('loadDeck', ({ tableId, targetPlayer, deckList }) => {
+    socket.on("loadDeck", ({tableId: tableId, targetPlayer: targetPlayer, deckList: deckList}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
-        if (!table) return socket.emit('errorMsg', 'Table not found.');
-        if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') return socket.emit('errorMsg', 'Invalid target player.');
-
-        // Map over the incoming array payload structures
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+        if (targetPlayer !== "playerA" && targetPlayer !== "playerB") return socket.emit("errorMsg", "Invalid target player.");
+        
         table.gameState[targetPlayer].deck = deckList.map(cardObj => ({
             id: cardObj.id,
-            title: cardObj.title, // Cache the clean captured title string safely
-            name: `Card ${cardObj.id}`, // Maintain previous placeholder legacy support compatibility
+            title: cardObj.title,
+            name: `Card ${cardObj.id}`,
             isFaceDown: true,
-            isTapped: false
+            isTapped: false,
+            uuid: uuidv4() // Assign a permanent runtime unique string tracker
         }));
-
-        socket.emit('serverNotice', `Deck loaded with ${deckList.length} uniquely titled cards.`);
+        
+        socket.emit("serverNotice", `Deck loaded with ${deckList.length} uniquely titled cards.`);
     });
 
     socket.on('getGameState', ({ tableId, role }) => {
@@ -378,7 +377,7 @@ io.on("connection", socket => {
         });
     });
 
-    socket.on("toggleCardTap", ({tableId: tableId, targetPlayer: targetPlayer, zone: zone, supportIndex: supportIndex}) => {
+    socket.on("toggleCardTap", ({ tableId, targetPlayer, zone, supportIndex }) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
 
@@ -393,23 +392,25 @@ io.on("connection", socket => {
 
         if (!targetCard) return socket.emit("errorMsg", "Target card not found to tap.");
 
-        // Execute the orientation mutation on the server data model
+        // 1. Mutate the server data model silently
         targetCard.isTapped = !targetCard.isTapped;
 
-        // Aggregate all multi-socket connections
-        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
+        // 2. Build the lightweight, UUID-safe animation payload
+        const animationPayload = {
+            targetPlayer: targetPlayer,
+            uuid: targetCard.uuid, // Track this specific physical copy copy
+            zone: zone,
+            supportIndex: zone === "support" ? parseInt(supportIndex) : null,
+            isTapped: targetCard.isTapped
+        };
 
-        // Broadcast safe, secure, role-aware frames via your serialization engine
+        // 3. Broadcast the animation instruction
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
         targetSockets.forEach(sockId => {
-            const sock = io.sockets.sockets.get(sockId);
-            if (sock) {
-                let viewerRole = "spectator";
-                if (table.playerA.includes(sockId)) viewerRole = "playerA";
-                if (table.playerB.includes(sockId)) viewerRole = "playerB";
-                sendSanitizedState(sock, table, viewerRole);
-            }
+            io.to(sockId).emit("cardTap", animationPayload);
         });
     });
+
 
     socket.on("playCardToSupport", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
