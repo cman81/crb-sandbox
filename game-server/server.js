@@ -129,22 +129,29 @@ function leaveAll(socketId) {
 }
 
 io.on('connection', (socket) => {
-  socket.on('joinTable', ({ tableId, role }) => {
+  socket.on("joinTable", ({ tableId, role }) => {
     const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
+    if (!table) return socket.emit("errorMsg", "Table not found.");
+    
+    // Clear out stale variable trackers
     leaveAll(socket.id);
 
-    if (role === 'playerA' && !table.playerA) table.playerA = socket.id;
-    else if (role === 'playerB' && !table.playerB) table.playerB = socket.id;
-    else if (role === 'spectator') table.spectators.push(socket.id);
-    else return socket.emit('errorMsg', 'Seat taken.');
+    // 1. Assign the player identifier string references
+    if (role === "playerA" && !table.playerA) table.playerA = socket.id;
+    else if (role === "playerB" && !table.playerB) table.playerB = socket.id;
+    else if (role === "spectator") table.spectators.push(socket.id);
+    else return socket.emit("errorMsg", "Seat taken.");
 
-    // --- ADD THIS LINE TO AUTO-REVOKE FLAG ON JOIN/REJOIN ---
-    if (role === 'playerA' || role === 'playerB') {
-      table.endGameSignals[role] = false;
-    }
+    // 2. THE FIX: Channel the socket into a dedicated, predictable Room Name string
+    const targetRoomName = `table-${tableId}-${role}`;
+    socket.join(targetRoomName);
     
-  });
+    console.log(`📡 [ROOM JOIN]: Socket ${socket.id} locked into room: ${targetRoomName}`);
+
+    if (role === "playerA" || role === "playerB") {
+        table.endGameSignals[role] = false;
+    }
+});
 
   socket.on('leaveTable', () => leaveAll(socket.id));
   socket.on('disconnect', () => leaveAll(socket.id));
@@ -195,102 +202,88 @@ io.on('connection', (socket) => {
     socket.emit('serverNotice', `Deck shuffled successfully using random UUID sort!`);
   });
 
-  socket.on('drawCard', ({ tableId, targetPlayer }) => {
+  socket.on("drawCard", ({ tableId, targetPlayer }) => {
     const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
+    if (!table) return socket.emit("errorMsg", "Table not found.");
 
     const deck = table.gameState[targetPlayer]?.deck;
     const hand = table.gameState[targetPlayer]?.hand;
 
     if (!deck || deck.length === 0) {
-      return socket.emit('errorMsg', `${targetPlayer}'s deck is empty! Cannot draw.`);
+      return socket.emit("errorMsg", `${targetPlayer}'s deck is empty! Cannot draw.`);
     }
 
-    // Process the physical card draw
     const drawnCard = deck.pop();
-    drawnCard.isFaceDown = false; 
+    drawnCard.isFaceDown = false;
     hand.push(drawnCard);
 
-    // --- Dynamic Network Notification Broadcasting ---
+    // FIX: Using name string to match your updated schema choice
     const maskCard = () => ({ name: "Card Back", isFaceDown: true });
     
-    // 1. The Owner Payload (Full card identity data)
-    const ownerPayload = {
-      targetPlayer,
-      card: drawnCard,
-      deckCount: deck.length
-    };
+    const ownerPayload = { targetPlayer: targetPlayer, card: drawnCard, deckCount: deck.length };
+    const opponentPayload = { targetPlayer: targetPlayer, card: maskCard(), deckCount: deck.length };
 
-    // 2. The Opponent Payload (Masked card back identity data)
-    const opponentPayload = {
-      targetPlayer,
-      card: maskCard(),
-      deckCount: deck.length
-    };
+    // Define room locations
+    const ownerRoom = `table-${tableId}-${targetPlayer}`;
+    const opponentPlayerKey = targetPlayer === "playerA" ? "playerB" : "playerA";
+    const opponentRoom = `table-${tableId}-${opponentPlayerKey}`;
 
-    // 3. The Spectator Payload (Full card identity data)
-    const spectatorPayload = {
-      targetPlayer,
-      card: drawnCard,
-      deckCount: deck.length
-    };
+    // 1. BROADCAST TO ROOMS (For synchronization across multiple hosted clients)
+    io.to(ownerRoom).emit("cardDrawnUpdate", ownerPayload);
+    io.to(opponentRoom).emit("cardDrawnUpdate", opponentPayload);
 
-    // Route notifications accurately based on the drawing player slot
-    if (targetPlayer === 'playerA') {
-      if (table.playerA) io.to(table.playerA).emit('cardDrawnUpdate', ownerPayload);
-      if (table.playerB) io.to(table.playerB).emit('cardDrawnUpdate', opponentPayload);
-    } else {
-      if (table.playerA) io.to(table.playerA).emit('cardDrawnUpdate', opponentPayload);
-      if (table.playerB) io.to(table.playerB).emit('cardDrawnUpdate', ownerPayload);
-    }
+    // 2. THE CRUCIAL DIRECT ROUTE FIX: Force a direct message to the clicking socket.
+    // This guarantees your local machine catches the event instantly, regardless of room state rules.
+    socket.emit("cardDrawnUpdate", ownerPayload);
 
-    // Spectators always get full X-Ray data pushed directly
+    // Stream to spectators room
     table.spectators.forEach(specId => {
-      io.to(specId).emit('cardDrawnUpdate', spectatorPayload);
+      io.to(specId).emit("cardDrawnUpdate", ownerPayload);
     });
 
-    socket.emit('serverNotice', `${targetPlayer} successfully drew 1 card.`);
+    socket.emit("serverNotice", `${targetPlayer} successfully drew 1 card.`);
   });
 
-  socket.on('draw6Cards', ({ tableId, targetPlayer }) => {
+  socket.on("draw6Cards", ({ tableId, targetPlayer }) => {
     const table = tables.find(t => t.id === parseInt(tableId));
-    if (!table) return socket.emit('errorMsg', 'Table not found.');
+    if (!table) return socket.emit("errorMsg", "Table not found.");
 
     const deck = table.gameState[targetPlayer]?.deck;
     const hand = table.gameState[targetPlayer]?.hand;
 
     if (!deck || deck.length < 6) {
-      return socket.emit('errorMsg', `Not enough cards in ${targetPlayer}'s deck to draw 6!`);
+      return socket.emit("errorMsg", `Not enough cards in ${targetPlayer}'s deck to draw 6!`);
     }
 
     const maskCard = () => ({ name: "Card Back", isFaceDown: true });
+    
+    const ownerRoom = `table-${tableId}-${targetPlayer}`;
+    const opponentPlayerKey = targetPlayer === "playerA" ? "playerB" : "playerA";
+    const opponentRoom = `table-${tableId}-${opponentPlayerKey}`;
 
-    // Loop exactly 6 times, replicating single-draw logic perfectly per iteration
+    console.log(`⚡ [SERVER MACRO]: Processing 6-card opening hand block draw loop for ${targetPlayer}...`);
+
     for (let i = 0; i < 6; i++) {
       const drawnCard = deck.pop();
-      drawnCard.isFaceDown = false; 
+      drawnCard.isFaceDown = false;
       hand.push(drawnCard);
 
-      // Construct individual tailored, minimal data streams
-      const ownerPayload = { targetPlayer, card: drawnCard, deckCount: deck.length };
-      const opponentPayload = { targetPlayer, card: maskCard(), deckCount: deck.length };
-      const spectatorPayload = { targetPlayer, card: drawnCard, deckCount: deck.length };
+      const ownerPayload = { targetPlayer: targetPlayer, card: drawnCard, deckCount: deck.length };
+      const opponentPayload = { targetPlayer: targetPlayer, card: maskCard(), deckCount: deck.length };
 
-      // Dispatch real-time updates instantly based on seats
-      if (targetPlayer === 'playerA') {
-        if (table.playerA) io.to(table.playerA).emit('cardDrawnUpdate', ownerPayload);
-        if (table.playerB) io.to(table.playerB).emit('cardDrawnUpdate', opponentPayload);
-      } else {
-        if (table.playerA) io.to(table.playerA).emit('cardDrawnUpdate', opponentPayload);
-        if (table.playerB) io.to(table.playerB).emit('cardDrawnUpdate', ownerPayload);
-      }
+      // 1. Send to rooms
+      io.to(ownerRoom).emit("cardDrawnUpdate", ownerPayload);
+      io.to(opponentRoom).emit("cardDrawnUpdate", opponentPayload);
+
+      // 2. THE CRUCIAL DIRECT ROUTE FIX: Mirror directly to the local clicking socket
+      socket.emit("cardDrawnUpdate", ownerPayload);
 
       table.spectators.forEach(specId => {
-        io.to(specId).emit('cardDrawnUpdate', spectatorPayload);
+        io.to(specId).emit("cardDrawnUpdate", ownerPayload);
       });
     }
 
-    socket.emit('serverNotice', `${targetPlayer} successfully drew a 6-card opening hand.`);
+    socket.emit("serverNotice", `${targetPlayer} successfully drew a 6-card opening hand.`);
   });
 
   socket.on("executeDevMulligan", ({ tableId, targetPlayer }) => {

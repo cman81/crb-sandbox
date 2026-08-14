@@ -455,14 +455,6 @@ class GameScene extends Phaser.Scene {
         });
 
         // --- KEYBOARD SHORTCUTS: T FOR TOP DECK, B FOR BOTTOM DECK ---
-        this.input.keyboard.on("keydown-T", () => {
-            // CHANGE: Allow 'T' shortcut only if not over a battlefield card
-            if (this.role === "spectator") return;
-            const mouseX = this.input.activePointer.x;
-            const mouseY = this.input.activePointer.y;
-            this.handleHandToDeckShortcut(mouseX, mouseY, "top");
-        });
-
         this.input.keyboard.on("keydown-B", () => {
             if (this.role === "spectator") return;
             const mouseX = this.input.activePointer.x;
@@ -1045,35 +1037,42 @@ class GameScene extends Phaser.Scene {
         const totalDeckCount = deckArray ? deckArray.length || 0 : 0;
         const countYOffset = -this.cardHeight / 2 - 15;
 
-        this.add.text(point.x, point.y + countYOffset, `DECK: ${totalDeckCount}`, { fontSize: "11px", fontFamily: "monospace", fill: "#64748b", fontWeight: "bold" }).setOrigin(0.5);
+        // 1. Render the structural deck size tracking label text
+        this.add.text(point.x, point.y + countYOffset, `DECK: ${totalDeckCount}`, {
+            fontSize: "11px",
+            fontFamily: "monospace",
+            fill: "#64748b",
+            fontWeight: "bold"
+        }).setOrigin(0.5);
 
-        // Render an "Untap All" batch macro trigger directly over the local deck area
+        // 2. Setup the unified interaction hit zone for the player seat
         if (isLocalSeat && this.role !== "spectator") {
             if (this.localDeckHitZone) this.localDeckHitZone.destroy();
+            
+            // This zone handles ALL deck mouse click processing cleanly
             this.localDeckHitZone = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
-            this.localDeckHitZone.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+            this.localDeckHitZone.setInteractive({ useHandCursor: true });
+            
+            this.localDeckHitZone.on("pointerdown", () => {
+                console.log("🎲 [ENGINE CLICK]: Clean singular deck draw event issued.");
                 this.socket.emit("drawCard", { tableId: this.tableId, targetPlayer: this.role });
             });
 
+            // Setup untap macro helper button layout
             const untapStyle = { fontSize: "11px", fontFamily: "monospace", fill: "#10b981", fontWeight: "bold", backgroundColor: "#064e3b", padding: { x: 8, y: 4 } };
             const untapAllBtn = this.add.text(point.x - 75, point.y + countYOffset, "UNTAP ALL", untapStyle).setOrigin(0.5);
-            this.fieldGraphics.lineStyle(1, 1096065, 0.5);
+            this.fieldGraphics.lineStyle(1, 1096065, .5);
             this.fieldGraphics.strokeRect(untapAllBtn.x - untapAllBtn.width / 2, untapAllBtn.y - untapAllBtn.height / 2, untapAllBtn.width, untapAllBtn.height);
+            
             untapAllBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
                 this.executeUntapAllMacro();
             });
         }
 
-        // Render the physical card back pile if deck length > 0
+        // 3. Render visual deck pile asset placeholder using your fallback layout manager
         if (totalDeckCount > 0) {
-            const deckSprite = this.add.image(point.x, point.y, "system_ui", "card_back");
-            deckSprite.setDisplaySize(this.cardWidth, this.cardHeight).setDepth(10);
-            
-            if (isLocalSeat && this.role !== "spectator") {
-                deckSprite.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
-                    this.socket.emit("drawCard", { tableId: this.tableId, targetPlayer: this.role });
-                });
-            }
+            // FIX: Simply draw the card back. DO NOT call .setInteractive() or attach pointer listeners here!
+            this.renderCardSprite(point.x, point.y, { title: "Card Back", isFaceDown: true }, false);
         }
     }
 
