@@ -296,23 +296,9 @@ class GameScene extends Phaser.Scene {
         const halfH = appliedHeight / 2;
         const cardShape = this.add.graphics();
         
-        if (isCardBack) {            
-            cardShape.fillStyle(730437, 1);
-            cardShape.lineStyle(2, 3718648, 1);
-            
-            cardShape.fillRoundedRect(-halfW, -halfH, appliedWidth, appliedHeight, 6);
-            cardShape.strokeRoundedRect(-halfW, -halfH, appliedWidth, appliedHeight, 6);
-            fallbackContainer.add(cardShape);
-
-            const backFontSize = Math.max(7, Math.floor(10 * currentScaleFactor));
-            const backStyle = {
-                fontSize: `${backFontSize}px`,
-                fontFamily: "monospace",
-                fill: "#38bdf8", // Changed text color to cyan to match the framing accents
-                fontWeight: "bold"
-            };
-            const backText = this.add.text(0, 0, "CARD BACK", backStyle).setOrigin(.5);
-            fallbackContainer.add(backText);
+        if (isCardBack) {
+            // FIX: Leverage our newly extracted method to decouple card back graphics completely
+            this.drawVectorCardBack(fallbackContainer, appliedWidth, appliedHeight, currentScaleFactor);
         } else {
             cardShape.fillStyle(0xF5F5F5, 1);       
             cardShape.lineStyle(2, 0x94a3b8, 1);    
@@ -527,36 +513,72 @@ class GameScene extends Phaser.Scene {
             this.renderFighterZoneContents(point, battleZone[zoneKey]);
             
             // Face-down trickery card back masking layers logic
-            if (zoneKey === "fighterA" && battleZone.fighterA && battleZone.fighterA.card) {
-                const targetCard = battleZone.fighterA.card;
-                const overlayPropName = isLocalSeat ? "localFighterAOverlaySprite" : "remoteFighterAOverlaySprite";
+            if (zoneKey === "fighterA" || zoneKey === "fighterB") {
+                this.renderFighterZoneContents(point, battleZone[zoneKey]);
                 
-                if (this[overlayPropName]) {
-                    this[overlayPropName].destroy();
-                    this[overlayPropName] = null;
-                }
+                if (zoneKey === "fighterA" && battleZone.fighterA && battleZone.fighterA.card) {
+                    const targetCard = battleZone.fighterA.card;
+                    const overlayPropName = isLocalSeat ? "localFighterAOverlaySprite" : "remoteFighterAOverlaySprite";
+                    const tooltipPropName = isLocalSeat ? "localFighterATooltipText" : "remoteFighterATooltipText";
+                    
+                    // Clean up any stale overlay instances
+                    if (this[overlayPropName]) {
+                        this[overlayPropName].destroy();
+                        this[overlayPropName] = null;
+                    }
+                    // Clean up any stale tooltip instances
+                    if (this[tooltipPropName]) {
+                        this[tooltipPropName].destroy();
+                        this[tooltipPropName] = null;
+                    }
 
-                const isCurrentlyFaceDown = !!targetCard.isFaceDown || targetCard.isFaceUp === false;
-                if (isCurrentlyFaceDown) {
-                    this[overlayPropName] = this.add.image(point.x, point.y, "system_ui", "card_back");
-                    this[overlayPropName].setDisplaySize(this.cardWidth, this.cardHeight);
-                    this[overlayPropName].setDepth(120);
+                    const isCurrentlyFaceDown = !!targetCard.isFaceDown || targetCard.isFaceUp === false;
+                    if (isCurrentlyFaceDown) {
+                        // Render the Card Back Overlay
+                        this[overlayPropName] = this.add.image(point.x, point.y, "system_ui", "card_back");
+                        this[overlayPropName].setDisplaySize(this.cardWidth, this.cardHeight);
+                        this[overlayPropName].setDepth(120);
 
-                    if (isLocalSeat && this.role !== "spectator") {
-                        this[overlayPropName].setInteractive({ useHandCursor: true });
-                        this[overlayPropName].on("pointerdown", () => {
-                            console.log("👁️ [LOCAL TRICKERY]: Flipping card face up...");
-                            if (battleZone.fighterA && battleZone.fighterA.card) {
-                                battleZone.fighterA.card.isFaceDown = false;
-                                battleZone.fighterA.card.isFaceUp = true;
-                            }
-                            if (this[overlayPropName]) {
-                                this[overlayPropName].destroy();
-                                this[overlayPropName] = null;
-                            }
-                            this.socket.emit("flipCardFaceUp", { tableId: this.tableId, targetPlayer: this.role });
-                            this.handleStateRenderingLoop(this.lastReceivedState);
-                        });
+                        // --- NEW: FACE-DOWN TRICKERY TOOLTIP DISPLAY LOGIC ---
+                        // Position the tooltip 70 pixels to the right of the card center
+                        const tooltipX = point.x + (this.cardWidth / 2) + 15;
+                        const tooltipStyle = {
+                            fontSize: "11px",
+                            fontFamily: "monospace",
+                            fill: "#38bdf8",
+                            fontWeight: "bold",
+                            backgroundColor: "#0f172a",
+                            padding: { x: 8, y: 4 }
+                        };
+
+                        this[tooltipPropName] = this.add.text(tooltipX, point.y, "💡 Click to reveal when ready", tooltipStyle).setOrigin(0, 0.5);
+                        this[tooltipPropName].setDepth(130);
+                        
+                        // Draw a subtle cyan accent line connecting the card edge to the tooltip balloon
+                        this.fieldGraphics.lineStyle(1, 3718648, 0.6);
+                        this.fieldGraphics.lineBetween(point.x + (this.cardWidth / 2), point.y, tooltipX, point.y);
+                        // ------------------------------------------------------
+
+                        if (isLocalSeat && this.role !== "spectator") {
+                            this[overlayPropName].setInteractive({ useHandCursor: true });
+                            this[overlayPropName].on("pointerdown", () => {
+                                console.log("👁️ [LOCAL TRICKERY]: Flipping card face up...");
+                                if (battleZone.fighterA && battleZone.fighterA.card) {
+                                    battleZone.fighterA.card.isFaceDown = false;
+                                    battleZone.fighterA.card.isFaceUp = true;
+                                }
+                                if (this[overlayPropName]) {
+                                    this[overlayPropName].destroy();
+                                    this[overlayPropName] = null;
+                                }
+                                if (this[tooltipPropName]) {
+                                    this[tooltipPropName].destroy();
+                                    this[tooltipPropName] = null;
+                                }
+                                this.socket.emit("flipCardFaceUp", { tableId: this.tableId, targetPlayer: this.role });
+                                this.handleStateRenderingLoop(this.lastReceivedState);
+                            });
+                        }
                     }
                 }
             }
@@ -883,61 +905,83 @@ class GameScene extends Phaser.Scene {
     }
 
     // --- SUB-ROUTINE 7: CARD INSPECTOR WRAPPER ---
-    drawPreviewPanel() {
-        const preview = this.fieldCoordinates.previewAnchor;
-        const bigWidth = 260;
-        const bigHeight = 364;
-        const boundaryLeft = 1536;
-        const visualElementsToDestroy = [];
+    drawPreviewPanel(){
+    const preview = this.fieldCoordinates.previewAnchor;
+    const bigWidth = 260;
+    const bigHeight = 364;
+    const boundaryLeft = 1536;
+    const visualElementsToDestroy = [];
 
-        // 1. Perform isolated right-panel cleanup sweeps
-        this.children.list.forEach(child => {
-            if ((child.type === "Text" || child.type === "Image" || child.type === "Container") && child.x > boundaryLeft) {
-                visualElementsToDestroy.push(child);
-            }
-        });
-        visualElementsToDestroy.forEach(child => child.destroy());
-
-        // 2. Render background card framing plate
-        this.fieldGraphics.fillStyle(0x020617, 1); // Deep slate background
-        this.fieldGraphics.fillRect(preview.x - bigWidth / 2, preview.y - bigHeight / 2, bigWidth, bigHeight);
-        this.fieldGraphics.lineStyle(3, this.selectedPreviewCard ? 0x38bdf8 : 0x334155, 1);
-        this.fieldGraphics.strokeRect(preview.x - bigWidth / 2, preview.y - bigHeight / 2, bigWidth, bigHeight);
-
-        // 3. Render contents using the unified rendering pipeline
-        if (this.selectedPreviewCard) {
-            const card = this.selectedPreviewCard;
-            
-            // Temporarily scale configuration globals to render a high-visibility inspection model
-            const savedW = this.cardWidth;
-            const savedH = this.cardHeight;
-            this.cardWidth = bigWidth;
-            this.cardHeight = bigHeight;
-
-            // Route the card directly into your centralized asset check engine
-            this.renderCardSprite(preview.x, preview.y, card, false);
-
-            // Restore standard layout footprint constants
-            this.cardWidth = savedW;
-            this.cardHeight = savedH;
-
-            // Overlay tracking data information text lines
-            const isUnknown = card.title === "Card Back" || card.name === "Card Back";
-            this.add.text(preview.x, preview.y + bigHeight / 2 + 20, `CODE: ${isUnknown ? "UNKNOWN HIDDEN" : (card.id || "N/A")}`, {
-                fontSize: "13px",
-                fontFamily: "monospace",
-                fill: "#38bdf8",
-                fontWeight: "bold"
-            }).setOrigin(0.5);
-        } else {
-            this.add.text(preview.x, preview.y, "[ HOVER CURSOR OVER A CARD\n& PRESS SPACEBAR TO INSPECT ]", {
-                fontSize: "12px",
-                fontFamily: "monospace",
-                fill: "#64748b",
-                align: "center"
-            }).setOrigin(0.5);
+    // Clear old elements past the canvas split boundary line
+    this.children.list.forEach(child => {
+        if ((child.type === "Text" || child.type === "Image" || child.type === "Container") && child.x > boundaryLeft) {
+            visualElementsToDestroy.push(child);
         }
+    });
+    visualElementsToDestroy.forEach(child => child.destroy());
+
+    // --- NEW: UPPER RIGHT KEYBOARD QUICK REFERENCE PANEL ---
+    const panelX = 1556;
+    const panelY = 55;
+    
+    // Panel Styling Guidelines
+    const labelStyle = { fontSize: "11px", fontFamily: "monospace", fill: "#94a3b8", fontWeight: "bold" };
+    const keyStyle = { fontSize: "11px", fontFamily: "monospace", fill: "#38bdf8", fontWeight: "bold" };
+    const descStyle = { fontSize: "11px", fontFamily: "monospace", fill: "#e2e8f0" };
+
+    this.add.text(panelX, panelY, "⌨️ KEYBOARD SHORTCUTS (HOVER + PRESS)", labelStyle);
+    
+    const shortcuts = [
+        { key: "[SPACE]", desc: "Inspect Card Info" },
+        { key: "[T]    ", desc: "Tap Card (Arena) / Top-Deck a Card (Hand)" },
+        { key: "[D]    ", desc: "Play / Discard (Hand) " },
+        { key: "[F]    ", desc: "Place Fighter A Face-Down" },
+        { key: "[S]    ", desc: "Play as Stage" },
+        { key: "[B]    ", desc: "Bottom-Deck a Card" }
+    ];
+
+    shortcuts.forEach((item, index) => {
+        const rowY = panelY + 22 + (index * 18);
+        // Print the active hotkey character tag
+        this.add.text(panelX, rowY, item.key, keyStyle);
+        // Print the localized execution action string description offset horizontally
+        this.add.text(panelX + 60, rowY, `- ${item.desc}`, descStyle);
+    });
+    // --------------------------------------------------------
+
+    // Keep your core Big Card Inspection Preview drawing logic exactly the same below...
+    this.fieldGraphics.fillStyle(132631, 1);
+    this.fieldGraphics.fillRect(preview.x - bigWidth / 2, preview.y - bigHeight / 2, bigWidth, bigHeight);
+    this.fieldGraphics.lineStyle(3, this.selectedPreviewCard ? 3718648 : 3359061, 1);
+    this.fieldGraphics.strokeRect(preview.x - bigWidth / 2, preview.y - bigHeight / 2, bigWidth, bigHeight);
+
+    if (this.selectedPreviewCard) {
+        const card = this.selectedPreviewCard;
+        const savedW = this.cardWidth;
+        const savedH = this.cardHeight;
+        this.cardWidth = bigWidth;
+        this.cardHeight = bigHeight;
+        this.renderCardSprite(preview.x, preview.y, card, false);
+        this.cardWidth = savedW;
+        this.cardHeight = savedH;
+        const isUnknown = card.title === "Card Back" || card.name === "Card Back";
+        this.add.text(preview.x, preview.y + bigHeight / 2 + 20, `CODE: ${isUnknown ? "UNKNOWN HIDDEN" : card.id || "N/A"}`, {
+            fontSize: "13px",
+            fontFamily: "monospace",
+            fill: "#38bdf8",
+            fontWeight: "bold"
+        }).setOrigin(.5);
+    } else {
+        this.add.text(preview.x, preview.y, "[ HOVER CURSOR OVER A CARD\n& PRESS SPACEBAR TO INSPECT ]", {
+            fontSize: "12px",
+            fontFamily: "monospace",
+            fill: "#64748b",
+            align: "center"
+        }).setOrigin(.5);
     }
+}
+
+
 
     // --- HELPER METHOD: MOUSE VECTOR SCANNER ---
     scanCardHitboxesForPreview(mouseX, mouseY) {
@@ -1647,4 +1691,72 @@ class GameScene extends Phaser.Scene {
             }
         }
     }
+
+    drawVectorCardBack(container, width, height, scaleFactor) {
+        const halfW = width / 2;
+        const halfH = height / 2;
+        const cardShape = this.add.graphics();
+        
+        // Cookie Run: Braverse style tones
+        // Base Midnight Royal Blue Fill: #0B2545 (730437)
+        // Neon Cyan Border Accent: #38BDF8 (3718648)
+        // Dark Stripe Accent Overlay: #134074 (1261684)
+        cardShape.fillStyle(730437, 1);
+        cardShape.lineStyle(2, 3718648, 1);
+        
+        // 1. Core Card Frame Boundaries
+        cardShape.fillRoundedRect(-halfW, -halfH, width, height, 6);
+        cardShape.strokeRoundedRect(-halfW, -halfH, width, height, 6);
+
+        // 2. Linear Diagonal Striping Texture Layer
+        cardShape.lineStyle(2, 1261684, 0.4); 
+        const stripeSpacing = Math.max(10, Math.floor(16 * scaleFactor));
+        
+        for (let offset = -height; offset < width + height; offset += stripeSpacing) {
+            let startX = offset;
+            let startY = -halfH;
+            let endX = offset + height;
+            let endY = halfH;
+
+            // Manual canvas boundary clamping to keep lines safe inside corners
+            if (startX < -halfW) {
+                startY += (-halfW - startX);
+                startX = -halfW;
+            }
+            if (endX > halfW) {
+                endY -= (endX - halfW);
+                endX = halfW;
+            }
+
+            if (startY < halfH && endY > -halfH && startX < halfW && endX > -halfW) {
+                cardShape.lineBetween(startX, startY, endX, endY);
+            }
+        }
+        container.add(cardShape);
+
+        // 3. Centered Large "CRB" Emblem Typography
+        const logoFontSize = Math.max(14, Math.floor(22 * scaleFactor));
+        const logoStyle = {
+            fontSize: `${logoFontSize}px`,
+            fontFamily: "monospace",
+            fill: "#38bdf8",
+            fontWeight: "900",
+            align: "center"
+        };
+        const logoText = this.add.text(0, -Math.floor(10 * scaleFactor), "CRB", logoStyle).setOrigin(0.5);
+        container.add(logoText);
+
+        // 4. "Sandbox" Script Tagline Placement
+        const tagFontSize = Math.max(8, Math.floor(11 * scaleFactor));
+        const tagStyle = {
+            fontSize: `${tagFontSize}px`,
+            fontFamily: "monospace",
+            fill: "#e2e8f0",
+            fontWeight: "bold",
+            align: "center"
+        };
+        const tagText = this.add.text(0, Math.floor(16 * scaleFactor), "Sandbox", tagStyle).setOrigin(0.5);
+        container.add(tagText);
+    }
+
 }
