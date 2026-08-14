@@ -422,6 +422,20 @@ class GameScene extends Phaser.Scene {
         } else if(this.drawerContainer){
             this.drawerContainer.setVisible(false);
         }
+
+        if (state.endGameSignals) {
+            const signals = state.endGameSignals;
+            const signalStatusText = `PROPOSAL MATRIX -> A: ${signals.playerA ? "🚨 APPROVED" : "🟢 READY"} | B: ${signals.playerB ? "🚨 APPROVED" : "🟢 READY"}`;
+            
+            // Render a small, scannable administrative status tracker text layout on the UI header
+            if (this.matchProposalAdminText) this.matchProposalAdminText.destroy();
+            this.matchProposalAdminText = this.add.text(960, 85, signalStatusText, {
+                fontSize: "11px",
+                fontFamily: "monospace",
+                fill: "#94a3b8",
+                fontWeight: "bold"
+            }).setOrigin(.5);
+        }
     }
 
     // --- SUB-ROUTINE 1: LAYER RESET ---

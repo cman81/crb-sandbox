@@ -44,54 +44,44 @@ const tables = Array.from({ length: 8 }, (_, i) => ({
 }));
 
 
-function sendSanitizedState(socket, table, role) {
+function sendSanitizedState(socket, table, role){
     const maskCard = () => ({ name: "Card Back", isFaceDown: true });
-
     const sanitizeZone = (zone, isVisible) => {
         if (isVisible) return zone;
-        return Array.isArray(zone) ? zone.map(maskCard) : (Object.keys(zone).length ? maskCard() : {});
+        return Array.isArray(zone) ? zone.map(maskCard) : Object.keys(zone).length ? maskCard() : {};
     };
-
-    // --- Fixed, Secure Role-Aware BattleZone Masking ---
+    
     const sanitizeBattleZone = (battleZone, zoneOwner, viewerRole) => {
         if (!battleZone) return null;
-
-        const isSpec = viewerRole === 'spectator';
+        const isSpec = viewerRole === "spectator";
         const isOwner = viewerRole === zoneOwner;
-
-        // Helper function to hide a single card if it's face down and viewed by an opponent
-        const maskIfHidden = (card) => {
+        const maskIfHidden = card => {
             if (!card || Object.keys(card).length === 0) return null;
             if (card.isFaceDown && !isOwner && !isSpec) return maskCard();
             return card;
         };
-
         return {
             stage: battleZone.stage,
             fighterA: {
                 card: maskIfHidden(battleZone.fighterA.card),
-                // CHANGE: Only spectators see the real cards inside the stack. 
-                // Players (even the owner) only see card backs!
-                faceDownStack: isSpec
-                    ? battleZone.fighterA.faceDownStack
-                    : battleZone.fighterA.faceDownStack.map(maskCard)
+                faceDownStack: isSpec ? battleZone.fighterA.faceDownStack : battleZone.fighterA.faceDownStack.map(maskCard)
             },
             fighterB: {
                 card: maskIfHidden(battleZone.fighterB.card),
-                // CHANGE: Applied identically to fighterB's stack
-                faceDownStack: isSpec
-                    ? battleZone.fighterB.faceDownStack
-                    : battleZone.fighterB.faceDownStack.map(maskCard)
+                faceDownStack: isSpec ? battleZone.fighterB.faceDownStack : battleZone.fighterB.faceDownStack.map(maskCard)
             }
         };
     };
 
-    const isSpec = role === 'spectator';
-    const canSeeA = isSpec || role === 'playerA';
-    const canSeeB = isSpec || role === 'playerB';
+    const isSpec = role === "spectator";
+    const canSeeA = isSpec || role === "playerA";
+    const canSeeB = isSpec || role === "playerB";
     const state = table.gameState;
 
-    socket.emit('stateUpdate', {
+    // Standardized Payload: Includes FOW cards AND absolute match parameters
+    socket.emit("stateUpdate", {
+        tableId: table.id,
+        endGameSignals: table.endGameSignals, // Explicitly unified here
         playerA: {
             hand: sanitizeZone(state.playerA.hand, canSeeA),
             deck: sanitizeZone(state.playerA.deck, isSpec),
@@ -99,8 +89,8 @@ function sendSanitizedState(socket, table, role) {
             discard: state.playerA.discard,
             support: state.playerA.support,
             defeated: state.playerA.defeated,
-            // Pass 'playerA' as the zone owner to check permissions against the viewer's role
-            battleZone: sanitizeBattleZone(state.playerA.battleZone, 'playerA', role)
+            defeatedPoints: state.playerA.defeatedPoints,
+            battleZone: sanitizeBattleZone(state.playerA.battleZone, "playerA", role)
         },
         playerB: {
             hand: sanitizeZone(state.playerB.hand, canSeeB),
@@ -109,8 +99,8 @@ function sendSanitizedState(socket, table, role) {
             discard: state.playerB.discard,
             support: state.playerB.support,
             defeated: state.playerB.defeated,
-            // Pass 'playerB' as the zone owner to check permissions against the viewer's role
-            battleZone: sanitizeBattleZone(state.playerB.battleZone, 'playerB', role)
+            defeatedPoints: state.playerB.defeatedPoints,
+            battleZone: sanitizeBattleZone(state.playerB.battleZone, "playerB", role)
         }
     });
 }
@@ -801,92 +791,63 @@ io.on("connection", socket => {
         socket.emit("serverNotice", `Mulligan completed! Hand returned to deck tail, scrambled via UUID, and 6 cards redrawn.`);
     });
 
-    socket.on('signalEndGame', ({ tableId, targetPlayer }) => {
+    socket.on("signalEndGame", ({ tableId, targetPlayer }) => {
         const table = tables.find(t => t.id === parseInt(tableId));
-        if (!table) return socket.emit('errorMsg', 'Table not found.');
-        if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') {
-            return socket.emit('errorMsg', 'Invalid player role targeted.');
-        }
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+        if (targetPlayer !== "playerA" && targetPlayer !== "playerB") return socket.emit("errorMsg", "Invalid player role.");
 
-        // 1. Commit the pending intent signal flag to the staging map
         table.endGameSignals[targetPlayer] = true;
 
-        // Broadcast status to the developer stream and active clients
-        const signalStatus = `Player A: ${table.endGameSignals.playerA ? '🚨' : '🟢'} | Player B: ${table.endGameSignals.playerB ? '🚨' : '🟢'}`;
-        io.emit('serverNotice', `[TABLE ${tableId} ADMIN]: Match end proposed. Current matrix: ${signalStatus}`);
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
 
-        // Dispatch a targeted logging update for the developer mode console listeners
-        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean);
-        targetSockets.forEach(sockId => {
-            const sock = io.sockets.sockets.get(sockId);
-            if (sock) sock.emit('endGameSignalUpdate', { tableId: table.id, ...table.endGameSignals });
-        });
-
-        // 2. RESOLUTION RESOLVER: Check if BOTH active seats have consented to clear the table
+        // Check if mutual consent is achieved
         if (table.endGameSignals.playerA && table.endGameSignals.playerB) {
-            console.log(`🧼 [SYSTEM RESET TRIPPED]: Mutual consent achieved on Table ${tableId}. Clearing board...`);
+            console.log(`🧼 [SYSTEM RESET]: Mutual consent achieved on Table ${tableId}. Resetting board...`);
             
-            // Use spread syntax to cleanly flatten multi-socket arrays into spectators
+            // Flatten multi-socket arrays securely into spectators list
             if (Array.isArray(table.playerA)) table.spectators.push(...table.playerA);
             if (Array.isArray(table.playerB)) table.spectators.push(...table.playerB);
             
-            // RESET SEATS TO RE-INITIALIZED ARRAYS, NEVER NULL
+            // Sanitize seats back to baseline state arrays
             table.playerA = [];
             table.playerB = [];
             table.endGameSignals.playerA = false;
             table.endGameSignals.playerB = false;
 
-
-            // Hard-scrub all game state nested data structures
             const baselineState = () => ({
-                hand: [], deck: [], extraDeck: [], discard: [], support: [], defeated: [],
-                defeatedPoints: 0,
-                battleZone: {
-                    fighterA: { card: null, faceDownStack: [] },
-                    fighterB: { card: null, faceDownStack: [] },
-                    stage: null
-                }
+                hand: [], deck: [], extraDeck: [], discard: [], support: [], defeated: [], defeatedPoints: 0,
+                battleZone: { fighterA: { card: null, faceDownStack: [] }, fighterB: { card: null, faceDownStack: [] }, stage: null }
             });
-
             table.gameState.playerA = baselineState();
             table.gameState.playerB = baselineState();
-
-            // 3. MULTI-CHANNEL BROADCAST RIPPLE EFFECT
-            // Send specialized developer logger packet
-            targetSockets.forEach(sockId => {
-                const sock = io.sockets.sockets.get(sockId);
-                if (!sock) return;
-
-                sock.emit('tableClearedReset', { tableId: table.id });
-
-                // Force a soft redraw pass. Because players are now spectators, 
-                // they will instantly see a pristine, completely blank screen area.
-                let viewerRole = 'spectator';
-                if (sockId === table.playerA) viewerRole = 'playerA';
-                if (sockId === table.playerB) viewerRole = 'playerB';
-                sendSanitizedState(sock, table, viewerRole);
-            });
-        }
-    });
-
-    socket.on('revokeEndGame', ({ tableId, targetPlayer }) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
-        if (!table) return socket.emit('errorMsg', 'Table not found.');
-        if (targetPlayer !== 'playerA' && targetPlayer !== 'playerB') {
-            return socket.emit('errorMsg', 'Invalid player role targeted.');
         }
 
-        // Retract the signal flag back to idle status
-        table.endGameSignals[targetPlayer] = false;
-
-        const signalStatus = `Player A: ${table.endGameSignals.playerA ? '🚨' : '🟢'} | Player B: ${table.endGameSignals.playerB ? '🚨' : '🟢'}`;
-        io.emit('serverNotice', `[TABLE ${tableId} ADMIN]: Match end proposal revoked. Current matrix: ${signalStatus}`);
-
-        // Update logging streams across developer consoles
-        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean);
+        // Direct, centralized broadcast to all multi-socket pointers
         targetSockets.forEach(sockId => {
             const sock = io.sockets.sockets.get(sockId);
-            if (sock) sock.emit('endGameSignalUpdate', { tableId: table.id, ...table.endGameSignals });
+            if (sock) {
+                let viewerRole = "spectator";
+                if (table.playerA.includes(sockId)) viewerRole = "playerA";
+                if (table.playerB.includes(sockId)) viewerRole = "playerB";
+                sendSanitizedState(sock, table, viewerRole);
+            }
+        });
+    });
+
+    socket.on("revokeEndGame", ({ tableId, targetPlayer }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+        if (targetPlayer !== "playerA" && targetPlayer !== "playerB") return socket.emit("errorMsg", "Invalid player role.");
+
+        table.endGameSignals[targetPlayer] = false;
+
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
+        targetSockets.forEach(sockId => {
+            const sock = io.sockets.sockets.get(sockId);
+            if (sock) {
+                let viewerRole = table.playerA.includes(sockId) ? "playerA" : table.playerB.includes(sockId) ? "playerB" : "spectator";
+                sendSanitizedState(sock, table, viewerRole);
+            }
         });
     });
 
