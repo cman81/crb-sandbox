@@ -4,7 +4,8 @@
   "description": "Competitive Ruleset Battle Sandbox Client Terminal",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "start-chromebook": "electron . --disable-gpu --disable-gpu-compositing"
   },
   "keywords": [],
   "author": "",

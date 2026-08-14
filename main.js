@@ -1,39 +1,82 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, protocol, ipcMain } = require('electron');
+const fs = require('fs');
 const path = require('path');
 
+// 🛠️ Register the custom mod protocol scheme before the app finishes initializing
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'crb-mod', privileges: { bypassCSP: true, secure: true, corsEnabled: true } }
+]);
+
 function createWindow() {
-  // 🎥 Configure a rigid aspect-ratio matching widescreen viewport wrapper frame
   const mainWindow = new BrowserWindow({
     width: 1280,
     height: 720,
-    useContentSize: true, // Guarantees the canvas context receives crisp allocation bounds
+    useContentSize: true,
     resizable: true,
     webPreferences: {
+      nodeIntegration: false,
       contextIsolation: true,
-      nodeIntegration: false
+      // 🔓 Expose a secure path resolution bridge to the front-end scene engine
+      preload: path.join(__dirname, 'preload.js') 
     }
   });
 
-  // 🛡️ Bypasses chromium security headers to prevent internal CORS crashes
-  // when dragging HTML DOM nodes over localized canvas elements offline.
-  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
-    callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        'Content-Security-Policy': ["default-src 'self' 'unsafe-inline' 'unsafe-eval' ws: wss: https:; img-src 'self' data: blob:;"]
+  // 📂 Set up the cross-platform Documents mod pathway map
+  const documentsPath = app.getPath('documents');
+  const modsDirectory = path.join(documentsPath, 'CRB_Sandbox_Mods');
+
+  // Verify the directory exists on the user's hard drive; if not, generate it automatically
+  if (!fs.existsSync(modsDirectory)) {
+    fs.mkdirSync(modsDirectory, { recursive: true });
+    console.log(`📁 Generated initial cross-platform mods repository at: ${modsDirectory}`);
+  }
+
+  // 🔄 Handle the virtual 'crb-mod://' secure loading streams via absolute file buffers
+  protocol.handle('crb-mod', async (request) => {
+    // Convert url link 'crb-mod://BS01.json' into clean file path syntax
+    const assetUrl = request.url.replace('crb-mod://', '');
+    const safeDecodedPath = decodeURIComponent(assetUrl);
+    const fullyResolvedAbsoluteFilePath = path.join(modsDirectory, safeDecodedPath);
+
+    try {
+      // 🛠️ MODERN ELECTRON FIX: Read raw binary stream buffers directly from disk bypassing chromium fetch
+      const fileBuffer = await fs.promises.readFile(fullyResolvedAbsoluteFilePath);
+      
+      // Determine the exact MIME type so Phaser's JSON parser and Image loaders don't crash
+      let mimeType = 'image/png';
+      if (fullyResolvedAbsoluteFilePath.endsWith('.json')) {
+        mimeType = 'application/json';
       }
-    });
+
+      return new Response(fileBuffer, {
+        headers: { 'content-type': mimeType }
+      });
+    } catch (error) {
+      console.warn(`⚠️ Custom asset protocol read fail for: ${safeDecodedPath}`);
+      return new Response(null, { status: 404 });
+    }
   });
 
-  // 📂 BOOT DIRECTLY FROM COMPUTER HARD DRIVE:
-  // Phaser 3 completely bypasses build pipelines and loads flat out of the folder!
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
-
-  // Open the chromium inspector tool belt automatically during sandbox debugging sessions
   mainWindow.webContents.openDevTools();
 }
 
-// OS Lifecycle Listeners
+// 📡 Listen for the front-end scene asking for a list of files in the mods folder
+ipcMain.handle('get-modded-files', async () => {
+  const documentsPath = app.getPath('documents');
+  const modsDirectory = path.join(documentsPath, 'CRB_Sandbox_Mods');
+  
+  try {
+    if (fs.existsSync(modsDirectory)) {
+      // Return a clean flat array of string filenames (e.g., ['BS01.png', 'BS01.json'])
+      return fs.readdirSync(modsDirectory);
+    }
+  } catch (error) {
+    console.error("⚠️ Failed to scan community mod directory:", error);
+  }
+  return [];
+});
+
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {

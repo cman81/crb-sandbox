@@ -518,6 +518,33 @@ class GameScene extends Phaser.Scene {
         this.add.text(20, 560, "🗂️ PLAYER HAND", headerStyle);
         this.add.text(404, 20, `🎮 ARENA ZONE (FIELD TERMINAL ${this.tableId})`, headerStyle);
         this.add.text(1556, 20, "🔍 CARD INSPECTION PREVIEW", headerStyle);
+
+        // 🎨 VISUAL TEXT MOD INDICATOR ENGINE
+        // Read the global registry status parameter passed down by BootScene
+        const isModdedGraphicsActive = this.registry.get('customArtModsActive') === true;
+
+        const engineTagStyle = {
+            fontSize: "11px",
+            fontFamily: "monospace",
+            fontWeight: "bold",
+            padding: { x: 8, y: 4 }
+        };
+
+        if (isModdedGraphicsActive) {
+            // Drop a clean neon teal notification block right inside your arena terminal line area
+            this.add.text(1180, 16, "🎨 MODDED GRAPHICS ENGINE ACTIVE", {
+                ...engineTagStyle,
+                fill: "#38bdf8",
+                backgroundColor: "#0c4a6e"
+            }).setOrigin(0, 0);
+        } else {
+            // Drop a quiet slate gray block showing fallback vector operations are running
+            this.add.text(1180, 16, "⚙️ PROCEDURAL VECTOR ENGINE PROMPT", {
+                ...engineTagStyle,
+                fill: "#94a3b8",
+                backgroundColor: "#1e293b"
+            }).setOrigin(0, 0);
+        }
     }
 
     // --- SUB-ROUTINE 3: FIELD BOARD COORDINATOR ---

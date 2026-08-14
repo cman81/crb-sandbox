@@ -1,6 +1,7 @@
-const { contextBridge } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 
-// Expose safe custom window properties to your Phaser application if needed later
-contextBridge.exposeInMainWorld('electronAPI', {
-  appVersion: '1.0.0'
+// 🌉 Safely expose a secure api bridge to your front-end window context
+contextBridge.exposeInMainWorld('crbElectronBridge', {
+    // Allows Phaser scenes to request an array of all filenames inside the mod directory
+    getModdedFilesList: () => ipcRenderer.invoke('get-modded-files')
 });
