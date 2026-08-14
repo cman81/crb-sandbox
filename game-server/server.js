@@ -316,64 +316,43 @@ io.on("connection", socket => {
         socket.emit("serverNotice", `Mulligan completed! Hand returned to deck tail, scrambled via UUID, and 6 cards redrawn.`);
     });
 
-    socket.on("playCardFaceDown", ({ tableId, targetPlayer, handIndex }) => {
+    socket.on("playCardFaceDown", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
-
         const hand = table.gameState[targetPlayer]?.hand;
-        const battleZone = table.gameState[targetPlayer]?.battleZone;
-        if (!hand || hand.length === 0) return socket.emit("errorMsg", "Hand is empty! Cannot place a fighter card.");
-
+        const bZone = table.gameState[targetPlayer]?.battleZone;
         const idx = parseInt(handIndex);
-        if (isNaN(idx) || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid hand position!");
-
-        // Check if slot is occupied
-        if (battleZone.fighterA.card && Object.keys(battleZone.fighterA.card).length > 0) {
-            return socket.emit("errorMsg", "Fighter A slot is already occupied!");
-        }
+        if (!hand || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid index.");
 
         const [cardToPlay] = hand.splice(idx, 1);
         cardToPlay.isFaceDown = true;
         cardToPlay.isTapped = false;
-        battleZone.fighterA.card = cardToPlay;
+        bZone.fighterA.card = cardToPlay;
 
-        // Fog of War Payloads
-        const maskCard = () => ({ name: "Card Back", isFaceDown: true });
-        const ownerPayload = { targetPlayer: targetPlayer, card: cardToPlay, handCount: hand.length };
-        const opponentPayload = { targetPlayer: targetPlayer, card: maskCard(), handCount: hand.length };
+        const maskCard = () => ({name: "Card Back", isFaceDown: true});
+        const ownerPayload = {targetPlayer: targetPlayer, card: cardToPlay, handCount: hand.length};
+        const opponentPayload = {targetPlayer: targetPlayer, card: maskCard(), handCount: hand.length};
 
-        // Broadcast to matching seats
-        if (targetPlayer === "playerA") {
-            if (table.playerA) io.to(table.playerA).emit("cardPlayedFaceDownUpdate", ownerPayload);
-            if (table.playerB) io.to(table.playerB).emit("cardPlayedFaceDownUpdate", opponentPayload);
-        } else {
-            if (table.playerA) io.to(table.playerA).emit("cardPlayedFaceDownUpdate", opponentPayload);
-            if (table.playerB) io.to(table.playerB).emit("cardPlayedFaceDownUpdate", ownerPayload);
-        }
-        table.spectators.forEach(specId => io.to(specId).emit("cardPlayedFaceDownUpdate", ownerPayload));
-
-        socket.emit("serverNotice", `Placed card from hand index ${idx} face down into ${targetPlayer}'s fighterA position.`);
+        // FIX: Loop arrays while routing proper masked payloads by seat perspective
+        table.playerA.forEach(sid => io.to(sid).emit("cardPlayedFaceDownUpdate", targetPlayer === "playerA" ? ownerPayload : opponentPayload));
+        table.playerB.forEach(sid => io.to(sid).emit("cardPlayedFaceDownUpdate", targetPlayer === "playerB" ? ownerPayload : opponentPayload));
+        table.spectators.forEach(sid => io.to(sid).emit("cardPlayedFaceDownUpdate", ownerPayload));
     });
 
-    socket.on("flipCardFaceUp", ({ tableId, targetPlayer }) => {
+    socket.on("flipCardFaceUp", ({tableId: tableId, targetPlayer: targetPlayer}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
+        const card = table.gameState[targetPlayer]?.battleZone?.fighterA?.card;
+        if (!card) return socket.emit("errorMsg", "No card found.");
 
-        const fighterACard = table.gameState[targetPlayer]?.battleZone?.fighterA?.card;
-        if (!fighterACard || Object.keys(fighterACard).length === 0) {
-            return socket.emit("errorMsg", "No card found in fighterA to flip face up!");
-        }
-
-        fighterACard.isFaceDown = false;
-
-        const payload = { targetPlayer: targetPlayer, card: fighterACard };
-        if (table.playerA) io.to(table.playerA).emit("cardFlippedFaceUpUpdate", payload);
-        if (table.playerB) io.to(table.playerB).emit("cardFlippedFaceUpUpdate", payload);
-        table.spectators.forEach(specId => io.to(specId).emit("cardFlippedFaceUpUpdate", payload));
-
-        socket.emit("serverNotice", `Flipped ${targetPlayer}'s active fighterA card face up.`);
+        card.isFaceDown = false;
+        const payload = {targetPlayer: targetPlayer, card: card};
+        
+        // FIX: Loop arrays to reveal the flipped card to everyone simultaneously
+        table.playerA.forEach(sid => io.to(sid).emit("cardFlippedFaceUpUpdate", payload));
+        table.playerB.forEach(sid => io.to(sid).emit("cardFlippedFaceUpUpdate", payload));
+        table.spectators.forEach(sid => io.to(sid).emit("cardFlippedFaceUpUpdate", payload));
     });
-
 
     socket.on('placeDeckCardToStack', ({ tableId, targetPlayer, targetSlot }) => {
         const table = tables.find(t => t.id === parseInt(tableId));
@@ -472,206 +451,106 @@ io.on("connection", socket => {
         socket.emit('serverNotice', `Played card from hand index ${idx} face up into ${targetPlayer}'s support zone.`);
     });
 
-    socket.on('toggleCardTap', ({ tableId, targetPlayer, zone, supportIndex }) => {
+    socket.on("toggleCardTap", ({tableId: tableId, targetPlayer: targetPlayer, zone: zone, supportIndex: supportIndex}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
-        if (!table) return socket.emit('errorMsg', 'Table not found.');
-
-        const battleZone = table.gameState[targetPlayer]?.battleZone;
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+        const bZone = table.gameState[targetPlayer]?.battleZone;
         const support = table.gameState[targetPlayer]?.support;
+        
         let targetCard = null;
+        if (zone === "fighterA") targetCard = bZone?.fighterA?.card;
+        else if (zone === "fighterB") targetCard = bZone?.fighterB?.card;
+        else if (zone === "stage") targetCard = bZone?.stage;
+        else if (zone === "support") targetCard = support[parseInt(supportIndex)];
 
-        // 1. Locate the physical target card based on the user's selected zone criteria
-        if (zone === 'fighterA') {
-            targetCard = battleZone?.fighterA?.card;
-        } else if (zone === 'fighterB') {
-            targetCard = battleZone?.fighterB?.card;
-        } else if (zone === 'stage') {
-            // 🌟 ADDED STAGE LAYER EVALUATION
-            targetCard = battleZone?.stage;
-        } else if (zone === 'support') {
-            const idx = parseInt(supportIndex);
-            if (!support || isNaN(idx) || idx < 0 || idx >= support.length) {
-                return socket.emit('errorMsg', 'Invalid support lane index.');
-            }
-            targetCard = support[idx];
-        }
-
-        if (!targetCard || Object.keys(targetCard).length === 0) {
-            return socket.emit('errorMsg', `No card found in ${zone} to tap/untap.`);
-        }
-
-        // 2. Flip the boolean value state parameter
+        if (!targetCard) return socket.emit("errorMsg", "Card not found.");
         targetCard.isTapped = !targetCard.isTapped;
 
-        // 3. Construct a public broadcast payload notice
-        const payload = {
-            targetPlayer,
-            zone,
-            supportIndex: zone === 'support' ? parseInt(supportIndex) : null,
-            isTapped: targetCard.isTapped
-        };
-
-        if (table.playerA) io.to(table.playerA).emit('cardTapUpdated', payload);
-        if (table.playerB) io.to(table.playerB).emit('cardTapUpdated', payload);
-        table.spectators.forEach(specId => io.to(specId).emit('cardTapUpdated', payload));
-
-        socket.emit('serverNotice', `Toggled tap state for card in ${zone} to: ${targetCard.isTapped}`);
+        const payload = {targetPlayer: targetPlayer, zone: zone, supportIndex: zone === "support" ? parseInt(supportIndex) : null, isTapped: targetCard.isTapped};
+        
+        // FIX: Loop through player arrays instead of targeting a single string ID
+        table.playerA.forEach(sid => io.to(sid).emit("cardTapUpdated", payload));
+        table.playerB.forEach(sid => io.to(sid).emit("cardTapUpdated", payload));
+        table.spectators.forEach(sid => io.to(sid).emit("cardTapUpdated", payload));
     });
 
-    socket.on('playCardToFighter', ({ tableId, targetPlayer, handIndex, targetSlot }) => {
+    socket.on("playCardToFighter", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex, targetSlot: targetSlot}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
-        if (!table) return socket.emit('errorMsg', 'Table not found.');
-
+        if (!table) return socket.emit("errorMsg", "Table not found.");
         const hand = table.gameState[targetPlayer]?.hand;
-        const battleZone = table.gameState[targetPlayer]?.battleZone;
-
-        if (!hand || hand.length === 0) {
-            return socket.emit('errorMsg', `Hand is empty! No card to play.`);
-        }
-
+        const bZone = table.gameState[targetPlayer]?.battleZone;
         const idx = parseInt(handIndex);
-        if (isNaN(idx) || idx < 0 || idx >= hand.length) {
-            return socket.emit('errorMsg', `Invalid hand position! Choose an index between 0 and ${hand.length - 1}.`);
-        }
+        if (!hand || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid index.");
 
-        if (targetSlot !== 'fighterA' && targetSlot !== 'fighterB') {
-            return socket.emit('errorMsg', 'Invalid fighter target slot.');
-        }
-
-        // Check if slot is already occupied
-        if (battleZone[targetSlot].card && Object.keys(battleZone[targetSlot].card).length > 0) {
-            return socket.emit('errorMsg', `${targetSlot} is already occupied! Move or discard the current card first.`);
-        }
-
-        // Extract card from hand array
         const [cardToPlay] = hand.splice(idx, 1);
-
-        // Normal mid-game plays from hand onto the field are face-up
         cardToPlay.isFaceDown = false;
-        cardToPlay.isTapped = false; // Freshly played cards start untapped
+        cardToPlay.isTapped = false;
+        bZone[targetSlot].card = cardToPlay;
 
-        // Commit to the target battle slot object
-        battleZone[targetSlot].card = cardToPlay;
-
-        // Public zone payload data
-        const payload = {
-            targetPlayer,
-            targetSlot,
-            card: cardToPlay,
-            handCount: hand.length
-        };
-
-        // Broadcast update across the room
-        if (table.playerA) io.to(table.playerA).emit('cardPlayedToFighterUpdate', payload);
-        if (table.playerB) io.to(table.playerB).emit('cardPlayedToFighterUpdate', payload);
-        table.spectators.forEach(specId => io.to(specId).emit('cardPlayedToFighterUpdate', payload));
-
-        socket.emit('serverNotice', `Played card from hand index ${idx} face up into ${targetPlayer}'s ${targetSlot} slot.`);
+        const payload = {targetPlayer: targetPlayer, targetSlot: targetSlot, card: cardToPlay, handCount: hand.length};
+        
+        // FIX: Loop through player arrays instead of targeting a single string ID
+        table.playerA.forEach(sid => io.to(sid).emit("cardPlayedToFighterUpdate", payload));
+        table.playerB.forEach(sid => io.to(sid).emit("cardPlayedToFighterUpdate", payload));
+        table.spectators.forEach(sid => io.to(sid).emit("cardPlayedToFighterUpdate", payload));
     });
 
-    socket.on('moveFighterToDefeated', ({ tableId, targetPlayer, slot }) => {
+    socket.on("moveFighterToDefeated", ({tableId: tableId, targetPlayer: targetPlayer, slot: slot}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
-        if (!table) return socket.emit('errorMsg', 'Table not found.');
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+        const pState = table.gameState[targetPlayer];
+        const targetCard = pState?.battleZone[slot]?.card;
+        if (!targetCard) return socket.emit("errorMsg", "Card not found.");
 
-        const playerState = table.gameState[targetPlayer];
-        if (!playerState) return socket.emit('errorMsg', 'Player state not found.');
-
-        const battleZone = playerState.battleZone;
-        const defeatedZone = playerState.defeated;
-
-        if (slot !== 'fighterA' && slot !== 'fighterB') {
-            return socket.emit('errorMsg', 'Invalid fighter slot selection.');
-        }
-
-        const targetCard = battleZone[slot].card;
-        if (!targetCard || Object.keys(targetCard).length === 0) {
-            return socket.emit('errorMsg', `No card found in ${slot} to move to defeated.`);
-        }
-
-        // Shift card off the battle field slot out into public defeated pile lane
-        battleZone[slot].card = null;
+        pState.battleZone[slot].card = null;
         targetCard.isFaceDown = false;
         targetCard.isTapped = false;
-        defeatedZone.push(targetCard);
+        pState.defeated.push(targetCard);
 
-        const payload = {
-            targetPlayer,
-            slot,
-            card: targetCard,
-            defeatedCount: defeatedZone.length
-        };
-
-        if (table.playerA) io.to(table.playerA).emit('cardMovedToDefeatedZone', payload);
-        if (table.playerB) io.to(table.playerB).emit('cardMovedToDefeatedZone', payload);
-        table.spectators.forEach(specId => io.to(specId).emit('cardMovedToDefeatedZone', payload));
-
-        socket.emit('serverNotice', `Moved card from ${slot} to ${targetPlayer}'s defeated zone pile.`);
+        const payload = {targetPlayer: targetPlayer, slot: slot, card: targetCard, defeatedCount: pState.defeated.length};
+        
+        // FIX: Loop through multi-socket arrays instead of single strings
+        table.playerA.forEach(sid => io.to(sid).emit("cardMovedToDefeatedZone", payload));
+        table.playerB.forEach(sid => io.to(sid).emit("cardMovedToDefeatedZone", payload));
+        table.spectators.forEach(sid => io.to(sid).emit("cardMovedToDefeatedZone", payload));
     });
 
-    socket.on('adjustDefeatedPoints', ({ tableId, targetPlayer, amount }) => {
+    socket.on("adjustDefeatedPoints", ({tableId: tableId, targetPlayer: targetPlayer, amount: amount}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
-        if (!table) return socket.emit('errorMsg', 'Table not found.');
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+        const pState = table.gameState[targetPlayer];
+        if (!pState) return socket.emit("errorMsg", "Player state not found.");
+        
+        pState.defeatedPoints = Math.max(0, pState.defeatedPoints + parseInt(amount));
 
-        const playerState = table.gameState[targetPlayer];
-        if (!playerState) return socket.emit('errorMsg', 'Player state not found.');
-
-        // Adjust points, ensuring they never drop below zero
-        playerState.defeatedPoints = Math.max(0, playerState.defeatedPoints + parseInt(amount));
-
-        const payload = {
-            targetPlayer,
-            totalDefeatedPoints: playerState.defeatedPoints,
-            isEliminated: playerState.defeatedPoints >= 10
-        };
-
-        if (table.playerA) io.to(table.playerA).emit('defeatedPointsTickedUpdate', payload);
-        if (table.playerB) io.to(table.playerB).emit('defeatedPointsTickedUpdate', payload);
-        table.spectators.forEach(specId => io.to(specId).emit('defeatedPointsTickedUpdate', payload));
-
-        let notice = `${targetPlayer}'s Defeated Points updated to: ${playerState.defeatedPoints}`;
-        if (playerState.defeatedPoints >= 10) notice += " 🚨 CRITICAL LIMIT HIT! Player Loses!";
-        socket.emit('serverNotice', notice);
+        const payload = {targetPlayer: targetPlayer, totalDefeatedPoints: pState.defeatedPoints, isEliminated: pState.defeatedPoints >= 10};
+        
+        // FIX: Loop through multi-socket arrays instead of single strings
+        table.playerA.forEach(sid => io.to(sid).emit("defeatedPointsTickedUpdate", payload));
+        table.playerB.forEach(sid => io.to(sid).emit("defeatedPointsTickedUpdate", payload));
+        table.spectators.forEach(sid => io.to(sid).emit("defeatedPointsTickedUpdate", payload));
     });
 
-    socket.on('discardCardFromHand', ({ tableId, targetPlayer, handIndex }) => {
+    socket.on("discardCardFromHand", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
-        if (!table) return socket.emit('errorMsg', 'Table not found.');
-
+        if (!table) return socket.emit("errorMsg", "Table not found.");
         const hand = table.gameState[targetPlayer]?.hand;
         const discard = table.gameState[targetPlayer]?.discard;
-
-        if (!hand || hand.length === 0) {
-            return socket.emit('errorMsg', `Hand is empty! No card to discard.`);
-        }
-
+        if (!hand || hand.length === 0) return socket.emit("errorMsg", "Hand is empty!");
         const idx = parseInt(handIndex);
-        if (isNaN(idx) || idx < 0 || idx >= hand.length) {
-            return socket.emit('errorMsg', `Invalid hand position! Choose an index between 0 and ${hand.length - 1}.`);
-        }
+        if (isNaN(idx) || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid index.");
 
-        // Extract the card from the hand array
         const [cardToDiscard] = hand.splice(idx, 1);
-
-        // Cards in the discard pile are public and face up
         cardToDiscard.isFaceDown = false;
-        cardToDiscard.isTapped = false; // Reset orientation when discarded
-
-        // Append to the end of the public discard pile array stack
+        cardToDiscard.isTapped = false;
         discard.push(cardToDiscard);
 
-        // Build public payload broadcast
-        const payload = {
-            targetPlayer,
-            card: cardToDiscard,
-            discardCount: discard.length,
-            handCount: hand.length
-        };
-
-        if (table.playerA) io.to(table.playerA).emit('cardDiscardedUpdate', payload);
-        if (table.playerB) io.to(table.playerB).emit('cardDiscardedUpdate', payload);
-        table.spectators.forEach(specId => io.to(specId).emit('cardDiscardedUpdate', payload));
-
-        socket.emit('serverNotice', `Discarded card from hand index ${idx} to ${targetPlayer}'s discard pile.`);
+        const payload = {targetPlayer: targetPlayer, card: cardToDiscard, discardCount: discard.length, handCount: hand.length};
+        
+        // FIX: Loop through player arrays instead of targeting a single string
+        table.playerA.forEach(sid => io.to(sid).emit("cardDiscardedUpdate", payload));
+        table.playerB.forEach(sid => io.to(sid).emit("cardDiscardedUpdate", payload));
+        table.spectators.forEach(sid => io.to(sid).emit("cardDiscardedUpdate", payload));
     });
 
     socket.on('playHandToTopDeck', ({ tableId, targetPlayer, handIndex }) => {
