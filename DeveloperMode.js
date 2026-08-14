@@ -134,11 +134,6 @@ class DeveloperMode extends Phaser.Scene {
                         <button id="deckShuffleBtn" style="flex: 1; background:#ffff00; color:#000; font-weight:bold; font-size:13px; padding:8px; border:none; border-radius:4px; cursor:pointer;">⚡ SHUFFLE</button>
                         <button id="setupDraw6Btn" style="flex: 1; background:#00ff88; color:#000; font-weight:bold; font-size:13px; padding:8px; border:none; border-radius:4px; cursor:pointer;">🎴 DRAW 6</button>
                     </div>
-                    
-                    <!-- NEW MULLIGAN DEV MACRO BUTTON -->
-                    <div>
-                        <button id="setupMulliganBtn" style="width:100%; background:#f59e0b; color:#000; font-weight:bold; font-size:13px; padding:8px; border:none; border-radius:4px; cursor:pointer;">🔄 QUICK MULLIGAN (HAND ➔ DECK ➔ SHUFFLE ➔ DRAW 6)</button>
-                    </div>
 
                     <div style="display: flex; align-items: center; gap: 8px;">
                         <label style="font-size: 12px; color: #aaa;">Hand Pos:</label>
@@ -158,19 +153,9 @@ class DeveloperMode extends Phaser.Scene {
             if (event.target.id === "deckLoadBtn") this.handleDeckLoad();
             if (event.target.id === "deckShuffleBtn") this.handleDeckShuffle();
             if (event.target.id === "setupDraw6Btn") this.handleDraw6Cards();
-            if (event.target.id === "setupMulliganBtn") this.handleQuickMulligan(); // Added Hook
             if (event.target.id === "setupPlayDownBtn") this.handlePlayCardFaceDown();
             if (event.target.id === "setupFlipUpBtn") this.handleFlipCardFaceUp();
         });
-    }
-
-    // Paste this new helper method right below the createDeckLoaderTabPanel method
-    handleQuickMulligan() {
-        const tableId = parseInt(document.getElementById("deckTableId").value, 10);
-        const targetPlayer = document.getElementById("deckTargetPlayer").value;
-
-        this.logToConsole(`>> [DEV MACRO]: Dispatching atomic Mulligan request for Table ${tableId} (${targetPlayer})`);
-        this.socket.emit("executeDevMulligan", { tableId: tableId, targetPlayer: targetPlayer });
     }
 
     createConsoleLog() {
