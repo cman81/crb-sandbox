@@ -90,33 +90,6 @@ class GameScene extends Phaser.Scene {
             this.lastReceivedState = sanitizedState; // Keep an active local data reference copy
             this.handleStateRenderingLoop(sanitizedState);
         });
-
-        // --- NEW TARGETED NETWORK ACTION HANDLER ---
-        this.socket.on('cardDrawnUpdate', (drawEvent) => {
-            console.log(`📡 [NETWORK RECEIVE]: cardDrawnUpdate caught for ${drawEvent.targetPlayer}`);
-
-            // Double check that we have a cached local state array map reference
-            if (!this.lastReceivedState) return;
-
-            // Target the specific player slot altered on the backend state architecture
-            const targetState = this.lastReceivedState[drawEvent.targetPlayer];
-            if (targetState) {
-                // Update the deck numeric count array tracking parameter
-                if (targetState.deck) {
-                    targetState.deck.length = drawEvent.deckCount;
-                }
-
-                // Append the incoming face-up card layout data cleanly into the hand array bounds
-                if (!Array.isArray(targetState.hand)) {
-                    targetState.hand = [];
-                }
-                
-                targetState.hand.push(drawEvent.card);
-
-                // Run the state update re-render pass to display the drawn card face up instantly
-                this.handleStateRenderingLoop(this.lastReceivedState);
-            }
-        });
         
         this.socket.on('cardPlayedToSupportUpdate', (playEvent) => {
             console.log(`📡 [NETWORK]: Received cardPlayedToSupportUpdate for ${playEvent.targetPlayer}`);
@@ -190,46 +163,6 @@ class GameScene extends Phaser.Scene {
                 // 3. Clear out the overlay panels if open
                 if (this.drawerState && this.drawerState.playerKey === recycleEvent.targetPlayer) {
                     this.toggleStackDrawer(null); 
-                }
-            }
-        });
-
-        this.socket.on("discardToDefeatedUpdate", defeatEvent => {
-            console.log(`📡 [NETWORK RECEIVE]: discardToDefeatedUpdate caught for ${defeatEvent.targetPlayer}`);
-            if (!this.lastReceivedState) return;
-            
-            const targetState = this.lastReceivedState[defeatEvent.targetPlayer];
-            if (targetState && Array.isArray(targetState.discard)) {
-                
-                // FIX: Find the exact card instance inside your local discard cache using its unique database ID string
-                const localTargetIdx = targetState.discard.findIndex(c => c.id === defeatEvent.card.id);
-                
-                if (localTargetIdx !== -1) {
-                    // Cleanly slice the specific card out of your local cache array memory space
-                    targetState.discard.splice(localTargetIdx, 1);
-                    console.log(`🧼 [ENGINE VISUAL SYNC]: Cleaned card ${defeatEvent.card.id} out of local discard cache.`);
-                } else {
-                    // Fallback: If a duplicate card mismatch occurs, fallback to matching the server's count parameters
-                    targetState.discard.length = defeatEvent.discardCount;
-                }
-
-                // Synchronize the defeated pile array memory listings
-                if (!Array.isArray(targetState.defeated)) targetState.defeated = [];
-                
-                // Double-check to prevent duplicate push loops
-                const isAlreadyDefeated = targetState.defeated.some(c => c.id === defeatEvent.card.id);
-                if (!isAlreadyDefeated) {
-                    targetState.defeated.push(defeatEvent.card);
-                }
-
-                this.input.clear(this.drawerContainer);
-
-                // Force a total layout refresh pass to sync the canvas graphics instantly
-                this.handleStateRenderingLoop(this.lastReceivedState);
-
-                // If the drawer menu matches the modified player, repaint its interior grid items
-                if (this.drawerState && this.drawerState.isOpen && this.drawerState.playerKey === defeatEvent.targetPlayer) {
-                    this.renderDrawerContents();
                 }
             }
         });
@@ -308,51 +241,6 @@ class GameScene extends Phaser.Scene {
 
                 // 2. FORCE SCREEN RE-RENDER: Forces the canvas layer layout matrix to repaint immediately
                 // This updates the orientation angle parameter to -90 degrees CCW inside renderCardSprite()
-                this.handleStateRenderingLoop(this.lastReceivedState);
-            }
-        });
-
-        // Socket Listener: Catches public discard updates from either player
-        this.socket.on("cardDiscardedUpdate", (discardEvent) => {
-            console.log(`📡 [NETWORK RECEIVE]: cardDiscardedUpdate caught for ${discardEvent.targetPlayer}`);
-            
-            if (!this.lastReceivedState) return;
-
-            const targetState = this.lastReceivedState[discardEvent.targetPlayer];
-            if (targetState) {
-                // 1. Update the remote player's hand size total count safely
-                if (typeof discardEvent.handCount !== "undefined") {
-                    if (Array.isArray(targetState.hand)) {
-                        // If it's a remote player, we don't have the cards, we just compress the structural length array
-                        if (discardEvent.targetPlayer !== this.role) {
-                            targetState.hand.length = discardEvent.handCount;
-                        }
-                    }
-                }
-
-                // 2. Clear face-down tracking properties for public view compliance
-                const freshDiscardCard = discardEvent.card;
-                freshDiscardCard.isFaceDown = false;
-                freshDiscardCard.isTapped = false;
-
-                // 3. Ensure the target player's discard pile structure exists
-                if (!Array.isArray(targetState.discard)) {
-                    targetState.discard = [];
-                }
-
-                // 4. Check if the card is already in our pile (avoids local double-push prediction conflicts)
-                const isDuplicate = targetState.discard.some(c => c.id === freshDiscardCard.id);
-                
-                if (!isDuplicate) {
-                    targetState.discard.push(freshDiscardCard);
-                }
-
-                // 5. Force a hard synchronization length match step check
-                if (typeof discardEvent.discardCount !== "undefined") {
-                    targetState.discard.length = discardEvent.discardCount;
-                }
-
-                // 6. Execute an immediate layout refresh loop pass across all graphic layers
                 this.handleStateRenderingLoop(this.lastReceivedState);
             }
         });
@@ -1893,39 +1781,32 @@ class GameScene extends Phaser.Scene {
      */
     handleKeyboardDiscardAction(mouseX, mouseY) {
         if (!this.lastReceivedState || !this.lastReceivedState[this.role]) return;
+        
         const state = this.lastReceivedState;
         const c = this.fieldCoordinates.local;
         const hand = state[this.role].hand || [];
 
+        // Reverse loop to accurately detect bounding boxes for hand card stacking overlays
         for (let index = hand.length - 1; index >= 0; index--) {
-            const card = hand[index];
             const layout = this.getHandCardLayout(index, hand.length, true);
             const cardX = layout.x;
             const cardY = c.handStart.y + layout.y;
             const halfW = layout.width / 2;
             const halfH = layout.height / 2;
 
-            if (mouseX >= cardX - halfW && mouseX <= cardX + halfW && mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
-                console.log(`♻️ [KEYBOARD DISCARD]: Detected hit on card index ${index}. Executing instant discard...`);
+            // Verify if your hovering cursor is inside this explicit card boundaries
+            if (mouseX >= cardX - halfW && mouseX <= cardX + halfW &&
+                mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
                 
-                // 1. Slice element from local cache predictively
-                const [discardedCardData] = hand.splice(index, 1);
-                discardedCardData.isFaceDown = false;
-                discardedCardData.isTapped = false;
+                console.log(`📡 [DECOUPLED DISCARD EMIT]: Target locked on hand index ${index}. Sending request to server.`);
                 
-                if (!Array.isArray(state[this.role].discard)) {
-                    state[this.role].discard = [];
-                }
-                state[this.role].discard.push(discardedCardData);
-                
-                // 2. Fire network event to server
-                this.socket.emit("discardCardFromHand", { 
-                    tableId: this.tableId, 
-                    targetPlayer: this.role, 
-                    handIndex: index 
+                // EMIT ONLY: Do not splice arrays or push to discard locally
+                this.socket.emit("discardCardFromHand", {
+                    tableId: this.tableId,
+                    targetPlayer: this.role,
+                    handIndex: index
                 });
-                this.handleStateRenderingLoop(state);
-                return;
+                return; // Break the execution loop immediately after locating match
             }
         }
     }

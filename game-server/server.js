@@ -201,76 +201,67 @@ io.on("connection", socket => {
         socket.emit('serverNotice', `Deck shuffled successfully using random UUID sort!`);
     });
 
-    socket.on("drawCard", ({ tableId: tableId, targetPlayer: targetPlayer }) => {
+    socket.on("drawCard", ({tableId: tableId, targetPlayer: targetPlayer}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
 
         const deck = table.gameState[targetPlayer]?.deck;
         const hand = table.gameState[targetPlayer]?.hand;
-        if (!deck || deck.length === 0) {
-            return socket.emit("errorMsg", `${targetPlayer}'s deck is empty! Cannot draw.`);
-        }
+        
+        if (!deck || deck.length === 0) return socket.emit("errorMsg", `${targetPlayer}'s deck is empty!`);
 
+        // 1. Execute the draw mutation on the server data model
         const drawnCard = deck.pop();
         drawnCard.isFaceDown = false;
         hand.push(drawnCard);
 
-        // Schema match choice variable config
-        const maskCard = () => ({ name: "Card Back", isFaceDown: true });
-        const ownerPayload = { targetPlayer: targetPlayer, card: drawnCard, deckCount: deck.length };
-        const opponentPayload = { targetPlayer: targetPlayer, card: maskCard(), deckCount: deck.length };
-        const spectatorPayload = { targetPlayer: targetPlayer, card: drawnCard, deckCount: deck.length };
+        // 2. Aggregate all multi-socket connection strings for this table instance
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
 
-        // 1. THE FIX: Loop through playerA's socket list using .forEach()
-        if (targetPlayer === "playerA") {
-            table.playerA.forEach(socketId => io.to(socketId).emit("cardDrawnUpdate", ownerPayload));
-            table.playerB.forEach(socketId => io.to(socketId).emit("cardDrawnUpdate", opponentPayload));
-        } else {
-            table.playerA.forEach(socketId => io.to(socketId).emit("cardDrawnUpdate", opponentPayload));
-            table.playerB.forEach(socketId => io.to(socketId).emit("cardDrawnUpdate", ownerPayload));
-        }
-
-        // 2. Loop through spectator sockets safely
-        table.spectators.forEach(specId => {
-            io.to(specId).emit("cardDrawnUpdate", spectatorPayload);
+        // 3. Loop over connections and dispatch individualized, FOW-masked state frames
+        targetSockets.forEach(sockId => {
+            const sock = io.sockets.sockets.get(sockId);
+            if (sock) {
+                let viewerRole = "spectator";
+                if (table.playerA.includes(sockId)) viewerRole = "playerA";
+                if (table.playerB.includes(sockId)) viewerRole = "playerB";
+                
+                sendSanitizedState(sock, table, viewerRole);
+            }
         });
 
         socket.emit("serverNotice", `${targetPlayer} successfully drew 1 card.`);
     });
 
-
-    socket.on("draw6Cards", ({ tableId: tableId, targetPlayer: targetPlayer }) => {
+    socket.on("draw6Cards", ({tableId: tableId, targetPlayer: targetPlayer}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
+
         const deck = table.gameState[targetPlayer]?.deck;
         const hand = table.gameState[targetPlayer]?.hand;
-        if (!deck || deck.length < 6) {
-            return socket.emit("errorMsg", `Not enough cards in ${targetPlayer}'s deck to draw 6!`);
-        }
+        
+        if (!deck || deck.length < 6) return socket.emit("errorMsg", "Not enough cards to draw 6!");
 
-        const maskCard = () => ({ name: "Card Back", isFaceDown: true });
-
+        // Execute the draw loop
         for (let i = 0; i < 6; i++) {
             const drawnCard = deck.pop();
             drawnCard.isFaceDown = false;
             hand.push(drawnCard);
-
-            const ownerPayload = { targetPlayer: targetPlayer, card: drawnCard, deckCount: deck.length };
-            const opponentPayload = { targetPlayer: targetPlayer, card: maskCard(), deckCount: deck.length };
-            const spectatorPayload = { targetPlayer: targetPlayer, card: drawnCard, deckCount: deck.length };
-
-            // FIX: Multi-socket array loops for opening hands
-            if (targetPlayer === "playerA") {
-                table.playerA.forEach(sid => io.to(sid).emit("cardDrawnUpdate", ownerPayload));
-                table.playerB.forEach(sid => io.to(sid).emit("cardDrawnUpdate", opponentPayload));
-            } else {
-                table.playerA.forEach(sid => io.to(sid).emit("cardDrawnUpdate", opponentPayload));
-                table.playerB.forEach(sid => io.to(sid).emit("cardDrawnUpdate", ownerPayload));
-            }
-            table.spectators.forEach(specId => {
-                io.to(specId).emit("cardDrawnUpdate", spectatorPayload);
-            });
         }
+
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
+
+        targetSockets.forEach(sockId => {
+            const sock = io.sockets.sockets.get(sockId);
+            if (sock) {
+                let viewerRole = "spectator";
+                if (table.playerA.includes(sockId)) viewerRole = "playerA";
+                if (table.playerB.includes(sockId)) viewerRole = "playerB";
+                
+                sendSanitizedState(sock, table, viewerRole);
+            }
+        });
+
         socket.emit("serverNotice", `${targetPlayer} successfully drew a 6-card opening hand.`);
     });
 
@@ -507,23 +498,37 @@ io.on("connection", socket => {
     socket.on("discardCardFromHand", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
+
         const hand = table.gameState[targetPlayer]?.hand;
         const discard = table.gameState[targetPlayer]?.discard;
+        
         if (!hand || hand.length === 0) return socket.emit("errorMsg", "Hand is empty!");
+        
         const idx = parseInt(handIndex);
-        if (isNaN(idx) || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid index.");
+        if (isNaN(idx) || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid hand index selection.");
 
+        // 1. Execute the mutation directly on the data model
         const [cardToDiscard] = hand.splice(idx, 1);
         cardToDiscard.isFaceDown = false;
         cardToDiscard.isTapped = false;
         discard.push(cardToDiscard);
 
-        const payload = {targetPlayer: targetPlayer, card: cardToDiscard, discardCount: discard.length, handCount: hand.length};
-        
-        // FIX: Loop through player arrays instead of targeting a single string
-        table.playerA.forEach(sid => io.to(sid).emit("cardDiscardedUpdate", payload));
-        table.playerB.forEach(sid => io.to(sid).emit("cardDiscardedUpdate", payload));
-        table.spectators.forEach(sid => io.to(sid).emit("cardDiscardedUpdate", payload));
+        // 2. Aggregate all multi-socket connections for this table instance
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
+
+        // 3. Loop over connections and dispatch individualized, FOW-masked state frames
+        targetSockets.forEach(sockId => {
+            const sock = io.sockets.sockets.get(sockId);
+            if (sock) {
+                let viewerRole = "spectator";
+                if (table.playerA.includes(sockId)) viewerRole = "playerA";
+                if (table.playerB.includes(sockId)) viewerRole = "playerB";
+                
+                sendSanitizedState(sock, table, viewerRole);
+            }
+        });
+
+        socket.emit("serverNotice", `Successfully discarded card from hand index ${idx}.`);
     });
 
     socket.on("recycleDiscardToDeck", ({tableId: tableId, targetPlayer: targetPlayer}) => {
@@ -596,49 +601,49 @@ io.on("connection", socket => {
         });
     });
 
-    socket.on('moveDiscardToDefeated', ({ tableId, targetPlayer, discardIndex }) => {
+    socket.on("moveDiscardToDefeated", ({ tableId, targetPlayer, discardIndex }) => {
         const table = tables.find(t => t.id === parseInt(tableId));
-        if (!table) return socket.emit('errorMsg', 'Table not found.');
+        if (!table) return socket.emit("errorMsg", "Table not found.");
 
         const playerState = table.gameState[targetPlayer];
-        if (!playerState) return socket.emit('errorMsg', 'Player state structural map not found.');
+        if (!playerState) return socket.emit("errorMsg", "Player state structural map not found.");
 
         const discard = playerState.discard;
         const defeated = playerState.defeated;
 
         if (!discard || discard.length === 0) {
-            return socket.emit('errorMsg', 'Discard pile is completely empty!');
+            return socket.emit("errorMsg", "Discard pile is completely empty!");
         }
 
         const idx = parseInt(discardIndex);
         if (isNaN(idx) || idx < 0 || idx >= discard.length) {
-            return socket.emit('errorMsg', `Invalid discard index choice! Please choose between 0 and ${discard.length - 1}.`);
+            return socket.emit("errorMsg", `Invalid discard index choice.`);
         }
 
-        // 1. Extract the card from the discard pile array using index splicing rules
+        // 1. Mutate the data model on the server (the single source of truth)
         const [retiredCard] = discard.splice(idx, 1);
-
-        // 2. Clear face-down tracking properties for public view
         retiredCard.isFaceDown = false;
         retiredCard.isTapped = false;
-
-        // 3. Commit cleanly to the defeated array pile tail bounds
+        
+        // Push directly to the top of the defeated pile array
         defeated.push(retiredCard);
 
-        // 4. Construct synchronized payloads to broadcast down the network pipes
-        const payload = {
-            targetPlayer,
-            card: retiredCard,
-            discardCount: discard.length,
-            defeatedCount: defeated.length
-        };
+        // 2. Build a flat participant list to distribute the updates
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
 
-        // Broadcast the state update instantly to update everyone's grid counts
-        if (table.playerA) io.to(table.playerA).emit('discardToDefeatedUpdate', payload);
-        if (table.playerB) io.to(table.playerB).emit('discardToDefeatedUpdate', payload);
-        table.spectators.forEach(id => io.to(id).emit('discardToDefeatedUpdate', payload));
+        // 3. Leverage sendSanitizedState to securely push individual FOW views
+        targetSockets.forEach(sockId => {
+            const sock = io.sockets.sockets.get(sockId);
+            if (sock) {
+                let viewerRole = "spectator";
+                if (table.playerA.includes(sockId)) viewerRole = "playerA";
+                if (table.playerB.includes(sockId)) viewerRole = "playerB";
+                
+                sendSanitizedState(sock, table, viewerRole);
+            }
+        });
 
-        socket.emit('serverNotice', `Successfully extracted card from discard index ${idx} to defeated zone.`);
+        socket.emit("serverNotice", `Successfully extracted card from discard index ${idx} to defeated zone.`);
     });
 
     socket.on("playCardToStage", ({ tableId, targetPlayer, handIndex }) => {
