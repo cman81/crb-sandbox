@@ -1425,7 +1425,6 @@ class GameScene extends Phaser.Scene {
 
                 // CRUCIAL POSITION FIX: Moved outside the conditional block so that cards 
                 // are safely nested inside the drawer menu tree layer no matter what!
-                this.children.remove(drawerCardImg);
                 this.drawerContainer.add(drawerCardImg);
             }
         });
@@ -1767,12 +1766,11 @@ class GameScene extends Phaser.Scene {
     drawVectorCardBack(container, width, height, scaleFactor) {
         const halfW = width / 2;
         const halfH = height / 2;
-        const cardShape = this.add.graphics();
         
-        // Cookie Run: Braverse style tones
-        // Base Midnight Royal Blue Fill: #0B2545 (730437)
-        // Neon Cyan Border Accent: #38BDF8 (3718648)
-        // Dark Stripe Accent Overlay: #134074 (1261684)
+        // 🛠️ PHASER 3 FIX: Generate the graphics node directly bound to the container's local scene reference
+        const cardShape = container.scene.add.graphics();
+        container.add(cardShape); // Mount immediately to lock local drawing matrices
+
         cardShape.fillStyle(730437, 1);
         cardShape.lineStyle(2, 3718648, 1);
         
@@ -1804,7 +1802,6 @@ class GameScene extends Phaser.Scene {
                 cardShape.lineBetween(startX, startY, endX, endY);
             }
         }
-        container.add(cardShape);
 
         // 3. Centered Large "CRB" Emblem Typography
         const logoFontSize = Math.max(14, Math.floor(22 * scaleFactor));

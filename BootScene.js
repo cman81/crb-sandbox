@@ -12,11 +12,12 @@ class BootScene extends Phaser.Scene {
         // Global socket initialization reference point
         this.socket = globalSocket;
 
-        // 🚨 MOVED FROM DECKPREP / GAMESCENE: Download sheets exactly once right here
-        this.load.atlasPCT('BS01_cards', 'assets/BS01.pct', 'assets');
-        this.load.atlasPCT('BS02_cards', 'assets/BS02.pct', 'assets');
-        this.load.atlasPCT('BS03_cards', 'assets/BS03.pct', 'assets');
-        this.load.atlasPCT('BS10_cards', 'assets/atlas.pct', 'assets');
+        // 🛠️ PHASER 3 CONVERSION: Replaced .atlasPCT with universal JSON Texture Atlases.
+        // Format syntax parameters: this.load.atlas(key, textureURL, atlasURL)
+        this.load.atlas('BS01_cards', 'assets/BS01.png', 'assets/BS01.json');
+        this.load.atlas('BS02_cards', 'assets/BS02.png', 'assets/BS02.json');
+        this.load.atlas('BS03_cards', 'assets/BS03.png', 'assets/BS03.json');
+        this.load.atlas('BS10_cards', 'assets/atlas.png', 'assets/atlas.json');
     }
 
     create() {

@@ -112,8 +112,11 @@ class DeckPrepScene extends Phaser.Scene {
     }
 
     renderPreviewGrid() {
-        // Destroy all previous iteration visual elements and proceed buttons to prevent memory leakage
-        if (this.previewGroup) this.previewGroup.destroy(true);
+        // 🛠️ PHASER 3 CONVERSION: Safe clear sequence to prevent ghost child instances
+        if (this.previewGroup) {
+            this.previewGroup.clear(true, true);
+            this.previewGroup.destroy();
+        }
         this.previewGroup = this.add.group();
 
         // Update Header Metric text details
@@ -150,9 +153,35 @@ class DeckPrepScene extends Phaser.Scene {
             
             if (bundleKey !== 'system_ui') frameKey = card.id;
 
-            const thumb = this.add.image(x, y, bundleKey, frameKey);
-            thumb.setDisplaySize(thumbW, thumbH);
-            this.previewGroup.add(thumb);
+            // 🛡️ FRAME EXISTENCE FAIL-SAFE GUARD
+            // Verifies both the bundle and the frame exist inside the Phaser 3 Cache
+            const textureExists = this.textures.exists(bundleKey);
+            const frameExists = textureExists && this.textures.get(bundleKey).has(frameKey);
+
+            if (frameExists) {
+                // If the asset matches a texture frame, render it natively
+                const thumb = this.add.image(x, y, bundleKey, frameKey);
+                thumb.setDisplaySize(thumbW, thumbH);
+                this.previewGroup.add(thumb);
+            } else {
+                // 🎨 PROGRAMMATIC VECTOR FALLBACK ENGINE (PREVIEW INFRA)
+                // Draw a solid off-white rectangle signature mask if art is missing
+                const cardRect = this.add.graphics();
+                cardRect.fillStyle(0xF5F5F5, 1);
+                cardRect.fillRect(x - thumbW / 2, y - thumbH / 2, thumbW, thumbH);
+                
+                // Overlay black monospace card code identification text
+                const codeText = this.add.text(x, y, card.id, {
+                    fontSize: "10px", 
+                    fontFamily: "monospace", 
+                    fill: "#000000",
+                    fontWeight: "bold"
+                }).setOrigin(0.5);
+
+                // Add elements manually to the tracking group for proper memory cleanup
+                this.previewGroup.add(cardRect);
+                this.previewGroup.add(codeText);
+            }
         });
 
         // Dynamic y positioning calculated relative to layout box height density bounds
