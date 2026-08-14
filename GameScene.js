@@ -585,12 +585,10 @@ class GameScene extends Phaser.Scene {
         let frameKey = "card_back";
         let useFallback = false;
 
-        // 1. Core Dimensions: Initialize to absolute defaults
         let appliedWidth = this.cardWidth;
         let appliedHeight = this.cardHeight;
         let currentScaleFactor = 1;
 
-        // 2. Isolated Grid Lookahead: ONLY check scaling if this card is explicitly in the hand zone
         const isCardBack = !card || card.title === "Card Back" || card.name === "Card Back" || card.isFaceDown;
         
         if (this.lastReceivedState && card && !isCardBack && currentZone === "hand") {
@@ -608,7 +606,6 @@ class GameScene extends Phaser.Scene {
             }
         }
 
-        // 3. Determine Texture Identity Keys
         if (!isCardBack) {
             const cardId = card.id || "";
             frameKey = cardId;
@@ -623,15 +620,16 @@ class GameScene extends Phaser.Scene {
             useFallback = true;
         }
 
-        // 4. Render Path A: Real Image Sprite
+        // Path A: Render Normal Card Sprite
         if (!useFallback) {
             const cardSprite = this.add.image(x, y, bundleKey, frameKey);
             cardSprite.setDisplaySize(appliedWidth, appliedHeight);
             cardSprite.setAngle(isTapped || card?.isTapped ? -90 : 0);
-            return; 
+            
+            return cardSprite; // FIX: Return the image instance explicitly
         }
 
-        // 5. Render Path B: Programmatic Vector Fallback Container
+        // Path B: Programmatic Vector Fallback Container
         const fallbackContainer = this.add.container(x, y);
         fallbackContainer.setDepth(50);
 
@@ -679,6 +677,8 @@ class GameScene extends Phaser.Scene {
         fallbackContainer.setAngle(isTapped || card?.isTapped ? -90 : 0);
         fallbackContainer.setData("computedWidth", appliedWidth);
         fallbackContainer.setData("computedHeight", appliedHeight);
+
+        return fallbackContainer; // FIX: Return the container instance explicitly
     }
 
     getHandCardLayout(index, totalCards, isLocalSeat) {
@@ -1200,20 +1200,31 @@ class GameScene extends Phaser.Scene {
             const cardY = c.handStart.y + layout.y;
 
             if (isLocalSeat) {
-                // FIX: Explicitly passes "hand" so the renderer knows to apply scaling calculations
-                this.renderCardSprite(cardX, cardY, card, card?.isTapped, "hand");
+                // Capture the generated card instance cleanly
+                const currentCardObject = this.renderCardSprite(cardX, cardY, card, card?.isTapped, "hand");
 
-                const currentCardObject = this.children.list[this.children.list.length - 1];
                 if (currentCardObject) {
                     currentCardObject.setDepth(50 + index);
                     currentCardObject.setData("originalX", cardX);
                     currentCardObject.setData("originalY", cardY);
                     currentCardObject.setData("handIndex", index);
-                    currentCardObject.setInteractive(new Phaser.Geom.Rectangle(-layout.width/2, -layout.height/2, layout.width, layout.height), Phaser.Geom.Rectangle.Contains);
+                    
+                    // FIX: Check the underlying object type to apply correct hitboxes
+                    if (currentCardObject.type === "Container") {
+                        // Fallback container uses centered geometry bounds
+                        currentCardObject.setInteractive(
+                            new Phaser.Geom.Rectangle(-layout.width / 2, -layout.height / 2, layout.width, layout.height), 
+                            Phaser.Geom.Rectangle.Contains
+                        );
+                    } else {
+                        // Real Card Image calculates native bounds directly from its dimensions!
+                        currentCardObject.setInteractive({ useHandCursor: true });
+                    }
+                    
+                    // Enable dragging mechanics across both layout configurations
                     this.input.setDraggable(currentCardObject);
                 }
             } else {
-                // Opponent cards also pass "hand" layout token tag parameters
                 this.renderCardSprite(cardX, cardY, card, false, "hand");
                 const opponentCardObject = this.children.list[this.children.list.length - 1];
                 if (opponentCardObject) {
