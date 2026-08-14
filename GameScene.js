@@ -85,48 +85,22 @@ class GameScene extends Phaser.Scene {
             this.socket.emit("revokeEndGame", { tableId: this.tableId, targetPlayer: this.role });
         }
 
-        // --- Inside your create() method, replace the stateUpdate block with this: ---
-        this.socket.on('stateUpdate', (sanitizedState) => {
-            this.lastReceivedState = sanitizedState; // Keep an active local data reference copy
+        this.socket.on("stateUpdate", sanitizedState => {
+            this.lastReceivedState = sanitizedState;
+
+            // AUTO-COLLAPSE SAFEGUARD: If the drawer is open on a recycled pile that is now empty,
+            // collapse it instantly to keep the visual layer pristine.
+            if (this.drawerState && this.drawerState.isOpen) {
+                const currentZone = this.drawerState.zoneType;
+                const currentSeat = this.drawerState.playerKey;
+                const currentPile = sanitizedState[currentSeat]?.[currentZone] || [];
+                
+                if (currentPile.length === 0) {
+                    this.toggleStackDrawer(null); // Smoothly slide the drawer away
+                }
+            }
+
             this.handleStateRenderingLoop(sanitizedState);
-        });
-
-        this.socket.on('discardRecycledUpdate', (recycleEvent) => {
-            console.log(`📡 [NETWORK RECEIVE]: discardRecycledUpdate caught for ${recycleEvent.targetPlayer}`);
-            if (!this.lastReceivedState) return;
-            
-            const targetState = this.lastReceivedState[recycleEvent.targetPlayer];
-            if (targetState) {
-                // 1. Wipe the local data references completely clean
-                targetState.discard = [];
-                
-                if (!targetState.deck) targetState.deck = [];
-                targetState.deck.length = recycleEvent.deckCount;
-                
-                // 2. FORCE SCREEN RE-RENDER: Forces the canvas layer layout matrix to recalculate immediately
-                this.handleStateRenderingLoop(this.lastReceivedState);
-                
-                // 3. Clear out the overlay panels if open
-                if (this.drawerState && this.drawerState.playerKey === recycleEvent.targetPlayer) {
-                    this.toggleStackDrawer(null); 
-                }
-            }
-        });
-
-        this.socket.on('defeatedPointsTickedUpdate', (pointsEvent) => {
-            console.log(`📡 [NETWORK RECEIVE]: defeatedPointsTickedUpdate caught for ${pointsEvent.targetPlayer}`);
-            if (!this.lastReceivedState) return;
-
-            const targetState = this.lastReceivedState[pointsEvent.targetPlayer];
-            if (targetState) {
-                // 1. Sync the fresh score parameters down into local memory cache variables
-                if (typeof pointsEvent.totalDefeatedPoints !== 'undefined') {
-                    targetState.defeatedPoints = pointsEvent.totalDefeatedPoints;
-                }
-                
-                // 2. Force an immediate screen re-render pass to repaint the visual text fields
-                this.handleStateRenderingLoop(this.lastReceivedState);
-            }
         });
 
         this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
@@ -421,20 +395,6 @@ class GameScene extends Phaser.Scene {
             this.drawerContainer.setVisible(true);
         } else if(this.drawerContainer){
             this.drawerContainer.setVisible(false);
-        }
-
-        if (state.endGameSignals) {
-            const signals = state.endGameSignals;
-            const signalStatusText = `PROPOSAL MATRIX -> A: ${signals.playerA ? "🚨 APPROVED" : "🟢 READY"} | B: ${signals.playerB ? "🚨 APPROVED" : "🟢 READY"}`;
-            
-            // Render a small, scannable administrative status tracker text layout on the UI header
-            if (this.matchProposalAdminText) this.matchProposalAdminText.destroy();
-            this.matchProposalAdminText = this.add.text(960, 85, signalStatusText, {
-                fontSize: "11px",
-                fontFamily: "monospace",
-                fill: "#94a3b8",
-                fontWeight: "bold"
-            }).setOrigin(.5);
         }
     }
 

@@ -542,22 +542,6 @@ io.on("connection", socket => {
         });
     });
 
-    socket.on("adjustDefeatedPoints", ({tableId: tableId, targetPlayer: targetPlayer, amount: amount}) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
-        if (!table) return socket.emit("errorMsg", "Table not found.");
-        const pState = table.gameState[targetPlayer];
-        if (!pState) return socket.emit("errorMsg", "Player state not found.");
-        
-        pState.defeatedPoints = Math.max(0, pState.defeatedPoints + parseInt(amount));
-
-        const payload = {targetPlayer: targetPlayer, totalDefeatedPoints: pState.defeatedPoints, isEliminated: pState.defeatedPoints >= 10};
-        
-        // FIX: Loop through multi-socket arrays instead of single strings
-        table.playerA.forEach(sid => io.to(sid).emit("defeatedPointsTickedUpdate", payload));
-        table.playerB.forEach(sid => io.to(sid).emit("defeatedPointsTickedUpdate", payload));
-        table.spectators.forEach(sid => io.to(sid).emit("defeatedPointsTickedUpdate", payload));
-    });
-
     socket.on("discardCardFromHand", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
@@ -594,19 +578,48 @@ io.on("connection", socket => {
         socket.emit("serverNotice", `Successfully discarded card from hand index ${idx}.`);
     });
 
+    socket.on("adjustDefeatedPoints", ({tableId: tableId, targetPlayer: targetPlayer, amount: amount}) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+
+        const pState = table.gameState[targetPlayer];
+        if (!pState) return socket.emit("errorMsg", "Player state not found.");
+
+        // 1. Mutate the data model on the server
+        pState.defeatedPoints = Math.max(0, pState.defeatedPoints + parseInt(amount));
+
+        // 2. Aggregate all multi-socket connections
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
+
+        // 3. Broadcast clean, role-aware frames via your serialization engine
+        targetSockets.forEach(sockId => {
+            const sock = io.sockets.sockets.get(sockId);
+            if (sock) {
+                let viewerRole = "spectator";
+                if (table.playerA.includes(sockId)) viewerRole = "playerA";
+                if (table.playerB.includes(sockId)) viewerRole = "playerB";
+                sendSanitizedState(sock, table, viewerRole);
+            }
+        });
+    });
+
     socket.on("recycleDiscardToDeck", ({tableId: tableId, targetPlayer: targetPlayer}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
+
         const playerState = table.gameState[targetPlayer];
         if (!playerState) return socket.emit("errorMsg", `Player state not found.`);
 
         const deck = playerState.deck;
         const discard = playerState.discard;
+
         if (!discard || discard.length === 0) {
             return socket.emit("errorMsg", `Discard pile is empty! Nothing to recycle.`);
         }
 
         const recycledCount = discard.length;
+
+        // Execute the core array mutations on the server database
         while (discard.length > 0) {
             const card = discard.pop();
             card.isFaceDown = true;
@@ -614,16 +627,22 @@ io.on("connection", socket => {
             deck.push(card);
         }
 
+        // Run UUID randomization sort sequence
         deck.forEach(card => { card.shuffleId = uuidv4() });
         deck.sort((a, b) => a.shuffleId.localeCompare(b.shuffleId));
         deck.forEach(card => { delete card.shuffleId });
 
-        const cleanPayload = {targetPlayer: targetPlayer, deckCount: deck.length, discardCount: 0, updatedDiscard: []};
-
-        // FIX: Multi-socket array loops for discard recycling
-        table.playerA.forEach(sid => io.to(sid).emit("discardRecycledUpdate", cleanPayload));
-        table.playerB.forEach(sid => io.to(sid).emit("discardRecycledUpdate", cleanPayload));
-        table.spectators.forEach(sid => io.to(sid).emit("discardRecycledUpdate", cleanPayload));
+        // Aggregate connections and dispatch individualized FOW updates
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
+        targetSockets.forEach(sockId => {
+            const sock = io.sockets.sockets.get(sockId);
+            if (sock) {
+                let viewerRole = "spectator";
+                if (table.playerA.includes(sockId)) viewerRole = "playerA";
+                if (table.playerB.includes(sockId)) viewerRole = "playerB";
+                sendSanitizedState(sock, table, viewerRole);
+            }
+        });
 
         socket.emit("serverNotice", `Recycled all ${recycledCount} cards from discard to deck face down, and fully shuffled the deck!`);
     });
