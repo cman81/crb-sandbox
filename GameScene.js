@@ -90,17 +90,6 @@ class GameScene extends Phaser.Scene {
             this.lastReceivedState = sanitizedState; // Keep an active local data reference copy
             this.handleStateRenderingLoop(sanitizedState);
         });
-        
-        this.socket.on('cardPlayedToSupportUpdate', (playEvent) => {
-            console.log(`📡 [NETWORK]: Received cardPlayedToSupportUpdate for ${playEvent.targetPlayer}`);
-            // Force a full table re-query or update local snapshot reference to redraw everything cleanly
-            this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
-        });
-
-        this.socket.on('cardPlayedToFighterUpdate', (playEvent) => {
-            console.log(`📡 [NETWORK]: Received cardPlayedToFighterUpdate for ${playEvent.targetPlayer}`);
-            this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
-        });
 
         this.socket.on('cardStackedUpdate', (stackEvent) => {
             console.log(`📡 [NETWORK RECEIVE]: cardStackedUpdate caught for ${stackEvent.targetPlayer} on ${stackEvent.targetSlot}`);
@@ -364,15 +353,15 @@ class GameScene extends Phaser.Scene {
         this.input.on("drop", (pointer, gameObject, dropZone) => {
             const handIndex = gameObject.data.get("handIndex");
             const zoneKey = dropZone.data.get("zoneKey");
-            
-            console.log(`🎯 [DRAG DROP]: Card index ${handIndex} dropped onto target zone: ${zoneKey}`);
-            
-            if (this.role === "spectator") {
+
+            if (this.role === "spectator" || typeof handIndex === 'undefined' || handIndex === null) {
                 gameObject.x = gameObject.data.get("originalX");
                 gameObject.y = gameObject.data.get("originalY");
                 gameObject.setDepth(0);
                 return;
             }
+
+            console.log(`🎯 [DECOUPLED DROP]: Processing hand index ${handIndex} to zone ${zoneKey}`);
 
             if (zoneKey === "support") {
                 this.socket.emit("playCardToSupport", { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex });
@@ -381,60 +370,12 @@ class GameScene extends Phaser.Scene {
                 this.socket.emit("playCardToFighter", { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex, targetSlot: zoneKey });
                 gameObject.destroy();
             } else if (zoneKey === "discard") {
-                console.log(`♻️ [LOCAL PREDICTION]: Splicing index ${handIndex} out of local cache to compress hand...`);
-                
-                // 1. Locate and mutate the local client state array copy instantly
-                if (this.lastReceivedState && this.lastReceivedState[this.role]) {
-                    const localHand = this.lastReceivedState[this.role].hand;
-                    if (Array.isArray(localHand) && handIndex >= 0 && handIndex < localHand.length) {
-                        // Extract the true card metadata object from the hand
-                        const [discardedCardData] = localHand.splice(handIndex, 1);
-                        
-                        // Force state parameter rules before dropping it onto the discard memory stack
-                        discardedCardData.isFaceDown = false;
-                        discardedCardData.isTapped = false;
-                        
-                        if (!Array.isArray(this.lastReceivedState[this.role].discard)) {
-                            this.lastReceivedState[this.role].discard = [];
-                        }
-                        // Push it onto our local discard cache stack so it draws instantly
-                        this.lastReceivedState[this.role].discard.push(discardedCardData);
-                    }
-                }
-
-                // 2. Transmit the authoritative instruction down the socket pipeline
                 this.socket.emit("discardCardFromHand", { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex });
-                
-                // 3. Destroy the physical dragged image object
                 gameObject.destroy();
-
-                // 4. Force a clean rendering pass immediately. The column scaler recalculates rows and closes the gap seamlessly!
-                this.handleStateRenderingLoop(this.lastReceivedState);
-                // --- ADD THIS ELSE IF BRANCH INSIDE YOUR GLOBAL DROP LISTENER IN GAMESCENE ---
             } else if (zoneKey === "stage") {
-                console.log(`🎭 [LOCAL PREDICTION]: Drag-dropped hand index ${handIndex} to Stage zone.`);
-                
-                // Client-Side Prediction Splice
-                if (this.lastReceivedState && this.lastReceivedState[this.role]) {
-                    const localHand = this.lastReceivedState[this.role].hand;
-                    if (Array.isArray(localHand) && handIndex >= 0 && handIndex < localHand.length) {
-                        const [stagedCardData] = localHand.splice(handIndex, 1);
-                        stagedCardData.isFaceDown = false;
-                        stagedCardData.isTapped = false;
-                        
-                        if (!this.lastReceivedState[this.role].battleZone) {
-                            this.lastReceivedState[this.role].battleZone = {};
-                        }
-                        this.lastReceivedState[this.role].battleZone.stage = stagedCardData;
-                    }
-                }
-                
-                // Outbound Socket Call Pipeline
                 this.socket.emit("playCardToStage", { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex });
                 gameObject.destroy();
-                this.handleStateRenderingLoop(this.lastReceivedState);
             } else {
-                // Fail-safe automatic snapback routine for any invalid target selections
                 gameObject.x = gameObject.data.get("originalX");
                 gameObject.y = gameObject.data.get("originalY");
                 gameObject.setDepth(0);
@@ -738,82 +679,73 @@ class GameScene extends Phaser.Scene {
      */
     processZoneSlot(point, label, zoneKey, pData, stateKey, isLocalSeat) {
         const battleZone = pData.battleZone || {};
-        
-        // 1. Render the foundational background geometry slots
         this.drawZoneBoxGeometry(point, label);
 
-        // 2. Configure administrative hot-zones and layout overlays for active players
         if (isLocalSeat && this.role !== "spectator") {
             this.configureLocalSlotInteractivity(point, zoneKey, stateKey);
         }
 
-        // 3. Main Operational Slot Branching Controller
+        // 1. Fighter Zone Layouts
         if (zoneKey === "fighterA" || zoneKey === "fighterB") {
-            // Render the true underlying fighter data textures
             this.renderFighterZoneContents(point, battleZone[zoneKey]);
             
-            // ---------------------------------------------------------------------
-            // 🎴 CLIENT-SIDE TRICKERY OVERLAY SYSTEM (FIGHTER A)
-            // ---------------------------------------------------------------------
+            // Face-down trickery card back masking layers logic
             if (zoneKey === "fighterA" && battleZone.fighterA && battleZone.fighterA.card) {
                 const targetCard = battleZone.fighterA.card;
-                
-                // CRITICAL FIX: Contextually separate local overlay from opponent overlay references
                 const overlayPropName = isLocalSeat ? "localFighterAOverlaySprite" : "remoteFighterAOverlaySprite";
-
-                // Wipe dead duplicate layout elements contextually to prevent texture overwrites
+                
                 if (this[overlayPropName]) {
                     this[overlayPropName].destroy();
                     this[overlayPropName] = null;
                 }
 
-                // Bulletproof Truthy check for active hidden structures
                 const isCurrentlyFaceDown = !!targetCard.isFaceDown || targetCard.isFaceUp === false;
-
                 if (isCurrentlyFaceDown) {
-                    // Stack system card back visual frame on top of the fighter layout
                     this[overlayPropName] = this.add.image(point.x, point.y, "system_ui", "card_back");
                     this[overlayPropName].setDisplaySize(this.cardWidth, this.cardHeight);
-                    
-                    // Elevate layer depth (120) to completely hide underlying properties
                     this[overlayPropName].setDepth(120);
 
-                    // Wire interactive click triggers only for the local seat owner
                     if (isLocalSeat && this.role !== "spectator") {
                         this[overlayPropName].setInteractive({ useHandCursor: true });
                         this[overlayPropName].on("pointerdown", () => {
-                            console.log("👁️ [LOCAL TRICKERY]: Card Back Overlay clicked! revealing card...");
-                            
-                            // Force flags immediately in local cache memory 
+                            console.log("👁️ [LOCAL TRICKERY]: Flipping card face up...");
                             if (battleZone.fighterA && battleZone.fighterA.card) {
                                 battleZone.fighterA.card.isFaceDown = false;
                                 battleZone.fighterA.card.isFaceUp = true;
                             }
-
-                            // Clean up tracking textures instantly
                             if (this[overlayPropName]) {
                                 this[overlayPropName].destroy();
                                 this[overlayPropName] = null;
                             }
-
-                            // Emit network mutation call out to the sandbox server
                             this.socket.emit("flipCardFaceUp", { tableId: this.tableId, targetPlayer: this.role });
-                            
-                            // Force clean canvas repaint pass to synchronize elements
                             this.handleStateRenderingLoop(this.lastReceivedState);
                         });
                     }
                 }
             }
-        } else if (zoneKey === "stage" && battleZone.stage) {
-            this.renderCardSprite(point.x, point.y, battleZone.stage, battleZone.stage.isTapped);
-        } else if (zoneKey === "deck") {
+        } 
+        // 2. Stage Zone Layouts (Ensures both predictive and server data formats load successfully)
+        else if (zoneKey === "stage") {
+            const stageCard = battleZone.stage || pData.stage;
+            if (stageCard && Object.keys(stageCard).length > 0) {
+                this.renderCardSprite(point.x, point.y, stageCard, stageCard.isTapped || false, "field");
+            }
+        } 
+        // 3. Deck Zone Layouts
+        else if (zoneKey === "deck") {
             this.renderDeckZoneStack(point, pData.deck, isLocalSeat);
-        } else if (zoneKey === "discard" || zoneKey === "defeated") {
-            this.renderPublicPileTopCard(point, pData[zoneKey], stateKey, zoneKey);
+        } 
+        // 4. Public Piles (Discard and Defeated)
+        else if (zoneKey === "discard" || zoneKey === "defeated") {
+            const targetPile = pData[zoneKey];
+            if (Array.isArray(targetPile) && targetPile.length > 0) {
+                const topCard = targetPile[targetPile.length - 1];
+                if (topCard) {
+                    this.renderCardSprite(point.x, point.y, topCard, topCard.isTapped || false, "field");
+                }
+            }
         }
     }
-
 
 
     /**
