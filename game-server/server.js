@@ -270,52 +270,6 @@ io.on("connection", socket => {
         socket.emit("serverNotice", `${targetPlayer} successfully drew a 6-card opening hand.`);
     });
 
-    socket.on("executeDevMulligan", ({ tableId, targetPlayer }) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
-        if (!table) return socket.emit("errorMsg", "Table not found.");
-
-        const pState = table.gameState[targetPlayer];
-        if (!pState) return socket.emit("errorMsg", "Invalid player slot targeted.");
-
-        console.log(`⚡ [DEV MACRO]: Processing atomic Mulligan matrix loop for player slot: ${targetPlayer}`);
-
-        // 1. Flush hand cards face-down back into the deck's tail boundary array
-        while (pState.hand.length > 0) {
-            const card = pState.hand.pop();
-            card.isFaceDown = true;
-            card.isTapped = false;
-            pState.deck.push(card);
-        }
-
-        // 2. Execute program shuffle scramble with alphabetic UUID sorting rules
-        pState.deck.forEach(card => { card.shuffleId = uuidv4(); });
-        pState.deck.sort((a, b) => a.shuffleId.localeCompare(b.shuffleId));
-        pState.deck.forEach(card => { delete card.shuffleId; });
-
-        // 3. Pop 6 fresh top deck cards into the player hand
-        for (let i = 0; i < 6; i++) {
-            if (pState.deck.length > 0) {
-                const drawnCard = pState.deck.pop();
-                drawnCard.isFaceDown = false;
-                pState.hand.push(drawnCard);
-            }
-        }
-
-        // 4. Dispatch synchronized sanitization states across all active sockets
-        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean);
-        targetSockets.forEach(sockId => {
-            const targetSock = io.sockets.sockets.get(sockId);
-            if (targetSock) {
-                let viewerRole = "spectator";
-                if (sockId === table.playerA) viewerRole = "playerA";
-                if (sockId === table.playerB) viewerRole = "playerB";
-                sendSanitizedState(targetSock, table, viewerRole);
-            }
-        });
-
-        socket.emit("serverNotice", `Mulligan completed! Hand returned to deck tail, scrambled via UUID, and 6 cards redrawn.`);
-    });
-
     socket.on("playCardFaceDown", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
@@ -602,6 +556,42 @@ io.on("connection", socket => {
         socket.emit("serverNotice", `Recycled all ${recycledCount} cards from discard to deck face down, and fully shuffled the deck!`);
     });
 
+    socket.on("checkTableStatus", ({ tableId: tableId, role: role }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+
+        const targetPlayerState = table.gameState[role];
+
+        // Evaluate if ANY zone contains cards to determine if a deck was loaded for this match
+        let hasDeckLoaded = false;
+        if (targetPlayerState) {
+            const bZone = targetPlayerState.battleZone || {};
+
+            const hasDeckCards = !!(targetPlayerState.deck && targetPlayerState.deck.length > 0);
+            const hasHandCards = !!(targetPlayerState.hand && targetPlayerState.hand.length > 0);
+            const hasDiscardCards = !!(targetPlayerState.discard && targetPlayerState.discard.length > 0);
+            const hasSupportCards = !!(targetPlayerState.support && targetPlayerState.support.length > 0);
+            const hasDefeatedCards = !!(targetPlayerState.defeated && targetPlayerState.defeated.length > 0);
+
+            const hasFighterA = !!(bZone.fighterA && bZone.fighterA.card);
+            const hasFighterB = !!(bZone.fighterB && bZone.fighterB.card);
+            const hasStage = !!bZone.stage;
+
+            const hasStackA = !!(bZone.fighterA && bZone.fighterA.faceDownStack && bZone.fighterA.faceDownStack.length > 0);
+            const hasStackB = !!(bZone.fighterB && bZone.fighterB.faceDownStack && bZone.fighterB.faceDownStack.length > 0);
+
+            hasDeckLoaded = hasDeckCards || hasHandCards || hasDiscardCards ||
+                hasSupportCards || hasDefeatedCards || hasFighterA ||
+                hasFighterB || hasStage || hasStackA || hasStackB;
+        }
+
+        socket.emit("tableStatusResponse", {
+            tableId: table.id,
+            role: role,
+            hasDeckLoaded: hasDeckLoaded
+        });
+    });
+
     socket.on('moveDiscardToDefeated', ({ tableId, targetPlayer, discardIndex }) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit('errorMsg', 'Table not found.');
@@ -647,46 +637,93 @@ io.on("connection", socket => {
         socket.emit('serverNotice', `Successfully extracted card from discard index ${idx} to defeated zone.`);
     });
 
-    socket.on("checkTableStatus", ({ tableId: tableId, role: role }) => {
+    socket.on("playCardToStage", ({ tableId, targetPlayer, handIndex }) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
 
-        const targetPlayerState = table.gameState[role];
-
-        // Evaluate if ANY zone contains cards to determine if a deck was loaded for this match
-        let hasDeckLoaded = false;
-        if (targetPlayerState) {
-            const bZone = targetPlayerState.battleZone || {};
-
-            const hasDeckCards = !!(targetPlayerState.deck && targetPlayerState.deck.length > 0);
-            const hasHandCards = !!(targetPlayerState.hand && targetPlayerState.hand.length > 0);
-            const hasDiscardCards = !!(targetPlayerState.discard && targetPlayerState.discard.length > 0);
-            const hasSupportCards = !!(targetPlayerState.support && targetPlayerState.support.length > 0);
-            const hasDefeatedCards = !!(targetPlayerState.defeated && targetPlayerState.defeated.length > 0);
-
-            const hasFighterA = !!(bZone.fighterA && bZone.fighterA.card);
-            const hasFighterB = !!(bZone.fighterB && bZone.fighterB.card);
-            const hasStage = !!bZone.stage;
-
-            const hasStackA = !!(bZone.fighterA && bZone.fighterA.faceDownStack && bZone.fighterA.faceDownStack.length > 0);
-            const hasStackB = !!(bZone.fighterB && bZone.fighterB.faceDownStack && bZone.fighterB.faceDownStack.length > 0);
-
-            hasDeckLoaded = hasDeckCards || hasHandCards || hasDiscardCards ||
-                hasSupportCards || hasDefeatedCards || hasFighterA ||
-                hasFighterB || hasStage || hasStackA || hasStackB;
+        const hand = table.gameState[targetPlayer]?.hand;
+        const battleZone = table.gameState[targetPlayer]?.battleZone;
+        if (!hand || hand.length === 0) {
+            return socket.emit("errorMsg", `Hand is completely empty! Cannot place card onto the stage.`);
         }
 
-        socket.emit("tableStatusResponse", {
-            tableId: table.id,
-            role: role,
-            hasDeckLoaded: hasDeckLoaded
+        const idx = parseInt(handIndex);
+        if (isNaN(idx) || idx < 0 || idx >= hand.length) {
+            return socket.emit("errorMsg", `Invalid hand position index! Choose between 0 and ${hand.length - 1}.`);
+        }
+
+        // Verify if target stage slot is currently empty
+        if (battleZone.stage && Object.keys(battleZone.stage).length > 0) {
+            return socket.emit("errorMsg", "The Stage zone position is already occupied! Discard or move it first.");
+        }
+
+        // Slice card out of hand and push to public Stage configuration state
+        const [cardToStage] = hand.splice(idx, 1);
+        cardToStage.isFaceDown = false;
+        cardToStage.isTapped = false;
+        battleZone.stage = cardToStage;
+
+        // Trigger universal room broadcast to update public viewports
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean);
+        targetSockets.forEach(sockId => {
+            const targetSock = io.sockets.sockets.get(sockId);
+            if (targetSock) {
+                let viewerRole = "spectator";
+                if (sockId === table.playerA) viewerRole = "playerA";
+                if (sockId === table.playerB) viewerRole = "playerB";
+                sendSanitizedState(targetSock, table, viewerRole);
+            }
         });
+
+        socket.emit("serverNotice", `Successfully placed card from hand index ${idx} face up into ${targetPlayer}'s stage position.`);
     });
 
-    /**
-     * Action: Sets the target player's end game proposal flag to true.
-     * If both players agree, it hard-scrubs the table state and demotes players to spectators.
-     */
+    socket.on("executeDevMulligan", ({ tableId, targetPlayer }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+
+        const pState = table.gameState[targetPlayer];
+        if (!pState) return socket.emit("errorMsg", "Invalid player slot targeted.");
+
+        console.log(`⚡ [DEV MACRO]: Processing atomic Mulligan matrix loop for player slot: ${targetPlayer}`);
+
+        // 1. Flush hand cards face-down back into the deck's tail boundary array
+        while (pState.hand.length > 0) {
+            const card = pState.hand.pop();
+            card.isFaceDown = true;
+            card.isTapped = false;
+            pState.deck.push(card);
+        }
+
+        // 2. Execute program shuffle scramble with alphabetic UUID sorting rules
+        pState.deck.forEach(card => { card.shuffleId = uuidv4(); });
+        pState.deck.sort((a, b) => a.shuffleId.localeCompare(b.shuffleId));
+        pState.deck.forEach(card => { delete card.shuffleId; });
+
+        // 3. Pop 6 fresh top deck cards into the player hand
+        for (let i = 0; i < 6; i++) {
+            if (pState.deck.length > 0) {
+                const drawnCard = pState.deck.pop();
+                drawnCard.isFaceDown = false;
+                pState.hand.push(drawnCard);
+            }
+        }
+
+        // 4. Dispatch synchronized sanitization states across all active sockets
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean);
+        targetSockets.forEach(sockId => {
+            const targetSock = io.sockets.sockets.get(sockId);
+            if (targetSock) {
+                let viewerRole = "spectator";
+                if (sockId === table.playerA) viewerRole = "playerA";
+                if (sockId === table.playerB) viewerRole = "playerB";
+                sendSanitizedState(targetSock, table, viewerRole);
+            }
+        });
+
+        socket.emit("serverNotice", `Mulligan completed! Hand returned to deck tail, scrambled via UUID, and 6 cards redrawn.`);
+    });
+
     socket.on('signalEndGame', ({ tableId, targetPlayer }) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit('errorMsg', 'Table not found.');
@@ -758,9 +795,6 @@ io.on("connection", socket => {
         }
     });
 
-    /**
-     * Action: Revokes a previously submitted end-game signal, returning the flag to false.
-     */
     socket.on('revokeEndGame', ({ tableId, targetPlayer }) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit('errorMsg', 'Table not found.');
@@ -782,47 +816,6 @@ io.on("connection", socket => {
         });
     });
 
-    socket.on("playCardToStage", ({ tableId, targetPlayer, handIndex }) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
-        if (!table) return socket.emit("errorMsg", "Table not found.");
-
-        const hand = table.gameState[targetPlayer]?.hand;
-        const battleZone = table.gameState[targetPlayer]?.battleZone;
-        if (!hand || hand.length === 0) {
-            return socket.emit("errorMsg", `Hand is completely empty! Cannot place card onto the stage.`);
-        }
-
-        const idx = parseInt(handIndex);
-        if (isNaN(idx) || idx < 0 || idx >= hand.length) {
-            return socket.emit("errorMsg", `Invalid hand position index! Choose between 0 and ${hand.length - 1}.`);
-        }
-
-        // Verify if target stage slot is currently empty
-        if (battleZone.stage && Object.keys(battleZone.stage).length > 0) {
-            return socket.emit("errorMsg", "The Stage zone position is already occupied! Discard or move it first.");
-        }
-
-        // Slice card out of hand and push to public Stage configuration state
-        const [cardToStage] = hand.splice(idx, 1);
-        cardToStage.isFaceDown = false;
-        cardToStage.isTapped = false;
-        battleZone.stage = cardToStage;
-
-        // Trigger universal room broadcast to update public viewports
-        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean);
-        targetSockets.forEach(sockId => {
-            const targetSock = io.sockets.sockets.get(sockId);
-            if (targetSock) {
-                let viewerRole = "spectator";
-                if (sockId === table.playerA) viewerRole = "playerA";
-                if (sockId === table.playerB) viewerRole = "playerB";
-                sendSanitizedState(targetSock, table, viewerRole);
-            }
-        });
-
-        socket.emit("serverNotice", `Successfully placed card from hand index ${idx} face up into ${targetPlayer}'s stage position.`);
-    });
-
 });
 
-console.log('TCG Server on 3000');
+console.log(`TCG Server on ${process.env.RAILWAY_PUBLIC_DOMAIN}`);
