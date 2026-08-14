@@ -587,28 +587,106 @@ class GameScene extends Phaser.Scene {
 
     // --- HELPER ROUTINE: CARD SPRITE FACTORY ---
     // Renders either the high-fidelity card graphic or a face-down card back
-    renderCardSprite(x, y, card, isTapped) {
-        let bundleKey = 'system_ui';
-        let frameKey = 'card_back'; 
+    // ADDED PARAMETER: 'currentZone' explicitly separates hand logic from other board tiles
+    renderCardSprite(x, y, card, isTapped, currentZone = "field") {
+        let bundleKey = "system_ui";
+        let frameKey = "card_back";
+        let useFallback = false;
 
-        if (card && card.name !== "Card Back") {
+        // 1. Core Dimensions: Initialize to absolute defaults
+        let appliedWidth = this.cardWidth;
+        let appliedHeight = this.cardHeight;
+        let currentScaleFactor = 1;
+
+        // 2. Isolated Grid Lookahead: ONLY check scaling if this card is explicitly in the hand zone
+        const isCardBack = !card || card.title === "Card Back" || card.name === "Card Back" || card.isFaceDown;
+        
+        if (this.lastReceivedState && card && !isCardBack && currentZone === "hand") {
+            const playerState = this.lastReceivedState[this.role] || {};
+            const handArray = playerState.hand || [];
+            
+            const handIndex = handArray.findIndex(c => c.id === card.id);
+            if (handIndex !== -1) {
+                const isLocalSeat = true;
+                const layout = this.getHandCardLayout(handIndex, handArray.length, isLocalSeat);
+                
+                appliedWidth = layout.width;
+                appliedHeight = layout.height;
+                currentScaleFactor = layout.width / this.cardWidth;
+            }
+        }
+
+        // 3. Determine Texture Identity Keys
+        if (!isCardBack) {
             const cardId = card.id || "";
             frameKey = cardId;
-            if (cardId.startsWith('BS1-')) bundleKey = 'BS01_cards';
-            else if (cardId.startsWith('BS2-')) bundleKey = 'BS02_cards';
-            else if (cardId.startsWith('BS3-')) bundleKey = 'BS03_cards';
-            else if (cardId.startsWith('BS10-')) bundleKey = 'BS10_cards';
+            
+            if (cardId.startsWith("BS1-")) bundleKey = "BS01_cards";
+            else if (cardId.startsWith("BS2-")) bundleKey = "BS02_cards";
+            else if (cardId.startsWith("BS3-")) bundleKey = "BS03_cards";
+            else if (cardId.startsWith("BS10-")) bundleKey = "BS10_cards";
         }
 
-        const cardSprite = this.add.image(x, y, bundleKey, frameKey);
-        cardSprite.setDisplaySize(this.cardWidth, this.cardHeight);
+        if (!this.textures.exists(bundleKey) || !this.textures.get(bundleKey).has(frameKey)) {
+            useFallback = true;
+        }
 
-        // FIX: Changed setAngle(90) to setAngle(-90) for counter-clockwise tapping
-        if (isTapped || card?.isTapped) {
-            cardSprite.setAngle(-90); 
+        // 4. Render Path A: Real Image Sprite
+        if (!useFallback) {
+            const cardSprite = this.add.image(x, y, bundleKey, frameKey);
+            cardSprite.setDisplaySize(appliedWidth, appliedHeight);
+            cardSprite.setAngle(isTapped || card?.isTapped ? -90 : 0);
+            return; 
+        }
+
+        // 5. Render Path B: Programmatic Vector Fallback Container
+        const fallbackContainer = this.add.container(x, y);
+        fallbackContainer.setDepth(50);
+
+        const halfW = appliedWidth / 2;
+        const halfH = appliedHeight / 2;
+        const cardShape = this.add.graphics();
+        
+        if (isCardBack) {
+            cardShape.fillStyle(0x475569, 1);       
+            cardShape.lineStyle(2, 0x334155, 1);    
+            cardShape.fillRoundedRect(-halfW, -halfH, appliedWidth, appliedHeight, 6);
+            cardShape.strokeRoundedRect(-halfW, -halfH, appliedWidth, appliedHeight, 6);
+            fallbackContainer.add(cardShape);
+
+            const backFontSize = Math.max(7, Math.floor(10 * currentScaleFactor));
+            const backStyle = { fontSize: `${backFontSize}px`, fontFamily: "monospace", fill: "#f8fafc", fontWeight: "bold" };
+            const backText = this.add.text(0, 0, "CARD BACK", backStyle).setOrigin(0.5);
+            fallbackContainer.add(backText);
         } else {
-            cardSprite.setAngle(0);
+            cardShape.fillStyle(0xF5F5F5, 1);       
+            cardShape.lineStyle(2, 0x94a3b8, 1);    
+            cardShape.fillRoundedRect(-halfW, -halfH, appliedWidth, appliedHeight, 6);
+            cardShape.strokeRoundedRect(-halfW, -halfH, appliedWidth, appliedHeight, 6);
+            fallbackContainer.add(cardShape);
+
+            const titleFontSize = Math.max(7, Math.floor(10 * currentScaleFactor));
+            const rawTitle = card.title || card.name || "Unknown Card";
+            const titleStyle = { 
+                fontSize: `${titleFontSize}px`, 
+                fontFamily: "monospace", 
+                fill: "#1e293b", 
+                fontWeight: "bold", 
+                align: "center", 
+                wordWrap: { width: appliedWidth - 8 } 
+            };
+            const titleText = this.add.text(0, -halfH + Math.floor(12 * currentScaleFactor), rawTitle, titleStyle).setOrigin(0.5, 0);
+            fallbackContainer.add(titleText);
+
+            const idFontSize = Math.max(6, Math.floor(9 * currentScaleFactor));
+            const idStyle = { fontSize: `${idFontSize}px`, fontFamily: "monospace", fill: "#64748b", fontWeight: "bold" };
+            const idText = this.add.text(-halfW + Math.floor(6 * currentScaleFactor), halfH - Math.floor(10 * currentScaleFactor), card.id || "N/A", idStyle).setOrigin(0, 0.5);
+            fallbackContainer.add(idText);
         }
+
+        fallbackContainer.setAngle(isTapped || card?.isTapped ? -90 : 0);
+        fallbackContainer.setData("computedWidth", appliedWidth);
+        fallbackContainer.setData("computedHeight", appliedHeight);
     }
 
     getHandCardLayout(index, totalCards, isLocalSeat) {
@@ -673,7 +751,6 @@ class GameScene extends Phaser.Scene {
 
     // --- SUB-ROUTINE 1: LAYER RESET ---
     resetRenderLayer() {
-        // If it's null or cleared by create(), instantiate a fresh, live graphics context
         if (this.fieldGraphics) {
             this.fieldGraphics.clear();
         } else {
@@ -681,19 +758,26 @@ class GameScene extends Phaser.Scene {
         }
 
         const childrenToDestroy = [];
-        this.children.list.forEach(child => {
-            if (child.type === "Text" && (
-                child.text.includes("HAND") || 
-                child.text.includes("ARENA ZONE") || 
-                child.text.includes("INSPECTION")
-            )) return;
 
-            if (child.type === "Text") childrenToDestroy.push(child);
-            if (child.type === "Image") childrenToDestroy.push(child);
+        this.children.list.forEach(child => {
+            // Retain static layout UI text anchors
+            if (child.type === "Text" && (child.text.includes("HAND") || child.text.includes("ARENA ZONE") || child.text.includes("INSPECTION"))) {
+                return;
+            }
+            
+            // Target standard flat graphic items
+            if (child.type === "Text" || child.type === "Image") {
+                childrenToDestroy.push(child);
+            }
+            
+            // FIX: Explicitly target and destroy fallback card containers to prevent clone ghosts
+            if (child.type === "Container") {
+                childrenToDestroy.push(child);
+            }
         });
+
         childrenToDestroy.forEach(child => child.destroy());
     }
-
 
     // --- SUB-ROUTINE 2: DIVIDER DRAW PASS ---
     drawPanelDividers() {
@@ -743,10 +827,10 @@ class GameScene extends Phaser.Scene {
      * Main coordinator that loops through all static zones for a player profile.
      */
     drawStaticSlots(c, pData, stateKey) {
-        const isLocalSeat = (c === this.fieldCoordinates.local);
+        const isLocalSeat = c === this.fieldCoordinates.local;
         const battleZone = pData.battleZone || {};
 
-        // 1. Process all static zones sequentially
+        // 1. Process standard layout fields
         this.processZoneSlot(c.deck, "DECK", "deck", pData, stateKey, isLocalSeat);
         this.processZoneSlot(c.discard, "DISCARD", "discard", pData, stateKey, isLocalSeat);
         this.processZoneSlot(c.defeated, "DEFEATED", "defeated", pData, stateKey, isLocalSeat);
@@ -754,11 +838,16 @@ class GameScene extends Phaser.Scene {
         this.processZoneSlot(c.fighterA, "FIGHTER A", "fighterA", pData, stateKey, isLocalSeat);
         this.processZoneSlot(c.fighterB, "FIGHTER B", "fighterB", pData, stateKey, isLocalSeat);
 
-        // 2. Render localized defeated metrics panel
+        // 2. Render supplemental text panels and buttons
         this.renderDefeatedPointsPanel(c.defeated, pData.defeatedPoints || 0, isLocalSeat);
-
-        // 3. Render stateless match-termination exit controls
         this.renderStatelessEndGameButton(isLocalSeat);
+
+        // 3. Render visual Deck Stack using the unified fallback engine
+        const totalDeckCount = pData.deck ? pData.deck.length || 0 : 0;
+        if (totalDeckCount > 0) {
+            // Triggers the dedicated "Card Back" shape programmatically if texture bundles are absent
+            this.renderCardSprite(c.deck.x, c.deck.y, { title: "Card Back", isFaceDown: true }, false);
+        }
     }
 
     /**
@@ -995,26 +1084,12 @@ class GameScene extends Phaser.Scene {
         if (pileArray && pileArray.length > 0) {
             const topCard = pileArray[pileArray.length - 1];
             if (topCard) {
-                // Render card sprite onto field
-                let bundleKey = "system_ui";
-                let frameKey = "card_back";
-                if (topCard && topCard.name !== "Card Back") {
-                    const cardId = topCard.id || "";
-                    frameKey = cardId;
-                    if (cardId.startsWith("BS1-")) bundleKey = "BS01_cards";
-                    else if (cardId.startsWith("BS2-")) bundleKey = "BS02_cards";
-                    else if (cardId.startsWith("BS3-")) bundleKey = "BS03_cards";
-                    else if (cardId.startsWith("BS10-")) bundleKey = "BS10_cards";
-                }
-                const pileCardSprite = this.add.image(point.x, point.y, bundleKey, frameKey);
-                pileCardSprite.setDisplaySize(this.cardWidth, this.cardHeight);
-                
-                // FIX: Keep card sprites layered beneath the zone hitbox (150) so dropping is never blocked
-                pileCardSprite.setDepth(20); 
+                // ROUTING FIX: Routes the top card of the discard/defeated stack 
+                // directly into the central fallback checker
+                this.renderCardSprite(point.x, point.y, topCard, topCard.isTapped);
             }
         }
     }
-
 
     /**
      * Handles rendering the score counter and score increment/decrement buttons (+1, -1).
@@ -1121,37 +1196,30 @@ class GameScene extends Phaser.Scene {
         const isLocalSeat = c === this.fieldCoordinates.local;
 
         hand.forEach((card, index) => {
-            // Reuse layout math
             const layout = this.getHandCardLayout(index, totalCards, isLocalSeat);
             const cardX = layout.x;
-            const cardY = c.handStart.y + layout.y; // Append layout offset to seat baseline
-
-            let bundleKey = "system_ui";
-            let frameKey = "card_back";
-            if (card && card.name !== "Card Back") {
-                const cardId = card.id || "";
-                frameKey = cardId;
-                if (cardId.startsWith("BS1-")) bundleKey = "BS01_cards";
-                else if (cardId.startsWith("BS2-")) bundleKey = "BS02_cards";
-                else if (cardId.startsWith("BS3-")) bundleKey = "BS03_cards";
-                else if (cardId.startsWith("BS10-")) bundleKey = "BS10_cards";
-            }
+            const cardY = c.handStart.y + layout.y;
 
             if (isLocalSeat) {
-                const interactiveCard = this.add.image(cardX, cardY, bundleKey, frameKey);
-                interactiveCard.setDisplaySize(layout.width, layout.height);
-                interactiveCard.setAngle(card?.isTapped ? -90 : 0);
-                interactiveCard.setDepth(50 + index);
-                interactiveCard.setData("originalX", cardX);
-                interactiveCard.setData("originalY", cardY);
-                interactiveCard.setData("handIndex", index);
-                interactiveCard.setInteractive({ useHandCursor: true });
-                this.input.setDraggable(interactiveCard);
+                // FIX: Explicitly passes "hand" so the renderer knows to apply scaling calculations
+                this.renderCardSprite(cardX, cardY, card, card?.isTapped, "hand");
+
+                const currentCardObject = this.children.list[this.children.list.length - 1];
+                if (currentCardObject) {
+                    currentCardObject.setDepth(50 + index);
+                    currentCardObject.setData("originalX", cardX);
+                    currentCardObject.setData("originalY", cardY);
+                    currentCardObject.setData("handIndex", index);
+                    currentCardObject.setInteractive(new Phaser.Geom.Rectangle(-layout.width/2, -layout.height/2, layout.width, layout.height), Phaser.Geom.Rectangle.Contains);
+                    this.input.setDraggable(currentCardObject);
+                }
             } else {
-                const opponentCard = this.add.image(cardX, cardY, bundleKey, frameKey);
-                opponentCard.setDisplaySize(layout.width, layout.height);
-                opponentCard.setAngle(0);
-                opponentCard.setDepth(50 + index);
+                // Opponent cards also pass "hand" layout token tag parameters
+                this.renderCardSprite(cardX, cardY, card, false, "hand");
+                const opponentCardObject = this.children.list[this.children.list.length - 1];
+                if (opponentCardObject) {
+                    opponentCardObject.setDepth(50 + index);
+                }
             }
         });
     }
@@ -1161,56 +1229,54 @@ class GameScene extends Phaser.Scene {
         const preview = this.fieldCoordinates.previewAnchor;
         const bigWidth = 260;
         const bigHeight = 364;
-
-        // --- CLEAN FIX: Clear existing preview visual elements to prevent memory leaks/layer blur ---
-        // Identifies any Text or Image objects explicitly placed inside the Column 3 boundary
-        const boundaryLeft = 1536; 
+        const boundaryLeft = 1536;
         const visualElementsToDestroy = [];
 
+        // 1. Perform isolated right-panel cleanup sweeps
         this.children.list.forEach(child => {
-            if ((child.type === 'Text' || child.type === 'Image') && child.x > boundaryLeft) {
+            if ((child.type === "Text" || child.type === "Image" || child.type === "Container") && child.x > boundaryLeft) {
                 visualElementsToDestroy.push(child);
             }
         });
         visualElementsToDestroy.forEach(child => child.destroy());
 
-        // Draw solid dark background shell plate container
-        this.fieldGraphics.fillStyle(0x020617, 1);
-        this.fieldGraphics.fillRect(preview.x - bigWidth/2, preview.y - bigHeight/2, bigWidth, bigHeight);
-        
-        // Glow cyan if a card is selected, keep slate grey if empty
+        // 2. Render background card framing plate
+        this.fieldGraphics.fillStyle(0x020617, 1); // Deep slate background
+        this.fieldGraphics.fillRect(preview.x - bigWidth / 2, preview.y - bigHeight / 2, bigWidth, bigHeight);
         this.fieldGraphics.lineStyle(3, this.selectedPreviewCard ? 0x38bdf8 : 0x334155, 1);
-        this.fieldGraphics.strokeRect(preview.x - bigWidth/2, preview.y - bigHeight/2, bigWidth, bigHeight);
+        this.fieldGraphics.strokeRect(preview.x - bigWidth / 2, preview.y - bigHeight / 2, bigWidth, bigHeight);
 
+        // 3. Render contents using the unified rendering pipeline
         if (this.selectedPreviewCard) {
             const card = this.selectedPreviewCard;
             
-            let bundleKey = 'system_ui';
-            let frameKey = 'card_back'; // Generic card back fallback
+            // Temporarily scale configuration globals to render a high-visibility inspection model
+            const savedW = this.cardWidth;
+            const savedH = this.cardHeight;
+            this.cardWidth = bigWidth;
+            this.cardHeight = bigHeight;
 
-            if (card.name !== "Card Back") {
-                const cardId = card.id || "";
-                frameKey = cardId;
+            // Route the card directly into your centralized asset check engine
+            this.renderCardSprite(preview.x, preview.y, card, false);
 
-                // Match the ID code to its proper high-res .pct asset bundle key
-                if (cardId.startsWith('BS1-')) bundleKey = 'BS01_cards';
-                else if (cardId.startsWith('BS2-')) bundleKey = 'BS02_cards';
-                else if (cardId.startsWith('BS3-')) bundleKey = 'BS03_cards';
-                else if (cardId.startsWith('BS10-')) bundleKey = 'BS10_cards';
-            }
+            // Restore standard layout footprint constants
+            this.cardWidth = savedW;
+            this.cardHeight = savedH;
 
-            // Render the high-res texture image crop inside the Column 3 placeholder bounds
-            const bigPreviewImage = this.add.image(preview.x, preview.y, bundleKey, frameKey);
-            bigPreviewImage.setDisplaySize(bigWidth, bigHeight);
-
-            // Print the unmasked metadata details directly underneath the image frame block
-            this.add.text(preview.x, preview.y + bigHeight/2 + 20, `CODE: ${card.name === 'Card Back' ? 'UNKNOWN' : card.id}`, {
-                fontSize: '13px', fontFamily: 'monospace', color: '#38bdf8', fontWeight: 'bold'
+            // Overlay tracking data information text lines
+            const isUnknown = card.title === "Card Back" || card.name === "Card Back";
+            this.add.text(preview.x, preview.y + bigHeight / 2 + 20, `CODE: ${isUnknown ? "UNKNOWN HIDDEN" : (card.id || "N/A")}`, {
+                fontSize: "13px",
+                fontFamily: "monospace",
+                fill: "#38bdf8",
+                fontWeight: "bold"
             }).setOrigin(0.5);
-
         } else {
             this.add.text(preview.x, preview.y, "[ HOVER CURSOR OVER A CARD\n& PRESS SPACEBAR TO INSPECT ]", {
-                fontSize: '12px', fontFamily: 'monospace', color: '#64748b', align: 'center'
+                fontSize: "12px",
+                fontFamily: "monospace",
+                fill: "#64748b",
+                align: "center"
             }).setOrigin(0.5);
         }
     }
@@ -1467,71 +1533,72 @@ class GameScene extends Phaser.Scene {
      */
     renderDrawerContents() {
         if (!this.drawerContainer || !this.drawerState.isOpen) return;
-
+        
+        // Clear out stale container objects safely
         this.drawerContainer.removeAll(true);
 
         const playerKey = this.drawerState.playerKey;
-        const zoneType = this.drawerState.zoneType || 'discard'; // Read the current zone type context
-        
-        // Dynamically select target data array depending on zone configuration
-        const targetState = (this.lastReceivedState && this.lastReceivedState[playerKey]) ? this.lastReceivedState[playerKey] : {};
-        const cardList = (zoneType === 'defeated') ? (targetState.defeated || []) : (targetState.discard || []);
+        const zoneType = this.drawerState.zoneType || "discard";
+        const targetState = this.lastReceivedState && this.lastReceivedState[playerKey] ? this.lastReceivedState[playerKey] : {};
+        const cardList = zoneType === "defeated" ? targetState.defeated || [] : targetState.discard || [];
 
-        // 1. Draw solid overlay backdrop plate
+        // 1. Draw solid background blocker plate
         const bgPlate = this.add.graphics();
-        bgPlate.fillStyle(0x0f172a, 0.98); 
+        bgPlate.fillStyle(0x0f172a, 0.98); // Solid charcoal block surface
         bgPlate.fillRect(0, 0, 1536, 1080);
         bgPlate.lineStyle(4, 0x38bdf8, 1);
-        bgPlate.lineBetween(1536, 0, 1536, 1080); 
+        bgPlate.lineBetween(1536, 0, 1536, 1080);
         this.drawerContainer.add(bgPlate);
 
-        // 2. Header and Instructional Labels
-        const zoneTitle = (zoneType === 'defeated') ? 'DEFEATED PILE' : 'DISCARD CEMETERY PILE';
+        // 2. Render administrative header label components
+        const zoneTitle = zoneType === "defeated" ? "DEFEATED PILE" : "DISCARD CEMETERY PILE";
         const headerText = this.make.text({
-            x: 40, y: 30, text: `${playerKey.toUpperCase()} ${zoneTitle} (${cardList.length} CARDS)`,
-            style: { fontSize: '22px', fontFamily: 'monospace', fill: '#f8fafc', fontWeight: 'bold' }
+            x: 40, y: 30,
+            text: `${playerKey.toUpperCase()} ${zoneTitle} (${cardList.length} CARDS)`,
+            style: { fontSize: "22px", fontFamily: "monospace", fill: "#f8fafc", fontWeight: "bold" }
         });
         this.drawerContainer.add(headerText);
 
-        const isOwner = (this.role === playerKey);
-        
-        // Force text lockout if it's the defeated pile or if it's the opponent's view
-        const isDefeatedView = (zoneType === 'defeated');
-        const instructionString = (isOwner && !isDefeatedView && this.role !== 'spectator')
-            ? '💡 CLICK A CARD TO MOVE IT TO DEFEATED | PRESS [SPACEBAR] TO PREVIEW DETAILED CODE FRAME'
-            : '💡 INSPECTION MODE | PRESS [SPACEBAR] TO PREVIEW DETAILED CODE FRAME';
+        const isOwner = this.role === playerKey;
+        const isDefeatedView = zoneType === "defeated";
+        const instructionString = isOwner && !isDefeatedView && this.role !== "spectator"
+            ? "💡 CLICK A CARD TO MOVE IT TO DEFEATED | PRESS [SPACEBAR] TO PREVIEW DETAILED CODE FRAME"
+            : "💡 INSPECTION MODE | PRESS [SPACEBAR] TO PREVIEW DETAILED CODE FRAME";
 
         const subText = this.make.text({
-            x: 40, y: 65, text: instructionString,
-            style: { fontSize: '12px', fontFamily: 'monospace', fill: '#94a3b8' }
+            x: 40, y: 65,
+            text: instructionString,
+            style: { fontSize: "12px", fontFamily: "monospace", fill: "#94a3b8" }
         });
         this.drawerContainer.add(subText);
 
-        // 3. ACTION CONTROL BUTTONS
+        // 3. Render close button interface window
         const closeBtn = this.make.text({
-            x: 1480, y: 25, text: '❌ CLOSE',
-            style: { fontSize: '15px', fontFamily: 'monospace', fill: '#ef4444', fontWeight: 'bold', backgroundColor: '#1e293b', padding: { x: 12, y: 6 } }
+            x: 1480, y: 25,
+            text: "❌ CLOSE",
+            style: { fontSize: "15px", fontFamily: "monospace", fill: "#ef4444", fontWeight: "bold", backgroundColor: "#1e293b", padding: { x: 12, y: 6 } }
         }).setOrigin(1, 0);
         closeBtn.setInteractive({ useHandCursor: true });
-        closeBtn.on('pointerdown', () => this.toggleStackDrawer(null));
+        closeBtn.on("pointerdown", () => this.toggleStackDrawer(null));
         this.drawerContainer.add(closeBtn);
 
-        // LOCKOUT CHECK: Recycle buttons ONLY show up for your OWN discard pile. Never for Defeated items.
-        if (cardList.length > 0 && isOwner && !isDefeatedView && this.role !== 'spectator') {
+        // 4. Render conditional pile recycling command button macros
+        if (cardList.length > 0 && isOwner && !isDefeatedView && this.role !== "spectator") {
             const recycleBtn = this.make.text({
-                x: 40, y: 110, text: '♻️ RECYCLE ALL DISCARDS TO DECK',
-                style: { fontSize: '13px', fontFamily: 'monospace', fill: '#10b981', fontWeight: 'bold', backgroundColor: '#064e3b', padding: { x: 14, y: 8 } }
+                x: 40, y: 110,
+                text: "♻️ RECYCLE ALL DISCARDS TO DECK",
+                style: { fontSize: "13px", fontFamily: "monospace", fill: "#10b981", fontWeight: "bold", backgroundColor: "#064e3b", padding: { x: 14, y: 8 } }
             });
             recycleBtn.setInteractive({ useHandCursor: true });
-            recycleBtn.on('pointerdown', () => {
-                this.socket.emit('recycleDiscardToDeck', { tableId: this.tableId, targetPlayer: playerKey });
+            recycleBtn.on("pointerdown", () => {
+                this.socket.emit("recycleDiscardToDeck", { tableId: this.tableId, targetPlayer: playerKey });
             });
             this.drawerContainer.add(recycleBtn);
         }
 
-        // 4. GENERATE CARDS GRID MATRIX 
+        // 5. Generate items inside the container view using the unified fallback engine
         const gridStartX = 80;
-        const gridStartY = 250; 
+        const gridStartY = 250;
         const spacingX = 135;
         const spacingY = 185;
         const colsPerLine = 10;
@@ -1539,45 +1606,34 @@ class GameScene extends Phaser.Scene {
         cardList.forEach((card, index) => {
             const col = index % colsPerLine;
             const row = Math.floor(index / colsPerLine);
+            const posX = gridStartX + col * spacingX;
+            const posY = gridStartY + row * spacingY;
 
-            const posX = gridStartX + (col * spacingX);
-            const posY = gridStartY + (row * spacingY); 
+            // Capture child list index parameters prior to pushing the object
+            const baseIndexBeforeRender = this.children.list.length;
 
-            let bundleKey = 'system_ui';
-            let frameKey = 'card_back';
+            // Render card block (handles fallback logic natively)
+            this.renderCardSprite(posX, posY, card, false);
 
-            if (card && card.name !== "Card Back") {
-                const cardId = card.id || "";
-                frameKey = cardId;
-                if (cardId.startsWith('BS1-')) bundleKey = 'BS01_cards';
-                else if (cardId.startsWith('BS2-')) bundleKey = 'BS02_cards';
-                else if (cardId.startsWith('BS3-')) bundleKey = 'BS03_cards';
-                else if (cardId.startsWith('BS10-')) bundleKey = 'BS10_cards';
-            }
+            // Fetch the generated card layout asset out of global memory space
+            const drawerCardImg = this.children.list[baseIndexBeforeRender];
 
-            const drawerCardImg = this.make.image({ x: posX, y: posY, key: bundleKey, frame: frameKey });
-            drawerCardImg.setDisplaySize(this.cardWidth * 0.9, this.cardHeight * 0.9);
-            
-            drawerCardImg.setData('drawerCardRef', card);
-            drawerCardImg.setData('drawerCardIndex', index);
+            if (drawerCardImg) {
+                drawerCardImg.setData("drawerCardRef", card);
+                drawerCardImg.setData("drawerCardIndex", index);
 
-            // LOCKOUT CHECK: You can click items to mutate state ONLY if you own the pile and it is a DISCARD pile.
-            // Defeated cards, opponent views, and spectators bypass click handlers entirely.
-            if (isOwner && !isDefeatedView && this.role !== 'spectator') {
-                drawerCardImg.setInteractive({ useHandCursor: true });
-                drawerCardImg.on('pointerdown', () => {
-                    this.socket.emit('moveDiscardToDefeated', {
-                        tableId: this.tableId,
-                        targetPlayer: playerKey,
-                        discardIndex: index
+                // Handle input actions for the viewer role types
+                if (isOwner && !isDefeatedView && this.role !== "spectator") {
+                    drawerCardImg.setInteractive(new Phaser.Geom.Rectangle(-this.cardWidth/2, -this.cardHeight/2, this.cardWidth, this.cardHeight), Phaser.Geom.Rectangle.Contains);
+                    drawerCardImg.on("pointerdown", () => {
+                        this.socket.emit("moveDiscardToDefeated", { tableId: this.tableId, targetPlayer: playerKey, discardIndex: index });
                     });
-                });
-            } else {
-                // Lock down to observation preview mode only (allows spacebar hover scanning)
-                drawerCardImg.setInteractive();
-            }
+                }
 
-            this.drawerContainer.add(drawerCardImg);
+                // Remove item from primary rendering layer and nest it inside our sliding sub-container group
+                this.children.remove(drawerCardImg);
+                this.drawerContainer.add(drawerCardImg);
+            }
         });
     }
 

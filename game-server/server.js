@@ -1,7 +1,19 @@
 const PORT = process.env.PORT || 3000;
-const io = require("socket.io")(PORT, {
-    cors: { origin: "*" } // Universal wildcard simplifies routing checks for debugging
+const io = require("socket.io")(process.env.PORT || 3000, {
+  cors: {
+    origin: [
+      "https://github.io",       // Your GHP URL
+      "http://localhost:8000",          // Standard Localhost port
+      "http://127.0.0.1:8000",          // Alternate loopback IP port
+      "http://localhost",               // Bare localhost address
+      "http://127.0.0.1"
+    ],
+    methods: ["GET", "POST"],
+    credentials: true
+  },
+  transports: ['websocket'] // Mirror the client setting on the server layer
 });
+
 
 const { v4: uuidv4 } = require('uuid');
 
