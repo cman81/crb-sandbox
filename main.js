@@ -2,31 +2,39 @@ const { app, BrowserWindow } = require('electron');
 const path = require('path');
 
 function createWindow() {
+  // 🎥 Configure a rigid aspect-ratio matching widescreen viewport wrapper frame
   const mainWindow = new BrowserWindow({
     width: 1280,
     height: 720,
+    useContentSize: true, // Guarantees the canvas context receives crisp allocation bounds
+    resizable: true,
     webPreferences: {
-      // Points securely to your bridge script
-      preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false
     }
   });
 
-  // Loads your local Phaser html canvas completely offline
+  // 🛡️ Bypasses chromium security headers to prevent internal CORS crashes
+  // when dragging HTML DOM nodes over localized canvas elements offline.
+  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': ["default-src 'self' 'unsafe-inline' 'unsafe-eval' ws: wss: https:; img-src 'self' data: blob:;"]
+      }
+    });
+  });
+
+  // 📂 BOOT DIRECTLY FROM COMPUTER HARD DRIVE:
+  // Phaser 3 completely bypasses build pipelines and loads flat out of the folder!
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
-  
-  // Optional: Automatically opens Chrome Developer Tools on boot for easy debugging
-  // mainWindow.webContents.openDevTools();
+
+  // Open the chromium inspector tool belt automatically during sandbox debugging sessions
+  mainWindow.webContents.openDevTools();
 }
 
-app.whenReady().then(() => {
-  createWindow();
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
-});
+// OS Lifecycle Listeners
+app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
