@@ -648,41 +648,37 @@ io.on("connection", socket => {
         socket.emit("serverNotice", `Recycled all ${recycledCount} cards from discard to deck face down, and fully shuffled the deck!`);
     });
 
-    socket.on("checkTableStatus", ({ tableId: tableId, role: role }) => {
+    socket.on("checkTableStatus", ({tableId: tableId, role: role}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
+        
+        // 🛡️ CRASH GUARD: Spectators go straight to table; they have no deck state to check
+        if (role === "spectator") {
+            return socket.emit("tableStatusResponse", {tableId: table.id, role: role, hasDeckLoaded: false});
+        }
 
         const targetPlayerState = table.gameState[role];
-
-        // Evaluate if ANY zone contains cards to determine if a deck was loaded for this match
         let hasDeckLoaded = false;
+        
         if (targetPlayerState) {
             const bZone = targetPlayerState.battleZone || {};
-
             const hasDeckCards = !!(targetPlayerState.deck && targetPlayerState.deck.length > 0);
             const hasHandCards = !!(targetPlayerState.hand && targetPlayerState.hand.length > 0);
             const hasDiscardCards = !!(targetPlayerState.discard && targetPlayerState.discard.length > 0);
             const hasSupportCards = !!(targetPlayerState.support && targetPlayerState.support.length > 0);
             const hasDefeatedCards = !!(targetPlayerState.defeated && targetPlayerState.defeated.length > 0);
-
             const hasFighterA = !!(bZone.fighterA && bZone.fighterA.card);
             const hasFighterB = !!(bZone.fighterB && bZone.fighterB.card);
             const hasStage = !!bZone.stage;
-
             const hasStackA = !!(bZone.fighterA && bZone.fighterA.faceDownStack && bZone.fighterA.faceDownStack.length > 0);
             const hasStackB = !!(bZone.fighterB && bZone.fighterB.faceDownStack && bZone.fighterB.faceDownStack.length > 0);
-
-            hasDeckLoaded = hasDeckCards || hasHandCards || hasDiscardCards ||
-                hasSupportCards || hasDefeatedCards || hasFighterA ||
-                hasFighterB || hasStage || hasStackA || hasStackB;
+            
+            hasDeckLoaded = hasDeckCards || hasHandCards || hasDiscardCards || hasSupportCards || hasDefeatedCards || hasFighterA || hasFighterB || hasStage || hasStackA || hasStackB;
         }
-
-        socket.emit("tableStatusResponse", {
-            tableId: table.id,
-            role: role,
-            hasDeckLoaded: hasDeckLoaded
-        });
+        
+        socket.emit("tableStatusResponse", {tableId: table.id, role: role, hasDeckLoaded: hasDeckLoaded});
     });
+
 
     socket.on("moveDiscardToDefeated", ({ tableId, targetPlayer, discardIndex }) => {
         const table = tables.find(t => t.id === parseInt(tableId));
