@@ -288,7 +288,14 @@ class GameScene extends Phaser.Scene {
             }
         });
 
+        this.hoveredCardData = null;
 
+        // Add this alongside your other keydown-SPACE and keydown-T loops
+        this.input.keyboard.on("keydown-ENTER", () => {
+            if (this.hoveredCardData) {
+                this.displayLargeCardModal(this.hoveredCardData);
+            }
+        });
     }
 
     // --- HELPER ROUTINE: CARD SPRITE FACTORY ---
@@ -348,6 +355,7 @@ class GameScene extends Phaser.Scene {
                 cardSprite.setAlpha(0); // Force the background clone to hide
             }
             
+            this.attachCardInspectionListeners(cardSprite, card, isCardBack);
             return cardSprite; 
         }
 
@@ -397,6 +405,7 @@ class GameScene extends Phaser.Scene {
             fallbackContainer.setAlpha(0);
         }
 
+        this.attachCardInspectionListeners(fallbackContainer, card, isCardBack);
         return fallbackContainer; 
     }
 
@@ -2004,6 +2013,127 @@ class GameScene extends Phaser.Scene {
         }
 
         return false; // Return false if no structural animation changes occurred
+    }
+
+    attachCardInspectionListeners(displayObject, card, isCardBack) {
+        // Only bind interaction loops if it's a real card face (ignore empty backs)
+        if (!card || isCardBack) return;
+
+        // Ensure the object can receive pointer events
+        if (displayObject.type === "Container") {
+            // Calculate dynamic relative bounds matching your geometry rules
+            const compW = displayObject.getData("computedWidth") || this.cardWidth;
+            const compH = displayObject.getData("computedHeight") || this.cardHeight;
+            displayObject.setInteractive(
+                new Phaser.Geom.Rectangle(-compW / 2, -compH / 2, compW, compH),
+                Phaser.Geom.Rectangle.Contains
+            );
+        } else {
+            displayObject.setInteractive({ useHandCursor: true });
+        }
+
+        // 1. Keep track of what the mouse is hovering for the [ENTER] shortcut
+        displayObject.on("pointerover", () => { 
+            this.hoveredCardData = card; 
+        });
+        
+        displayObject.on("pointerout", () => { 
+            if (this.hoveredCardData === card) this.hoveredCardData = null; 
+        });
+
+        // 2. Track rapid double-clicks using precise engine delta timing
+        displayObject.on("pointerdown", (pointer) => {
+            const clickDelay = pointer.time - (displayObject.lastClickTime || 0);
+            displayObject.lastClickTime = pointer.time;
+
+            if (clickDelay < 350) { // 350ms double-click window threshold
+                this.displayLargeCardModal(card);
+            }
+        });
+    }
+
+    displayLargeCardModal(card) {
+        // 1. Guard check to avoid duplicate window injections
+        if (document.getElementById("largeCardModalOverlay")) return;
+
+        // 2. Freeze canvas hotkeys so actions don't run in the background
+        this.input.keyboard.enabled = false;
+
+        const isUnknown = card.title === "Card Back" || card.name === "Card Back";
+        const cardId = card.id || "N/A";
+        const title = card.title || card.name || "Unknown Card";
+        const description = card.description || card.text || "No rule text provided.";
+
+        // Pure, scalable viewport layout independent of Phaser's scale constraints
+        const modalHtml = `
+            <div id="largeCardModalOverlay" style="
+                position: fixed;
+                top: 0; left: 0; 
+                width: 100vw; height: 100vh;
+                background: rgba(15, 23, 42, 0.85);
+                backdrop-filter: blur(8px);
+                display: flex; justify-content: center; align-items: center;
+                z-index: 10000; cursor: pointer;
+                user-select: none; -webkit-user-select: none;
+            ">
+                <!-- Card Container Cardboard Frame - NOW SECURED AT TRUE 480PX -->
+                <div style="
+                    background: #1e293b;
+                    border: 3px solid #38bdf8;
+                    border-radius: 16px;
+                    width: 480px; 
+                    box-sizing: border-box;
+                    padding: 24px;
+                    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+                    font-family: monospace; color: #f8fafc;
+                    cursor: default; pointer-events: auto;
+                ">
+                    <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #334155; padding-bottom: 8px; margin-bottom: 16px;">
+                        <span style="color: #38bdf8; font-weight: bold; font-size: 14px;">CODE: ${cardId}</span>
+                        <span style="color: #64748b; font-size: 12px;">🔍 FULL FIELD INSPECTION</span>
+                    </div>
+
+                    <h1 style="font-size: 24px; color: #f1f5f9; margin: 0 0 16px 0; font-weight: 900; letter-spacing: -0.5px;">
+                        ${title.toUpperCase()}
+                    </h1>
+
+                    <div style="
+                        width: 100%; height: 220px; 
+                        background: #0f172a; border-radius: 8px; 
+                        margin-bottom: 16px; display: flex; 
+                        align-items: center; justify-content: center;
+                        border: 1px solid #334155; color: #475569; font-size: 12px;
+                    ">
+                        [ VISUAL RENDER BUFFER AREA ]
+                    </div>
+
+                    <div style="
+                        background: #0f172a; border-left: 4px solid #38bdf8;
+                        padding: 16px; border-radius: 4px;
+                        font-size: 14px; line-height: 1.6; color: #e2e8f0;
+                        min-height: 120px; word-wrap: break-word;
+                    ">
+                        ${description}
+                    </div>
+
+                    <div style="text-align: center; margin-top: 20px; font-size: 11px; color: #64748b; font-weight: bold;">
+                        💡 CLICK ANYWHERE OUTSIDE TO DISMISS & RESUME GAME
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // 3. Mount directly into the standard browser DOM tree
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+        // 4. Secure the single-click dismissal listener loop
+        const overlay = document.getElementById("largeCardModalOverlay");
+        overlay.addEventListener("click", (e) => {
+            if (e.target.id === "largeCardModalOverlay") {
+                this.input.keyboard.enabled = true; // Unfreeze keys
+                overlay.remove(); // Cleanly strip element from body
+            }
+        });
     }
 
 }
