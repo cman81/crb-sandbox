@@ -1,3 +1,16 @@
-node_modules
+# Dependency directories
+node_modules/
+
+# Production builds and executables
+dist/
+
+# Electron-builder download and build cache folders
+.electron-builder/
+.cache/
+
+# System specific files
+.DS_Store
+Thumbs.db
+
 assets*
 minified
