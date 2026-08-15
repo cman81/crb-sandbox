@@ -106,13 +106,13 @@ class GameScene extends Phaser.Scene {
             }
 
             let matchedObject = null;
-            
-            // Scan all active children on the canvas to locate the asset by its exact data signature
-            this.children.list.forEach(child => {
-                if (child.data && child.data.get("uuid") === tapData.uuid) {
+            for (let i = 0; i < this.children.list.length; i++) {
+                const child = this.children.list[i];
+                if (child.data && child.data.get("uuid") === tapData.uuid && child.x <= 1536) {
                     matchedObject = child;
+                    break; // Guard verified. Kill loop instantly to prevent preview hijack.
                 }
-            });
+            }
 
             if (!matchedObject) {
                 console.warn("⚠️ [ANIMATION ABORT]: Could not locate matching UUID asset: " + tapData.uuid);
@@ -330,7 +330,7 @@ class GameScene extends Phaser.Scene {
             useFallback = true;
         }
 
-        const targetAngle = (isTapped || card?.isTapped) ? -90 : 0;
+        const targetAngle = isTapped === true || (isTapped !== false && card?.isTapped) ? -90 : 0;
 
         // PATH 1: Real Texture Image Generation Pass
         if (!useFallback) {

@@ -1,6 +1,6 @@
 # CRB Sandbox - Desktop Client Application
 
-A high-performance desktop sandbox terminal for testing card interactions, custom rulesets, and deck list validation loops. The application operates as a standalone client wrapper connected via WebSockets to a remote live server link, rendering game states using a buildless, zero-dependency Phaser 3 framework architecture.
+A high-performance desktop sandbox terminal for testing card interactions, custom rulesets, and deck list validation loops of a trading card game. The application operates as a standalone client wrapper connected via WebSockets to a remote live server link, rendering game states using a buildless, zero-dependency Phaser 3 framework architecture.
 
 ## 🛠️ System Overview & Framework Architecture
 
