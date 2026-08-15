@@ -22,202 +22,22 @@ class GameScene extends Phaser.Scene {
     }
 
     create() {
-        // FIX 1: Hard wipe old, dead graphics container properties from prior visits
-        this.fieldGraphics = null;
-        this.dividerGraphics = null;
+        // 1. Core Visual Layer Setup
+        this.initializeGraphicsLayers();
+        this.renderMatchBackground();
+        this.initializeCardDimensions();
 
-        // 1. Paint the entire 1920x1080 canvas viewport window space with this table's flat arena color
-        const bgFill = this.add.graphics();
-        bgFill.fillStyle(this.backgroundColor, 1);
-        bgFill.fillRect(0, 0, 1920, 1080);
-        bgFill.setDepth(-200);
+        // 2. State & Networking Hydration
+        this.initializeStateTrackingArrays();
+        this.establishServerConnection();
+        this.setupNetworkEventListeners();
 
-        // 2. Define Card Dimensions (Standard Field size)
-        this.cardWidth = 110;
-        this.cardHeight = 154;
+        // 3. User Input & Macro Routing Maps
+        this.registerKeyboardShortcuts();
+        this.registerMouseInteractionListeners();
+    }
 
-        // 3. THREE-COLUMN HORIZONTAL GRID MATRIX COORDINATES WITH ADJUSTED TRAYS
-        this.fieldCoordinates = {
-            local: {
-                deck:        { x: 1450, y: 700 }, 
-                discard:     { x: 1450, y: 880 }, 
-                defeated:    { x: 470,  y: 700 }, 
-                stage:       { x: 1310, y: 700 }, 
-                fighterA:    { x: 760,  y: 700 }, 
-                fighterB:    { x: 1060, y: 700 }, 
-                
-                // Bottom tray layout specs
-                supportStart:   { x: 600,  y: 920 }, 
-                supportOverlap: 65,                  
-                trayWidth:      730,                 
-                trayHeight:     166,                 
-                
-                handStart:   { x: 80,   y: 650 },
-                handSpacingX: 115,
-                handSpacingY: 170
-            },
-            remote: {
-                deck:        { x: 470,  y: 380 }, 
-                discard:     { x: 470,  y: 200 }, 
-                defeated:    { x: 1450, y: 380 }, 
-                stage:       { x: 610,  y: 380 }, 
-                fighterA:    { x: 1060, y: 380 }, 
-                fighterB:    { x: 760,  y: 380 }, 
-                
-                supportStart:   { x: 600,  y: 160 }, 
-                supportOverlap: 65,                  
-                trayWidth:      730,
-                trayHeight:     166,
-                
-                handStart:   { x: 80,   y: 120 },
-                handSpacingX: 115,
-                handSpacingY: 170
-            },
-            previewAnchor: { x: 1728, y: 540 }
-        };
-
-        // 4. WebSocket Sync Handshakes: Reuse the persistent global socket instance
-        this.socket = globalSocket;
-        this.socket.emit('joinTable', { tableId: this.tableId, role: this.role });
-
-        // --- AUTO-REVOKE ON ENTRY ---
-        if (this.role === "playerA" || this.role === "playerB") {
-            this.socket.emit("revokeEndGame", { tableId: this.tableId, targetPlayer: this.role });
-        }
-
-        this.socket.on("stateUpdate", sanitizedState => {
-            // 1. Hand off the incoming state array frame to your decoupled Motion Analyzer
-            const didTriggerAnimation = this.checkAndAnimateStateChanges(sanitizedState);
-            
-            // 2. If a card flight (draw/discard/deploy) animation is running, yield early
-            if (didTriggerAnimation) return;
-
-            // 3. Fallback: Execute the definitive visual paint pass immediately
-            this.lastReceivedState = sanitizedState;
-            this.handleStateRenderingLoop(sanitizedState);
-        });
-
-        this.socket.on("cardTap", tapData => {
-            console.log(`📡 [NETWORK RECEIVE]: UUID cardTap caught for token: ${tapData.uuid}`);
-
-            // Initialize our tracking list inside create() if it doesn't exist yet
-            if (!this.animatingUuids) {
-                this.animatingUuids = [];
-            }
-
-            let matchedObject = null;
-            for (let i = 0; i < this.children.list.length; i++) {
-                const child = this.children.list[i];
-                if (child.data && child.data.get("uuid") === tapData.uuid && child.x <= 1536) {
-                    matchedObject = child;
-                    break; // Guard verified. Kill loop instantly to prevent preview hijack.
-                }
-            }
-
-            if (!matchedObject) {
-                console.warn("⚠️ [ANIMATION ABORT]: Could not locate matching UUID asset: " + tapData.uuid);
-                return;
-            }
-
-            // 1. LOCK VISIBILITY: Register this card's unique UUID as actively animating
-            this.animatingUuids.push(tapData.uuid);
-
-            const finalAngle = tapData.isTapped ? -450 : 360;
-            const startAngle = tapData.isTapped ? 0 : -90;
-
-            matchedObject.setAngle(startAngle);
-            matchedObject.setDepth(3000); // Elevate above everything else while spinning
-
-            this.tweens.add({
-                targets: matchedObject,
-                angle: finalAngle,
-                duration: 500,
-                ease: 'Cubic.easeInOut',
-                onComplete: () => {
-                    matchedObject.setAngle(tapData.isTapped ? -90 : 0);
-                    
-                    // Manually sync local cache data arrays to match the server model
-                    if (this.lastReceivedState && this.lastReceivedState[tapData.targetPlayer]) {
-                        const targetState = this.lastReceivedState[tapData.targetPlayer];
-                        const bZone = targetState.battleZone || {};
-                        
-                        if (tapData.zone === "fighterA" && bZone.fighterA && bZone.fighterA.card) bZone.fighterA.card.isTapped = tapData.isTapped;
-                        else if (tapData.zone === "fighterB" && bZone.fighterB && bZone.fighterB.card) bZone.fighterB.card.isTapped = tapData.isTapped;
-                        else if (tapData.zone === "stage" && bZone.stage) bZone.stage.isTapped = tapData.isTapped;
-                        else if (tapData.zone === "support" && Array.isArray(targetState.support) && targetState.support[tapData.supportIndex]) {
-                            targetState.support[tapData.supportIndex].isTapped = tapData.isTapped;
-                        }
-                    }
-
-                    // 2. UNLOCK VISIBILITY: Remove the UUID from our lock list
-                    if (this.animatingUuids) {
-                        this.animatingUuids = this.animatingUuids.filter(id => id !== tapData.uuid);
-                    }
-
-                    // Force a clean visual paint pass so the real card shows back up at its perfect final position
-                    this.handleStateRenderingLoop(this.lastReceivedState);
-                }
-            });
-        });
-
-        this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
-
-        this.selectedPreviewCard = null; // Caches the active card loaded into Column 3
-
-        // Bind the spacebar key to a clean input tracker callback routine
-        this.input.keyboard.on('keydown-SPACE', () => {
-            // Grab the current viewport coordinates of the mouse cursor pointer
-            const mouseX = this.input.activePointer.x;
-            const mouseY = this.input.activePointer.y;
-            
-            this.scanCardHitboxesForPreview(mouseX, mouseY);
-        });
-
-        // Bind the 'T' key to trigger a real-time card tap/untap state change
-        this.input.keyboard.on('keydown-T', () => {
-            if (this.role === 'spectator') return; // Spectators cannot manipulate card objects
-
-            // Grab the current spatial viewport coordinates of the mouse cursor pointer
-            const mouseX = this.input.activePointer.x;
-            const mouseY = this.input.activePointer.y;
-            
-            // Not a problem, as they affect different zones!
-            this.handleKeyboardTapAction(mouseX, mouseY); // zones: figtherA, fighterB, support, stage
-            this.handleHandToDeckShortcut(mouseX, mouseY, "top"); // zone: hand
-        });
-
-        // --- SHORTCUT: KEYDOWN D FOR INSTANT HAND DISCARD ---
-        this.input.keyboard.on("keydown-D", () => {
-            if (this.role === "spectator") return;
-            
-            const mouseX = this.input.activePointer.x;
-            const mouseY = this.input.activePointer.y;
-            this.handleKeyboardDiscardAction(mouseX, mouseY);
-        });
-
-        // --- KEYBOARD SHORTCUTS: T FOR TOP DECK, B FOR BOTTOM DECK ---
-        this.input.keyboard.on("keydown-B", () => {
-            if (this.role === "spectator") return;
-            const mouseX = this.input.activePointer.x;
-            const mouseY = this.input.activePointer.y;
-            this.handleHandToDeckShortcut(mouseX, mouseY, "bottom");
-        });
-
-        this.input.keyboard.on("keydown-F", () => {
-            if (this.role === "spectator") return;
-            const mouseX = this.input.activePointer.x;
-            const mouseY = this.input.activePointer.y;
-            this.handleKeyboardFaceDownAction(mouseX, mouseY);
-        });
-
-        this.input.keyboard.on("keydown-S", () => {
-            if (this.role === "spectator") return;
-            const mouseX = this.input.activePointer.x;
-            const mouseY = this.input.activePointer.y;
-            this.handleKeyboardToStageAction(mouseX, mouseY);
-        });
-        
-        // Enable global drag-and-drop listener hooks inside the Phaser 4 input tree
+    registerMouseInteractionListeners() {
         this.input.on('drag', (pointer, gameObject, dragX, dragY) => {
             // Keep the card tracking directly underneath the user's cursor position mid-flight
             gameObject.x = dragX;
@@ -279,7 +99,7 @@ class GameScene extends Phaser.Scene {
             // Check if the click occurred exactly within the local deck's rectangular bounds
             if (pointer.x >= deckCoord.x - halfW && pointer.x <= deckCoord.x + halfW &&
                 pointer.y >= deckCoord.y - halfH && pointer.y <= deckCoord.y + halfH) {
-                
+
                 // Prevent event propagation if an overlay/drawer is open
                 if (this.drawerState && this.drawerState.isOpen) return;
 
@@ -287,15 +107,217 @@ class GameScene extends Phaser.Scene {
                 this.socket.emit("drawCard", { tableId: this.tableId, targetPlayer: this.role });
             }
         });
+    }
 
-        this.hoveredCardData = null;
+    registerKeyboardShortcuts() {
+        this.input.keyboard.on('keydown-SPACE', () => {
+            // Grab the current viewport coordinates of the mouse cursor pointer
+            const mouseX = this.input.activePointer.x;
+            const mouseY = this.input.activePointer.y;
 
-        // Add this alongside your other keydown-SPACE and keydown-T loops
+            this.scanCardHitboxesForPreview(mouseX, mouseY);
+        });
+
+        // Bind the 'T' key to trigger a real-time card tap/untap state change
+        this.input.keyboard.on('keydown-T', () => {
+            if (this.role === 'spectator') return; // Spectators cannot manipulate card objects
+
+
+            // Grab the current spatial viewport coordinates of the mouse cursor pointer
+            const mouseX = this.input.activePointer.x;
+            const mouseY = this.input.activePointer.y;
+
+            // Not a problem, as they affect different zones!
+            this.handleKeyboardTapAction(mouseX, mouseY); // zones: figtherA, fighterB, support, stage
+            this.handleHandToDeckShortcut(mouseX, mouseY, "top"); // zone: hand
+        });
+
+        // --- SHORTCUT: KEYDOWN D FOR INSTANT HAND DISCARD ---
+        this.input.keyboard.on("keydown-D", () => {
+            if (this.role === "spectator") return;
+
+            const mouseX = this.input.activePointer.x;
+            const mouseY = this.input.activePointer.y;
+            this.handleKeyboardDiscardAction(mouseX, mouseY);
+        });
+
+        // --- KEYBOARD SHORTCUTS: T FOR TOP DECK, B FOR BOTTOM DECK ---
+        this.input.keyboard.on("keydown-B", () => {
+            if (this.role === "spectator") return;
+            const mouseX = this.input.activePointer.x;
+            const mouseY = this.input.activePointer.y;
+            this.handleHandToDeckShortcut(mouseX, mouseY, "bottom");
+        });
+
+        this.input.keyboard.on("keydown-F", () => {
+            if (this.role === "spectator") return;
+            const mouseX = this.input.activePointer.x;
+            const mouseY = this.input.activePointer.y;
+            this.handleKeyboardFaceDownAction(mouseX, mouseY);
+        });
+
+        this.input.keyboard.on("keydown-S", () => {
+            if (this.role === "spectator") return;
+            const mouseX = this.input.activePointer.x;
+            const mouseY = this.input.activePointer.y;
+            this.handleKeyboardToStageAction(mouseX, mouseY);
+        });
+
         this.input.keyboard.on("keydown-ENTER", () => {
             if (this.hoveredCardData) {
                 this.displayLargeCardModal(this.hoveredCardData);
             }
         });
+    }
+
+    setupNetworkEventListeners() {
+        this.socket.on("stateUpdate", sanitizedState => {
+            // 1. Hand off the incoming state array frame to your decoupled Motion Analyzer
+            const didTriggerAnimation = this.checkAndAnimateStateChanges(sanitizedState);
+
+            // 2. If a card flight (draw/discard/deploy) animation is running, yield early
+            if (didTriggerAnimation) return;
+
+            // 3. Fallback: Execute the definitive visual paint pass immediately
+            this.lastReceivedState = sanitizedState;
+            this.handleStateRenderingLoop(sanitizedState);
+        });
+
+        this.socket.on("cardTap", tapData => {
+            console.log(`📡 [NETWORK RECEIVE]: UUID cardTap caught for token: ${tapData.uuid}`);
+
+            let matchedObject = null;
+            for (let i = 0; i < this.children.list.length; i++) {
+                const child = this.children.list[i];
+                if (child.data && child.data.get("uuid") === tapData.uuid && child.x <= 1536) {
+                    matchedObject = child;
+                    break; // Guard verified. Kill loop instantly to prevent preview hijack.
+                }
+            }
+
+            if (!matchedObject) {
+                console.warn("⚠️ [ANIMATION ABORT]: Could not locate matching UUID asset: " + tapData.uuid);
+                return;
+            }
+
+            // 1. LOCK VISIBILITY: Register this card's unique UUID as actively animating
+            this.animatingUuids.push(tapData.uuid);
+
+            const finalAngle = tapData.isTapped ? -450 : 360;
+            const startAngle = tapData.isTapped ? 0 : -90;
+
+            matchedObject.setAngle(startAngle);
+            matchedObject.setDepth(3000); // Elevate above everything else while spinning
+
+            this.tweens.add({
+                targets: matchedObject,
+                angle: finalAngle,
+                duration: 500,
+                ease: 'Cubic.easeInOut',
+                onComplete: () => {
+                    matchedObject.setAngle(tapData.isTapped ? -90 : 0);
+
+                    // Manually sync local cache data arrays to match the server model
+                    if (this.lastReceivedState && this.lastReceivedState[tapData.targetPlayer]) {
+                        const targetState = this.lastReceivedState[tapData.targetPlayer];
+                        const bZone = targetState.battleZone || {};
+
+                        if (tapData.zone === "fighterA" && bZone.fighterA && bZone.fighterA.card) bZone.fighterA.card.isTapped = tapData.isTapped;
+                        else if (tapData.zone === "fighterB" && bZone.fighterB && bZone.fighterB.card) bZone.fighterB.card.isTapped = tapData.isTapped;
+                        else if (tapData.zone === "stage" && bZone.stage) bZone.stage.isTapped = tapData.isTapped;
+                        else if (tapData.zone === "support" && Array.isArray(targetState.support) && targetState.support[tapData.supportIndex]) {
+                            targetState.support[tapData.supportIndex].isTapped = tapData.isTapped;
+                        }
+                    }
+
+                    // 2. UNLOCK VISIBILITY: Remove the UUID from our lock list
+                    if (this.animatingUuids) {
+                        this.animatingUuids = this.animatingUuids.filter(id => id !== tapData.uuid);
+                    }
+
+                    // Force a clean visual paint pass so the real card shows back up at its perfect final position
+                    this.handleStateRenderingLoop(this.lastReceivedState);
+                }
+            });
+        });
+    }
+
+    establishServerConnection() {
+        this.socket = globalSocket;
+        this.socket.emit('joinTable', { tableId: this.tableId, role: this.role });
+
+        // --- AUTO-REVOKE ON ENTRY ---
+        if (this.role === "playerA" || this.role === "playerB") {
+            this.socket.emit("revokeEndGame", { tableId: this.tableId, targetPlayer: this.role });
+        }
+
+        this.socket.emit('getGameState', { tableId: this.tableId, role: this.role });
+    }
+
+    /**
+     * Define Card Dimensions (Standard Field size)
+     */
+    initializeCardDimensions() {
+        this.cardWidth = 110;
+        this.cardHeight = 154;
+
+        // THREE-COLUMN HORIZONTAL GRID MATRIX COORDINATES WITH ADJUSTED TRAYS
+        this.fieldCoordinates = {
+            local: {
+                deck: { x: 1450, y: 700 },
+                discard: { x: 1450, y: 880 },
+                defeated: { x: 470, y: 700 },
+                stage: { x: 1310, y: 700 },
+                fighterA: { x: 760, y: 700 },
+                fighterB: { x: 1060, y: 700 },
+
+                // Bottom tray layout specs
+                supportStart: { x: 600, y: 920 },
+                supportOverlap: 65,
+                trayWidth: 730,
+                trayHeight: 166,
+
+                handStart: { x: 80, y: 650 },
+                handSpacingX: 115,
+                handSpacingY: 170
+            },
+            remote: {
+                deck: { x: 470, y: 380 },
+                discard: { x: 470, y: 200 },
+                defeated: { x: 1450, y: 380 },
+                stage: { x: 610, y: 380 },
+                fighterA: { x: 1060, y: 380 },
+                fighterB: { x: 760, y: 380 },
+
+                supportStart: { x: 600, y: 160 },
+                supportOverlap: 65,
+                trayWidth: 730,
+                trayHeight: 166,
+
+                handStart: { x: 80, y: 120 },
+                handSpacingX: 115,
+                handSpacingY: 170
+            },
+            previewAnchor: { x: 1728, y: 540 }
+        };
+    }
+
+    /**
+     * Paint the entire 1920x1080 canvas viewport window space with this table's flat arena color
+     */
+    renderMatchBackground() {
+        const bgFill = this.add.graphics();
+        bgFill.fillStyle(this.backgroundColor, 1);
+        bgFill.fillRect(0, 0, 1920, 1080);
+        bgFill.setDepth(-200);
+    }
+
+    /**
+     * Hard wipe old, dead graphics container properties from prior visits
+     */
+    initializeGraphicsLayers() {
+        this.fieldGraphics = null;
+        this.dividerGraphics = null;
     }
 
     // --- HELPER ROUTINE: CARD SPRITE FACTORY ---
@@ -2134,6 +2156,13 @@ class GameScene extends Phaser.Scene {
                 overlay.remove(); // Cleanly strip element from body
             }
         });
+    }
+
+    initializeStateTrackingArrays() {
+        this.selectedPreviewCard = null;
+        this.hoveredCardData = null;
+        this.animatingUuids = [];
+        this.lastReceivedState = null;
     }
 
 }
