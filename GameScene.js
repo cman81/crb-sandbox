@@ -723,7 +723,72 @@ class GameScene extends Phaser.Scene {
         
         if (zoneKey === "fighterA" || zoneKey === "fighterB") {
             this.renderFighterZoneContents(point, battleZone[zoneKey]);
-            // ... (rest of your existing fighter logic remains unchanged)
+            
+            if (zoneKey === "fighterA" && battleZone.fighterA && battleZone.fighterA.card) {
+                const targetCard = battleZone.fighterA.card;
+                const overlayPropName = isLocalSeat ? "localFighterAOverlaySprite" : "remoteFighterAOverlaySprite";
+                const tooltipPropName = isLocalSeat ? "localFighterATooltipText" : "remoteFighterATooltipText";
+                
+                // Clean up any stale overlay instances
+                if (this[overlayPropName]) {
+                    this[overlayPropName].destroy();
+                    this[overlayPropName] = null;
+                }
+                // Clean up any stale tooltip instances
+                if (this[tooltipPropName]) {
+                    this[tooltipPropName].destroy();
+                    this[tooltipPropName] = null;
+                }
+
+                const isCurrentlyFaceDown = !!targetCard.isFaceDown || targetCard.isFaceUp === false;
+                if (isCurrentlyFaceDown) {
+                    // Render the Card Back Overlay
+                    this[overlayPropName] = this.add.image(point.x, point.y, "system_ui", "card_back");
+                    this[overlayPropName].setDisplaySize(this.cardWidth, this.cardHeight);
+                    this[overlayPropName].setDepth(120);
+
+                    // --- NEW: FACE-DOWN TRICKERY TOOLTIP DISPLAY LOGIC ---
+                    // Position the tooltip 70 pixels to the right of the card center
+                    const tooltipX = point.x + (this.cardWidth / 2) + 15;
+                    const tooltipStyle = {
+                        fontSize: "11px",
+                        fontFamily: "monospace",
+                        fill: "#38bdf8",
+                        fontWeight: "bold",
+                        backgroundColor: "#0f172a",
+                        padding: { x: 8, y: 4 }
+                    };
+
+                    this[tooltipPropName] = this.add.text(tooltipX, point.y, "💡 Click to reveal when ready", tooltipStyle).setOrigin(0, 0.5);
+                    this[tooltipPropName].setDepth(130);
+                    
+                    // Draw a subtle cyan accent line connecting the card edge to the tooltip balloon
+                    this.fieldGraphics.lineStyle(1, 3718648, 0.6);
+                    this.fieldGraphics.lineBetween(point.x + (this.cardWidth / 2), point.y, tooltipX, point.y);
+                    // ------------------------------------------------------
+
+                    if (isLocalSeat && this.role !== "spectator") {
+                        this[overlayPropName].setInteractive({ useHandCursor: true });
+                        this[overlayPropName].on("pointerdown", () => {
+                            console.log("👁️ [LOCAL TRICKERY]: Flipping card face up...");
+                            if (battleZone.fighterA && battleZone.fighterA.card) {
+                                battleZone.fighterA.card.isFaceDown = false;
+                                battleZone.fighterA.card.isFaceUp = true;
+                            }
+                            if (this[overlayPropName]) {
+                                this[overlayPropName].destroy();
+                                this[overlayPropName] = null;
+                            }
+                            if (this[tooltipPropName]) {
+                                this[tooltipPropName].destroy();
+                                this[tooltipPropName] = null;
+                            }
+                            this.socket.emit("flipCardFaceUp", { tableId: this.tableId, targetPlayer: this.role });
+                            this.handleStateRenderingLoop(this.lastReceivedState);
+                        });
+                    }
+                }
+            } 
         } else if (zoneKey === "stage") {
             const stageCard = battleZone.stage || pData.stage;
             if (stageCard && Object.keys(stageCard).length > 0) {
