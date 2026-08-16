@@ -152,6 +152,53 @@ function moveCardToZone(socket, tableId, targetPlayer, fromZone, fromIndex, toZo
         socket.emit("serverNotice", `Successfully moved card with index ${idx} from ${fromZone} to ${toZone}.`);
 }
 
+function moveFighterToZone(socket, tableId, targetPlayer, slot, toZone) {
+    const table = tables.find(t => t.id === parseInt(tableId));
+    if (!table) return socket.emit("errorMsg", "Table not found.");
+
+    const pState = table.gameState[targetPlayer];
+    const targetCard = pState?.battleZone?.[slot]?.card;
+    if (!targetCard) return socket.emit("errorMsg", "Card not found in battle slot " + slot);
+
+    const destinationArray = pState?.[toZone];
+    if (!destinationArray) return socket.emit("errorMsg", `Destination zone '${toZone}' not found.`);
+
+    // 1. Mutate state model: empty the fighter slot database node cleanly
+    pState.battleZone[slot].card = null;
+    
+    // 2. Prepare card state properties according to uniform destination rules
+    targetCard.isTapped = false;
+    switch (toZone) {
+        case "hand":
+        case "extraDeck":
+        case "discard":
+        case "support":
+        case "defeated":
+            targetCard.isFaceDown = false;
+            break;
+        case "deck":
+            targetCard.isFaceDown = true;
+            break;
+    }
+    
+    // 3. Push card cleanly into the designated linear destination array list
+    destinationArray.push(targetCard);
+
+    console.log(`📡 [FIGHTER RELOCATION ENGINE]: Shifted tracking frame from active slot ${slot} to array zone ${toZone} for ${targetPlayer}.`);
+
+    // 4. Secure broadcast - individual FOW-masked state multi-cast sweep
+    const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
+    targetSockets.forEach(sockId => {
+        const sock = io.sockets.sockets.get(sockId);
+        if (sock) {
+            let viewerRole = table.playerA.includes(sockId) ? "playerA" : table.playerB.includes(sockId) ? "playerB" : "spectator";
+            sendSanitizedState(sock, table, viewerRole);
+        }
+    });
+
+    socket.emit("serverNotice", `Successfully moved card from active slot ${slot} to array zone ${toZone}.`);
+}
+
 function leaveAll(socketId) {
     tables.forEach(t => {
         t.playerA = t.playerA.filter(id => id !== socketId);
@@ -496,28 +543,11 @@ io.on("connection", socket => {
     });
 
     socket.on("moveFighterToDefeated", ({ tableId, targetPlayer, slot }) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
-        if (!table) return socket.emit("errorMsg", "Table not found.");
+        return moveFighterToZone(socket, tableId, targetPlayer, slot, 'defeated');
+    });
 
-        const pState = table.gameState[targetPlayer];
-        const targetCard = pState?.battleZone?.[slot]?.card;
-        if (!targetCard) return socket.emit("errorMsg", "Card not found.");
-
-        // Mutate state model
-        pState.battleZone[slot].card = null;
-        targetCard.isFaceDown = false;
-        targetCard.isTapped = false;
-        pState.defeated.push(targetCard);
-
-        // Secure broadcast
-        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
-        targetSockets.forEach(sockId => {
-            const sock = io.sockets.sockets.get(sockId);
-            if (sock) {
-                let viewerRole = table.playerA.includes(sockId) ? "playerA" : table.playerB.includes(sockId) ? "playerB" : "spectator";
-                sendSanitizedState(sock, table, viewerRole);
-            }
-        });
+    socket.on("moveFighterToSupport", ({ tableId, targetPlayer, slot }) => {
+        return moveFighterToZone(socket, tableId, targetPlayer, slot, 'support');
     });
 
     socket.on("discardCardFromHand", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex}) => {

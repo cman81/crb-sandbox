@@ -1956,34 +1956,81 @@ class GameScene extends Phaser.Scene {
         }
     }
 
-    // Rename this function to match its new structural behavior or keep the name mapping intact:
     handleKeyboardToSupportAction(mouseX, mouseY) {
         if (!this.lastReceivedState || !this.lastReceivedState[this.role]) return;
         
         const state = this.lastReceivedState;
         const c = this.fieldCoordinates.local;
-        const hand = state[this.role].hand || [];
+        const halfW = this.cardWidth / 2;
+        const halfH = this.cardHeight / 2;
+        const myBZone = state[this.role]?.battleZone || {};
         
-        // Scan backwards from front-to-back to catch overlapping hand cards accurately
+        // -----------------------------------------------------------------
+        // CONTEXT A: Hovering Over Fighter A -> Move Fighter to Support
+        // -----------------------------------------------------------------
+        if (myBZone.fighterA && myBZone.fighterA.card) {
+            const card = myBZone.fighterA.card;
+            // Dynamically adjust boundary detection sizes based on Rest Mode (isTapped) orientation
+            const hW = card.isTapped ? halfH : halfW;
+            const hH = card.isTapped ? halfW : halfH;
+            
+            if (mouseX >= c.fighterA.x - hW && mouseX <= c.fighterA.x + hW && mouseY >= c.fighterA.y - hH && mouseY <= c.fighterA.y + hH) {
+                console.log("📡 [SHORTCUT S EMIT]: Moving card from Fighter A slot to Support Lane...");
+                this.socket.emit("moveFighterToSupport", {
+                    tableId: this.tableId,
+                    targetPlayer: this.role,
+                    slot: "fighterA"
+                });
+                return; // Exit early
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // CONTEXT B: Hovering Over Fighter B -> Move Fighter to Support
+        // -----------------------------------------------------------------
+        if (myBZone.fighterB && myBZone.fighterB.card) {
+            const card = myBZone.fighterB.card;
+            const hW = card.isTapped ? halfH : halfW;
+            const hH = card.isTapped ? halfW : halfH;
+            
+            if (mouseX >= c.fighterB.x - hW && mouseX <= c.fighterB.x + hW && mouseY >= c.fighterB.y - hH && mouseY <= c.fighterB.y + hH) {
+                console.log("📡 [SHORTCUT S EMIT]: Moving card from Fighter B slot to Support Lane...");
+                this.socket.emit("moveFighterToSupport", {
+                    tableId: this.tableId,
+                    targetPlayer: this.role,
+                    slot: "fighterB"
+                });
+                return; // Exit early
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // CONTEXT C: Hovering Over The Deck -> Draw to Support
+        // -----------------------------------------------------------------
+        if (mouseX >= c.deck.x - halfW && mouseX <= c.deck.x + halfW && mouseY >= c.deck.y - halfH && mouseY <= c.deck.y + halfH) {
+            if (this.drawerState && this.drawerState.isOpen) return;
+            const myDeck = state[this.role].deck || [];
+            if (myDeck.length <= 0) return;
+            
+            console.log("📡 [SHORTCUT S EMIT]: Drawing card directly from deck into Support Lane...");
+            this.socket.emit("drawSupport", { tableId: this.tableId, targetPlayer: this.role });
+            return;
+        }
+
+        // -----------------------------------------------------------------
+        // CONTEXT D: Fallback (Hovering Over Hand) -> Existing Support Loop
+        // -----------------------------------------------------------------
+        const hand = state[this.role].hand || [];
         for (let index = hand.length - 1; index >= 0; index--) {
             const layout = this.getHandCardLayout(index, hand.length, true);
             const cardX = layout.x;
             const cardY = c.handStart.y + layout.y;
-            const halfW = layout.width / 2;
-            const halfH = layout.height / 2;
+            const handHalfW = layout.width / 2;
+            const handHalfH = layout.height / 2;
             
-            // Check if the cursor is hovering over this specific card inside the hand grid matrix
-            if (mouseX >= cardX - halfW && mouseX <= cardX + halfW && mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
+            if (mouseX >= cardX - handHalfW && mouseX <= cardX + handHalfW && mouseY >= cardY - handHalfH && mouseY <= cardY + handHalfH) {
                 console.log(`📡 [SHORTCUT S EMIT]: Redirecting hand index ${index} face up into the Support Lane...`);
-                
-                // 🔒 REMOVE ALL LOCAL ARRAY SLICING AND LOCAL ASSIGNMENT BUGS.
-                // Let the server validate the move and dictate the animation.
-                
-                this.socket.emit("playCardToSupport", {
-                    tableId: this.tableId,
-                    targetPlayer: this.role,
-                    handIndex: index
-                });
+                this.socket.emit("playCardToSupport", { tableId: this.tableId, targetPlayer: this.role, handIndex: index });
                 return;
             }
         }
@@ -2372,6 +2419,52 @@ class GameScene extends Phaser.Scene {
                 // Fire flight trail using the standard 300ms tracking speed for board-to-zone actions
                 this.animateCardFlight(start, end, newDiscard[newDiscard.length - 1], false, 300);
                 return true;
+            }
+
+            // 8. DECK TO SUPPORT LANE (Deck Shrank & Support Grew)
+            if (newHand.length === oldHand.length && newSupport.length > oldSupport.length) {
+                const supportIdx = newSupport.length - 1;
+                
+                // 1. Compute exact origin point from the local or remote deck coordinates
+                const start = this.calculateZoneCoordinates(targetRole, "deck");
+                
+                // 2. Compute final resting destination over the newly splayed support tray slot
+                const end = this.calculateZoneCoordinates(targetRole, "support", supportIdx);
+                
+                // 3. Commit state frame right before firing the flight trajectory tween
+                this.lastReceivedState = sanitizedState;
+                
+                console.log(`✨ [DRAW SUPPORT VISUAL]: Spawning trajectory path from deck straight to support tray index ${supportIdx}.`);
+                
+                // Fire flight trail using the standard 300ms tracking speed for board-to-zone actions
+                this.animateCardFlight(start, end, newSupport[supportIdx], false, 300);
+                return true;
+            }
+
+            // 9. FIGHTER TO SUPPORT LANE (Fighter Emptied & Support Grew)
+            for (const slotKey of slots) {
+                const oldCard = oldBZone[slotKey]?.card;
+                const newCard = newBZone[slotKey]?.card;
+                
+                // Check if a card vanished from a fighter slot while the support lane expanded
+                if (oldCard && !newCard && newSupport.length > oldSupport.length) {
+                    const supportIdx = newSupport.length - 1;
+                    
+                    // 1. Calculate the starting position point directly from the emptied battlefield slot coordinate
+                    const start = this.calculateZoneCoordinates(targetRole, slotKey);
+                    
+                    // 2. Compute final destination over the newly formed support lane index
+                    const end = this.calculateZoneCoordinates(targetRole, "support", supportIdx);
+                    
+                    // 3. Sync your scene's state framework tracking right before launching the tween
+                    this.lastReceivedState = sanitizedState;
+                    
+                    console.log(`✨ [RETREAT VISUAL]: Sliding card from battle slot ${slotKey} down to support index ${supportIdx}.`);
+                    
+                    // Use the standard 300ms velocity curve for field-to-field movement tracking
+                    this.animateCardFlight(start, end, newSupport[supportIdx], false, 300);
+                    return true;
+                }
             }
         }
 

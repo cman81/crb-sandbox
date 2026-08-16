@@ -236,6 +236,20 @@ class DeveloperMode extends Phaser.Scene {
                     </div>
                 </div>
 
+                <div style="background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid #ff8800; display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <label style="font-size:12px; color:#ff8800; font-weight:bold;">Fighter Relocation:</label>
+                        <div>
+                            <label style="font-size:12px; color:#aaa;">Slot:</label>
+                            <select id="actionFighterRelocateSlot" style="width:100px; background:#1e293b; color:#fff; border:1px solid #334155; padding:4px; border-radius:6px;">
+                                <option value="fighterA">Fighter A</option>
+                                <option value="fighterB">Fighter B</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button id="actionFighterToSupportBtn" style="width:100%; background:#ff8800; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">🛡️ MOVE FIGHTER TO SUPPORT</button>
+                </div>
+
                 <div style="background: #0f172a; padding: 8px; border-radius: 8px; border: 1px solid #eab308; display: flex; align-items: center; justify-content: space-between;">
                     <select id="tapZoneSelect" style="width:110px; background:#1e293b; color:#fff; border:1px solid #334155; padding:4px; border-radius: 6px;">
                         <option value="fighterA">Fighter A</option>
@@ -367,6 +381,7 @@ class DeveloperMode extends Phaser.Scene {
             if (event.target.id === "actionDefeatBBtn") this.handleMoveToDefeatedEmit("fighterB");
             if (event.target.id === "actionDefeatPlus1Btn") this.handleScoreAdjustmentEmit(1);
             if (event.target.id === "actionDefeatMinus1Btn") this.handleScoreAdjustmentEmit(-1);
+            if (event.target.id === "actionFighterToSupportBtn") this.handleMoveFighterToSupport();
             if (event.target.id === "actionToTopDeckBtn") this.handlePlayToDeckEmit("top");
             if (event.target.id === "actionToBottomDeckBtn") this.handlePlayToDeckEmit("bottom");
             if (event.target.id === "actionToStageBtn") this.handlePlayToStageEmit();
@@ -750,6 +765,14 @@ class DeveloperMode extends Phaser.Scene {
         const targetPlayer = document.getElementById("actionTargetPlayer").value;
         this.logToConsole(`>> Emitting adjustDefeatedPoints: Table ${tableId} shifting ${targetPlayer}'s points by: ${pointDelta}.`);
         this.socket.emit("adjustDefeatedPoints", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, amount: pointDelta });
+    }
+
+    handleMoveFighterToSupport() {
+        const tableId = document.getElementById("actionTableId").value;
+        const targetPlayer = document.getElementById("actionTargetPlayer").value;
+        const selectedSlot = document.getElementById("actionFighterRelocateSlot").value;
+        this.logToConsole(`>> Emitting moveFighterToSupport: Transferring ${targetPlayer}'s active card from ${selectedSlot} to the Support Lane.`);
+        this.socket.emit("moveFighterToSupport", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, slot: selectedSlot });
     }
 
     handleDiscardFromHand() {
