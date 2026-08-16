@@ -17,16 +17,32 @@ class BootScene extends Phaser.Scene {
         console.log(`📦 Found ${moddedFiles.length} file entries inside user mod directory.`);
 
         // --- ATOMIC TEXTURE REGISTRATION PIPELINE ---
-        const targetBundles = ['BS01_cards', 'BS02_cards', 'BS03_cards', 'BS10_cards'];
-        
         let localModHookActive = false;
 
         // Configuration profile mapping bundle keys to their single coordinating description text file
         const fileKeyMap = {
-            'BS01_cards': 'BS01',
-            'BS02_cards': 'BS02',
-            'BS03_cards': 'BS03',
-            'BS10_cards': 'atlas' // 🔍 This is your multi-image layout driver
+            'BS01_cards': 'BS1',
+            'BS02_cards': 'BS2',
+            'BS03_cards': 'BS3',
+            'BS04_cards': 'BS4',
+            'BS05_cards': 'BS5',
+            'BS06_cards': 'BS6',
+            'BS07_cards': 'BS7',
+            'BS08_cards': 'BS8',
+            'BS09_cards': 'BS9',
+            'BS10_cards': 'BS10',
+            'BS11_cards': 'BS11',
+            'P_cards': 'P',
+            'ST01_cards': 'ST1',
+            'ST02_cards': 'ST2',
+            'ST03_cards': 'ST3',
+            'ST04_cards': 'ST4',
+            'ST05_cards': 'ST5',
+            'ST06_cards': 'ST6',
+            'ST07_cards': 'ST7',
+            'ST08_cards': 'ST8',
+            'ST09_cards': 'ST9',
+            'ST10_cards': 'ST10',
         };
 
         Object.keys(fileKeyMap).forEach(bundleKey => {
@@ -50,6 +66,7 @@ class BootScene extends Phaser.Scene {
                 console.log(`🛡️ [VECTOR PROMPT]: No descriptor found for ${bundleKey}. Falling back to procedural drawing context.`);
             }
         });
+        this.load.image('system_ui', 'crb-mod://card-back.png');
 
         // Track your mod engine state globally
         this.registry.set('customArtModsActive', localModHookActive);

@@ -149,7 +149,25 @@ class DeckPrepScene extends Phaser.Scene {
             if (card.id.startsWith('BS1-')) bundleKey = 'BS01_cards';
             else if (card.id.startsWith('BS2-')) bundleKey = 'BS02_cards';
             else if (card.id.startsWith('BS3-')) bundleKey = 'BS03_cards';
+            else if (card.id.startsWith('BS4-')) bundleKey = 'BS04_cards';
+            else if (card.id.startsWith('BS5-')) bundleKey = 'BS05_cards';
+            else if (card.id.startsWith('BS6-')) bundleKey = 'BS06_cards';
+            else if (card.id.startsWith('BS7-')) bundleKey = 'BS07_cards';
+            else if (card.id.startsWith('BS8-')) bundleKey = 'BS08_cards';
+            else if (card.id.startsWith('BS9-')) bundleKey = 'BS09_cards';
             else if (card.id.startsWith('BS10-')) bundleKey = 'BS10_cards';
+            else if (card.id.startsWith('BS11-')) bundleKey = 'BS11_cards';
+            else if (card.id.startsWith('P-')) bundleKey = 'P_cards';
+            else if (card.id.startsWith('ST1-')) bundleKey = 'ST01_cards';
+            else if (card.id.startsWith('ST2-')) bundleKey = 'ST02_cards';
+            else if (card.id.startsWith('ST3-')) bundleKey = 'ST03_cards';
+            else if (card.id.startsWith('ST4-')) bundleKey = 'ST04_cards';
+            else if (card.id.startsWith('ST5-')) bundleKey = 'ST05_cards';
+            else if (card.id.startsWith('ST6-')) bundleKey = 'ST06_cards';
+            else if (card.id.startsWith('ST7-')) bundleKey = 'ST07_cards';
+            else if (card.id.startsWith('ST8-')) bundleKey = 'ST08_cards';
+            else if (card.id.startsWith('ST9-')) bundleKey = 'ST09_cards';
+            else if (card.id.startsWith('ST10-')) bundleKey = 'ST010_cards';
             
             if (bundleKey !== 'system_ui') frameKey = card.id;
 
