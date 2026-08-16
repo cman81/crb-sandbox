@@ -821,6 +821,42 @@ io.on("connection", socket => {
         });
     });
 
+    socket.on("returnSupportToHand", ({ tableId, targetPlayer, supportIndex }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+
+        const support = table.gameState[targetPlayer]?.support;
+        const hand = table.gameState[targetPlayer]?.hand;
+        
+        if (!support || support.length === 0) return socket.emit("errorMsg", "Support is empty!");
+        
+        const idx = parseInt(supportIndex);
+        if (isNaN(idx) || idx < 0 || idx >= support.length) return socket.emit("errorMsg", "Invalid support index selection.");
+
+        // 1. Execute the mutation directly on the data model
+        const [cardToAdd] = support.splice(idx, 1);
+        cardToAdd.isFaceDown = false;
+        cardToAdd.isTapped = false;
+        hand.push(cardToAdd);
+
+        // 2. Aggregate all multi-socket connections for this table instance
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
+
+        // 3. Loop over connections and dispatch individualized, FOW-masked state frames
+        targetSockets.forEach(sockId => {
+            const sock = io.sockets.sockets.get(sockId);
+            if (sock) {
+                let viewerRole = "spectator";
+                if (table.playerA.includes(sockId)) viewerRole = "playerA";
+                if (table.playerB.includes(sockId)) viewerRole = "playerB";
+                
+                sendSanitizedState(sock, table, viewerRole);
+            }
+        });
+
+        socket.emit("serverNotice", `Successfully returned card from support index ${idx}.`);
+    });
+
 });
 
 console.log(`TCG Server on ${process.env.RAILWAY_PUBLIC_DOMAIN}`);
