@@ -73,6 +73,27 @@ class BootScene extends Phaser.Scene {
 
         // Start the internal loader routine manually since we ran an async check first
         this.load.once('complete', () => {
+            // 🌟 THE ATLAS SIMULATOR FOR CUSTOM PROTOCOLS
+            // This grabs the flat texture block from your crb-mod protocol stream, 
+            // finds its raw base image frame metrics, and injects a real duplicate 
+            // frame lookup reference named exactly 'card_back' into the texture cache!
+            if (this.textures.exists('system_ui')) {
+                const baseTexture = this.textures.get('system_ui');
+                const baseFrame = baseTexture.get('system_ui'); // Fetches default frame
+                
+                // Add the explicit frame mapping definition so the engine can resolve both keys!
+                baseTexture.add(
+                    'card_back', 
+                    baseFrame.sourceIndex, 
+                    baseFrame.x, 
+                    baseFrame.y, 
+                    baseFrame.width, 
+                    baseFrame.height
+                );
+                
+                console.log("🎴 [TEXTURE ENGINE]: Bound custom protocol stream 'system_ui' to frame key 'card_back'.");
+            }
+
             console.log("🚀 Custom asset sideload compilation complete. Routing to LobbyScene...");
             this.scene.start("LobbyScene");
         });
