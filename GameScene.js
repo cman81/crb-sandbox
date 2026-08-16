@@ -19,6 +19,10 @@ class GameScene extends Phaser.Scene {
     }
 
     preload() {
+        // Load your audio assets here (adjust paths to your asset directory)
+        this.load.audio("sound_draw", "assets/sounds/draw.mp3");
+        this.load.audio("sound_play", "assets/sounds/play.mp3");
+        this.load.audio("sound_recycle", "assets/sounds/recycle.mp3");
     }
 
     create() {
@@ -104,6 +108,10 @@ class GameScene extends Phaser.Scene {
                 if (this.drawerState && this.drawerState.isOpen) return;
 
                 console.log("🎲 [DECOUPLED INPUT]: Clean singular deck draw event issued via permanent listener.");
+                 this.sound.play("sound_draw", { 
+                    volume: 0.8,
+                    pitch: Phaser.Math.FloatBetween(0.96, 1.04) 
+                });
                 this.socket.emit("drawCard", { tableId: this.tableId, targetPlayer: this.role });
             }
         });
@@ -1460,6 +1468,10 @@ class GameScene extends Phaser.Scene {
             });
             recycleBtn.setInteractive({ useHandCursor: true });
             recycleBtn.on("pointerdown", () => {
+                this.sound.play("sound_recycle", { 
+                    volume: 0.85,
+                    pitch: Phaser.Math.FloatBetween(0.98, 1.02) 
+                });
                 this.socket.emit("recycleDiscardToDeck", { tableId: this.tableId, targetPlayer: playerKey });
             });
             this.drawerContainer.add(recycleBtn);
@@ -1927,6 +1939,13 @@ class GameScene extends Phaser.Scene {
             console.warn("⚠️ [ANIMATION EYE]: Render factory returned invalid object. Bypassing flight path animation.");
             this.handleStateRenderingLoop(this.lastReceivedState);
             return;
+        }
+
+        if (!isFaceDown && cardData && cardData.name !== "Card Back") {
+            this.sound.play("sound_play", { 
+                volume: 0.7,
+                pitch: Phaser.Math.FloatBetween(0.95, 1.05) 
+            });
         }
 
         flyingCard.setDepth(3000); // Perfectly safe to set now
