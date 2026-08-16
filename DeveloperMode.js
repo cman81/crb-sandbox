@@ -195,13 +195,16 @@ class DeveloperMode extends Phaser.Scene {
 
                 <div style="background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid #10b981; display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
                     <div style="display: flex; align-items: center; justify-content: space-between;">
-                        <label style="font-size:12px; color:#10b981; font-weight:bold;">Support Reclaim Matrix:</label>
+                        <label style="font-size:12px; color:#10b981; font-weight:bold;">Support Actions:</label>
                         <div>
                             <label style="font-size:12px; color:#aaa;">Idx:</label>
                             <input type="number" id="actionSupportIdx" min="0" value="0" style="width:45px; background:#1e293b; color:#fff; border:1px solid #334155; padding:4px; border-radius:6px; text-align:center;">
                         </div>
                     </div>
-                    <button id="actionSupportToHandBtn" style="width:100%; background:#10b981; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">↩️ RETURN SUPPORT TO HAND</button>
+                    <div style="display: flex; gap: 6px;">
+                        <button id="actionSupportToHandBtn" style="flex:1; background:#10b981; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">↩️ TO HAND</button>
+                        <button id="actionDiscardSupportBtn" style="flex:1; background:#ef4444; color:#fff; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">🗑️ DISCARD</button>
+                    </div>
                 </div>
         `;
         // --- TAB PANEL 3: GAME ACTIONS PANEL (PART B) ---
@@ -365,6 +368,7 @@ class DeveloperMode extends Phaser.Scene {
             if (event.target.id === "actionToBottomDeckBtn") this.handlePlayToDeckEmit("bottom");
             if (event.target.id === "actionToStageBtn") this.handlePlayToStageEmit();
             if (event.target.id === "actionSupportToHandBtn") this.handleReturnSupportToHand();
+            if (event.target.id === "actionDiscardSupportBtn") this.handleDiscardSupport();
 
             // Toolbar: Perspective state inspector manual override poll
             if (event.target.id === "inspectGetStateBtn") this.handleGetGameState();
@@ -792,6 +796,14 @@ class DeveloperMode extends Phaser.Scene {
         const supportIndex = document.getElementById("actionSupportIdx").value;
         this.logToConsole(`>> Emitting returnSupportToHand: Table ${tableId} returning support index ${supportIndex} to hand for ${targetPlayer}.`);
         this.socket.emit("returnSupportToHand", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, supportIndex: parseInt(supportIndex, 10) });
+    }
+
+    handleDiscardSupport() {
+        const tableId = document.getElementById("actionTableId").value;
+        const targetPlayer = document.getElementById("actionTargetPlayer").value;
+        const supportIndex = document.getElementById("actionSupportIdx").value;
+        this.logToConsole(`>> Emitting discardSupport: Moving support index ${supportIndex} to discard pile for ${targetPlayer}.`);
+        this.socket.emit("discardSupport", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, supportIndex: parseInt(supportIndex, 10) });
     }
 
     handleAdminSignalEnd() {

@@ -425,7 +425,7 @@ io.on("connection", socket => {
         if (bZone?.[targetSlot]?.card && Object.keys(bZone[targetSlot].card).length > 0) {
             return socket.emit("errorMsg", `The ${targetSlot === 'fighterA' ? 'Fighter A' : 'Fighter B'} slot is already occupied!`);
         }
-        
+
         const [cardToPlay] = hand.splice(idx, 1);
         cardToPlay.isFaceDown = false;
         cardToPlay.isTapped = false;
@@ -727,6 +727,10 @@ io.on("connection", socket => {
 
     socket.on("returnSupportToHand", ({ tableId, targetPlayer, supportIndex }) => {
         return moveCardToZone(socket, tableId, targetPlayer, 'support', supportIndex, 'hand');
+    });
+
+    socket.on("discardSupport", ({ tableId, targetPlayer, supportIndex }) => {
+        return moveCardToZone(socket, tableId, targetPlayer, 'support', supportIndex, 'discard');
     });
 
 });

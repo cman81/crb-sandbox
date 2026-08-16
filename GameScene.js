@@ -1838,29 +1838,51 @@ class GameScene extends Phaser.Scene {
         
         const state = this.lastReceivedState;
         const c = this.fieldCoordinates.local;
-        const hand = state[this.role].hand || [];
+        const halfW = this.cardWidth / 2;
+        const halfH = this.cardHeight / 2;
+        
+        // -----------------------------------------------------------
+        // CONTEXT A: Hovering Over A Support Card -> Move to Discard
+        // -----------------------------------------------------------
+        const support = state[this.role].support || [];
+        
+        // Scan front-to-back (reverse) to grab overlapping cards accurately
+        for (let i = support.length - 1; i >= 0; i--) {
+            const card = support[i];
+            const shiftX = c.supportStart.x + i * c.supportOverlap;
+            
+            // Dynamically shift boundaries based on Rest Mode orientation
+            const hW = card.isTapped ? halfH : halfW;
+            const hH = card.isTapped ? halfW : halfH;
+            
+            if (mouseX >= shiftX - hW && mouseX <= shiftX + hW && mouseY >= c.supportStart.y - hH && mouseY <= c.supportStart.y + hH) {
+                console.log(`📡 [SHORTCUT D EMIT]: Discarding support lane card index ${i} (${card.id})...`);
+                
+                // Emit to your newly created backend socket handler
+                this.socket.emit("discardSupport", {
+                    tableId: this.tableId,
+                    targetPlayer: this.role,
+                    supportIndex: i
+                });
+                return; // Exit early so it doesn't fall through to hand discard check
+            }
+        }
 
-        // Reverse loop to accurately detect bounding boxes for hand card stacking overlays
+        // -----------------------------------------------------------
+        // CONTEXT B: Fallback (Hovering Over Hand) -> Existing Discard Loop
+        // -----------------------------------------------------------
+        const hand = state[this.role].hand || [];
         for (let index = hand.length - 1; index >= 0; index--) {
             const layout = this.getHandCardLayout(index, hand.length, true);
             const cardX = layout.x;
             const cardY = c.handStart.y + layout.y;
-            const halfW = layout.width / 2;
-            const halfH = layout.height / 2;
-
-            // Verify if your hovering cursor is inside this explicit card boundaries
-            if (mouseX >= cardX - halfW && mouseX <= cardX + halfW &&
-                mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
-                
+            const handHalfW = layout.width / 2;
+            const handHalfH = layout.height / 2;
+            
+            if (mouseX >= cardX - handHalfW && mouseX <= cardX + handHalfW && mouseY >= cardY - handHalfH && mouseY <= cardY + handHalfH) {
                 console.log(`📡 [DECOUPLED DISCARD EMIT]: Target locked on hand index ${index}. Sending request to server.`);
-                
-                // EMIT ONLY: Do not splice arrays or push to discard locally
-                this.socket.emit("discardCardFromHand", {
-                    tableId: this.tableId,
-                    targetPlayer: this.role,
-                    handIndex: index
-                });
-                return; // Break the execution loop immediately after locating match
+                this.socket.emit("discardCardFromHand", { tableId: this.tableId, targetPlayer: this.role, handIndex: index });
+                return;
             }
         }
     }
@@ -2321,6 +2343,35 @@ class GameScene extends Phaser.Scene {
                     this.animateCardFlight(start, end, defeatedCard, false, 350);
                     return true;
                 }
+            }
+
+            // 7. SUPPORT TO DISCARD ZONE (Support Shrank & Discard Grew)
+            if (newHand.length === oldHand.length && newSupport.length < oldSupport.length && newDiscard.length > oldDiscard.length) {
+                // 1. Identify which index went missing from the support lane
+                let missingSupportIdx = oldSupport.length - 1;
+                for (let i = 0; i < oldSupport.length; i++) {
+                    const oldCard = oldSupport[i];
+                    const newCard = newSupport[i];
+                    if (!newCard || oldCard.uuid !== newCard.uuid) {
+                        missingSupportIdx = i;
+                        break;
+                    }
+                }
+
+                // 2. Compute the exact start coordinates from the support lane slot position
+                const start = this.calculateZoneCoordinates(targetRole, "support", missingSupportIdx);
+                
+                // 3. Compute final resting destination over the discard stack box
+                const end = this.calculateZoneCoordinates(targetRole, "discard");
+                
+                // 4. Update core state ahead of running the transition flight tween
+                this.lastReceivedState = sanitizedState;
+                
+                console.log(`✨ [DISCARD VISUAL]: Spawning support-to-discard path from lane index ${missingSupportIdx}.`);
+                
+                // Fire flight trail using the standard 300ms tracking speed for board-to-zone actions
+                this.animateCardFlight(start, end, newDiscard[newDiscard.length - 1], false, 300);
+                return true;
             }
         }
 
