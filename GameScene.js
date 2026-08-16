@@ -63,34 +63,44 @@ class GameScene extends Phaser.Scene {
         this.input.on("drop", (pointer, gameObject, dropZone) => {
             const handIndex = gameObject.data.get("handIndex");
             const zoneKey = dropZone.data.get("zoneKey");
-
-            if (this.role === "spectator" || typeof handIndex === 'undefined' || handIndex === null) {
+            
+            if (this.role === "spectator" || typeof handIndex === "undefined" || handIndex === null) {
                 gameObject.x = gameObject.data.get("originalX");
                 gameObject.y = gameObject.data.get("originalY");
                 gameObject.setDepth(0);
                 return;
             }
-
-            console.log(`🎯 [DECOUPLED DROP]: Processing hand index ${handIndex} to zone ${zoneKey}`);
-
+            
+            // 1. Cache the drop location for the upcoming server flight animation
+            this.lastDropPos = { x: pointer.x, y: pointer.y };
+            
+            // 2. Turn the card into a ghost placeholder instead of destroying it
+            gameObject.setAlpha(0.8); // Visual cue that it's waiting for server verification
+            gameObject.disableInteractive(); // Disable further clicks or drags
+            gameObject.setData("isPendingServer", true);
+            gameObject.setData("pendingHandIndex", handIndex);
+            
+            console.log(`🎯 [DECOUPLED DROP]: Emitting drop to zone ${zoneKey}, leaving ghost card active`);
             if (zoneKey === "support") {
                 this.socket.emit("playCardToSupport", { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex });
-                gameObject.destroy();
             } else if (zoneKey === "fighterA" || zoneKey === "fighterB") {
                 this.socket.emit("playCardToFighter", { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex, targetSlot: zoneKey });
-                gameObject.destroy();
             } else if (zoneKey === "discard") {
                 this.socket.emit("discardCardFromHand", { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex });
-                gameObject.destroy();
             } else if (zoneKey === "stage") {
                 this.socket.emit("playCardToStage", { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex });
-                gameObject.destroy();
             } else {
+                // Reset if dropped in an invalid zone
+                this.lastDropPos = null;
+                gameObject.setAlpha(1);
+                gameObject.setInteractive();
+                gameObject.setData("isPendingServer", false);
                 gameObject.x = gameObject.data.get("originalX");
                 gameObject.y = gameObject.data.get("originalY");
                 gameObject.setDepth(0);
             }
         });
+
 
         this.input.on('pointerdown', (pointer) => {
             if (this.role === "spectator" || !this.lastReceivedState) return;
@@ -548,21 +558,19 @@ class GameScene extends Phaser.Scene {
         const childrenToDestroy = [];
 
         this.children.list.forEach(child => {
-            // 1. Preserve static text labeling blocks
             if (child.type === "Text" && (child.text.includes("HAND") || child.text.includes("ARENA ZONE") || child.text.includes("INSPECTION"))) {
                 return;
             }
-            
-            // 2. Queue standard loose rendering components
+            // KEEP THE GHOST PLACEHOLDER ALIVE DURING INTERMEDIARY RE-RENDERS
+            if (child.data && child.data.get("isPendingServer") === true) {
+                return;
+            }
             if (child.type === "Text" || child.type === "Image") {
                 childrenToDestroy.push(child);
             }
-            
-            // 3. FIX: Only clear out the dynamic card fallback containers. 
-            // Explicitly shield your main menu UI layer from being wiped by keyboard refreshes!
             if (child.type === "Container") {
                 if (this.drawerContainer && child === this.drawerContainer) {
-                    return; // Safeguard the global menu container instance from deletion
+                    return;
                 }
                 childrenToDestroy.push(child);
             }
@@ -1927,20 +1935,24 @@ class GameScene extends Phaser.Scene {
         container.add(tagText);
     }
 
-    animateCardFlight(startPos, endPos, cardData, isFaceDown = false, duration = 350) {
+    animateCardFlight(startPos, endPos, cardData, isFaceDown = false, duration = 350, customStartPos = null) {
+        // LOCATE AND CLEAN UP THE GHOST CARD
+        this.children.list.forEach(child => {
+            if (child.data && child.data.get("isPendingServer") === true) {
+                child.destroy();
+            }
+        });
+
         const templateCard = isFaceDown ? { name: "Card Back", isFaceDown: true } : cardData;
+        const actualStart = customStartPos ? customStartPos : startPos;
         
-        // Generate the temporary animation asset
-        const flyingCard = this.renderCardSprite(startPos.x, startPos.y, templateCard, false, "field");
-        
-        // SAFETY GATING: If the factory returned a null/undefined object, bypass the animation 
-        // gracefully and force a direct screen refresh to keep the match alive!
+        const flyingCard = this.renderCardSprite(actualStart.x, actualStart.y, templateCard, false, "field");
         if (!flyingCard) {
             console.warn("⚠️ [ANIMATION EYE]: Render factory returned invalid object. Bypassing flight path animation.");
             this.handleStateRenderingLoop(this.lastReceivedState);
             return;
         }
-
+        
         if (!isFaceDown && cardData && cardData.name !== "Card Back") {
             this.sound.play("sound_play", { 
                 volume: 0.7,
@@ -1948,15 +1960,13 @@ class GameScene extends Phaser.Scene {
             });
         }
 
-        flyingCard.setDepth(3000); // Perfectly safe to set now
-
-        // Execute the translation tween path
+        flyingCard.setDepth(3e3);
         this.tweens.add({
             targets: flyingCard,
             x: endPos.x,
             y: endPos.y,
             duration: duration,
-            ease: 'Cubic.easeOut',
+            ease: "Cubic.easeOut",
             onComplete: () => {
                 flyingCard.destroy();
                 this.handleStateRenderingLoop(this.lastReceivedState);
@@ -2030,22 +2040,33 @@ class GameScene extends Phaser.Scene {
 
             // 2. DISCARD FROM HAND (Hand Shrank & Discard Grew)
             if (newHand.length < oldHand.length && newDiscard.length > oldDiscard.length) {
+                const isLocalDrop = (targetRole === this.role && this.lastDropPos);
                 const start = this.calculateZoneCoordinates(targetRole, "hand", oldHand.length - 1, oldHand.length);
                 const end = this.calculateZoneCoordinates(targetRole, "discard");
                 
+                // Choose start location and speed based entirely on server state timing
+                const finalStart = isLocalDrop ? this.lastDropPos : start;
+                const duration = isLocalDrop ? 175 : 300; 
+                this.lastDropPos = null; // Clear immediately
+                
                 this.lastReceivedState = sanitizedState;
-                this.animateCardFlight(start, end, newDiscard[newDiscard.length - 1], false, 300);
+                this.animateCardFlight(finalStart, end, newDiscard[newDiscard.length - 1], false, duration);
                 return true;
             }
 
             // 3. HAND TO SUPPORT TRAY (Hand Shrank & Support Grew)
             if (newHand.length < oldHand.length && newSupport.length > oldSupport.length) {
+                const isLocalDrop = (targetRole === this.role && this.lastDropPos);
                 const supportIdx = newSupport.length - 1;
                 const start = this.calculateZoneCoordinates(targetRole, "hand", oldHand.length - 1, oldHand.length);
                 const end = this.calculateZoneCoordinates(targetRole, "support", supportIdx);
-
+                
+                const finalStart = isLocalDrop ? this.lastDropPos : start;
+                const duration = isLocalDrop ? 175 : 300;
+                this.lastDropPos = null;
+                
                 this.lastReceivedState = sanitizedState;
-                this.animateCardFlight(start, end, newSupport[supportIdx], false, 300);
+                this.animateCardFlight(finalStart, end, newSupport[supportIdx], false, duration);
                 return true;
             }
 
@@ -2054,13 +2075,17 @@ class GameScene extends Phaser.Scene {
             for (const slotKey of slots) {
                 const oldCard = oldBZone[slotKey]?.card;
                 const newCard = newBZone[slotKey]?.card;
-
                 if (newHand.length < oldHand.length && !oldCard && newCard) {
+                    const isLocalDrop = (targetRole === this.role && this.lastDropPos);
                     const start = this.calculateZoneCoordinates(targetRole, "hand", oldHand.length - 1, oldHand.length);
                     const end = this.calculateZoneCoordinates(targetRole, slotKey);
-
+                    
+                    const finalStart = isLocalDrop ? this.lastDropPos : start;
+                    const duration = isLocalDrop ? 175 : 300;
+                    this.lastDropPos = null;
+                    
                     this.lastReceivedState = sanitizedState;
-                    this.animateCardFlight(start, end, newCard, newCard.isFaceDown, 300);
+                    this.animateCardFlight(finalStart, end, newCard, newCard.isFaceDown, duration);
                     return true;
                 }
             }
