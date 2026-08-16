@@ -70,17 +70,32 @@ class GameScene extends Phaser.Scene {
                 gameObject.setDepth(0);
                 return;
             }
+
+            const state = this.lastReceivedState;
+            const myBZone = state?.[this.role]?.battleZone || {};
+
+            // 🔒 MOUSE DROP CONSTRAINT FILTER
+            if (zoneKey === "fighterA" || zoneKey === "fighterB" || zoneKey === "stage") {
+                const existingCardInSlot = zoneKey === "stage" ? myBZone.stage : myBZone[zoneKey]?.card;
+                
+                if (existingCardInSlot && Object.keys(existingCardInSlot).length > 0) {
+                    console.log(`⚠️ [ACTION BLOCKED]: Cannot play card. ${zoneKey} is already occupied.`);
+                    
+                    // Revert ghost properties back to solid standard card positioning
+                    gameObject.setAlpha(1);
+                    gameObject.setInteractive();
+                    gameObject.x = gameObject.data.get("originalX");
+                    gameObject.y = gameObject.data.get("originalY");
+                    gameObject.setDepth(0);
+                    return;
+                }
+            }
             
-            // 1. Cache the drop location for the upcoming server flight animation
             this.lastDropPos = { x: pointer.x, y: pointer.y };
-            
-            // 2. Turn the card into a ghost placeholder instead of destroying it
-            gameObject.setAlpha(0.8); // Visual cue that it's waiting for server verification
-            gameObject.disableInteractive(); // Disable further clicks or drags
+            gameObject.setAlpha(0.8);
+            gameObject.disableInteractive();
             gameObject.setData("isPendingServer", true);
-            gameObject.setData("pendingHandIndex", handIndex);
             
-            console.log(`🎯 [DECOUPLED DROP]: Emitting drop to zone ${zoneKey}, leaving ghost card active`);
             if (zoneKey === "support") {
                 this.socket.emit("playCardToSupport", { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex });
             } else if (zoneKey === "fighterA" || zoneKey === "fighterB") {
@@ -100,7 +115,6 @@ class GameScene extends Phaser.Scene {
                 gameObject.setDepth(0);
             }
         });
-
 
         this.input.on('pointerdown', (pointer) => {
             if (this.role === "spectator" || !this.lastReceivedState) return;
@@ -1835,6 +1849,12 @@ class GameScene extends Phaser.Scene {
 
             if (mouseX >= cardX - halfW && mouseX <= cardX + halfW &&
                 mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
+
+                const bZone = this.lastReceivedState?.[this.role]?.battleZone || {};
+                if (bZone.fighterA?.card && Object.keys(bZone.fighterA.card).length > 0) {
+                    console.log("❌ [LOCAL ALERT]: Fighter A position is already occupied.");
+                    return;
+                }
                 
                 console.log(`📡 [DECOUPLED TRICKERY EMIT]: Sending request to play hand index ${index} face down.`);
                 
@@ -2191,16 +2211,32 @@ class GameScene extends Phaser.Scene {
             for (const slotKey of slots) {
                 const oldCard = oldBZone[slotKey]?.card;
                 const newCard = newBZone[slotKey]?.card;
+                
                 if (newHand.length < oldHand.length && !oldCard && newCard) {
+                    // 1. Check if this specific state frame mutation belongs to the local seat player
                     const isLocalDrop = (targetRole === this.role && this.lastDropPos);
-                    const start = this.calculateZoneCoordinates(targetRole, "hand", oldHand.length - 1, oldHand.length);
+                    const duration = isLocalDrop ? 175 : 300; // ⚡ 175ms for you, 300ms for opponent
+                    
+                    // 2. Trace exact UUID hand slot gap identity
+                    let actualHandIndexMoved = oldHand.length - 1;
+                    for (let i = 0; i < oldHand.length; i++) {
+                        if (!newHand[i] || oldHand[i].uuid !== newHand[i].uuid) {
+                            actualHandIndexMoved = i;
+                            break;
+                        }
+                    }
+
+                    // 3. Select origin point based on local drop tracking vector
+                    const start = this.calculateZoneCoordinates(targetRole, "hand", actualHandIndexMoved, oldHand.length);
+                    const finalStart = isLocalDrop ? this.lastDropPos : start;
+                    
                     const end = this.calculateZoneCoordinates(targetRole, slotKey);
                     
-                    const finalStart = isLocalDrop ? this.lastDropPos : start;
-                    const duration = isLocalDrop ? 175 : 300;
+                    // 4. Wipe the local vector hook instantly so it doesn't bleed into future update loops
                     this.lastDropPos = null;
-                    
                     this.lastReceivedState = sanitizedState;
+                    
+                    console.log(`⚔️ [SLOT ANIMATION]: Flying card to ${slotKey} (${targetRole}). Speed: ${duration}ms`);
                     this.animateCardFlight(finalStart, end, newCard, newCard.isFaceDown, duration);
                     return true;
                 }

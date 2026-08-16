@@ -422,7 +422,10 @@ io.on("connection", socket => {
         const idx = parseInt(handIndex);
         
         if (!hand || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid hand index selection.");
-
+        if (bZone?.[targetSlot]?.card && Object.keys(bZone[targetSlot].card).length > 0) {
+            return socket.emit("errorMsg", `The ${targetSlot === 'fighterA' ? 'Fighter A' : 'Fighter B'} slot is already occupied!`);
+        }
+        
         const [cardToPlay] = hand.splice(idx, 1);
         cardToPlay.isFaceDown = false;
         cardToPlay.isTapped = false;
