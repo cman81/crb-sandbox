@@ -104,21 +104,29 @@ class GameScene extends Phaser.Scene {
 
         this.input.on('pointerdown', (pointer) => {
             if (this.role === "spectator" || !this.lastReceivedState) return;
-
+            
             // Isolate the physical boundary coordinates for your local deck
             const deckCoord = this.fieldCoordinates.local.deck;
             const halfW = this.cardWidth / 2;
             const halfH = this.cardHeight / 2;
-
+            
             // Check if the click occurred exactly within the local deck's rectangular bounds
             if (pointer.x >= deckCoord.x - halfW && pointer.x <= deckCoord.x + halfW &&
                 pointer.y >= deckCoord.y - halfH && pointer.y <= deckCoord.y + halfH) {
-
-                // Prevent event propagation if an overlay/drawer is open
-                if (this.drawerState && this.drawerState.isOpen) return;
-
+            if (this.drawerState && this.drawerState.isOpen) return;
+                
+                // 🔒 SAFETY GUARD: Check if your local deck array actually has cards remaining
+                const myStateData = this.lastReceivedState[this.role] || {};
+                const deckArray = myStateData.deck || [];
+                const cardsRemaining = Array.isArray(deckArray) ? deckArray.length : 0;
+                
+                if (cardsRemaining <= 0) {
+                    console.log("⚠️ [AUDIO ABORT]: Deck is empty. Suppressing draw audio cue.");
+                    return; // Abort cleanly before playing sound or emitting to server
+                }
+                
                 console.log("🎲 [DECOUPLED INPUT]: Clean singular deck draw event issued via permanent listener.");
-                 this.sound.play("sound_draw", { 
+                this.sound.play("sound_draw", { 
                     volume: 0.8,
                     pitch: Phaser.Math.FloatBetween(0.96, 1.04) 
                 });
