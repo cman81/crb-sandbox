@@ -204,8 +204,19 @@ class GameScene extends Phaser.Scene {
             if (this.role === "spectator") return;
             const mouseX = this.input.activePointer.x;
             const mouseY = this.input.activePointer.y;
-            this.handleKeyboardToStageAction(mouseX, mouseY);
+            this.handleKeyboardToSupportAction(mouseX, mouseY);
         });
+
+        // ... Append inside registerKeyboardShortcuts() beneath keydown-S
+        this.input.keyboard.on("keydown-H", () => {
+            if (this.role === "spectator") return;
+            const mouseX = this.input.activePointer.x;
+            const mouseY = this.input.activePointer.y;
+            
+            // Process actions based on where the cursor is currently hovering
+            this.handleKeyboardHAction(mouseX, mouseY);
+        });
+
     }
 
     setupNetworkEventListeners() {
@@ -1085,11 +1096,13 @@ class GameScene extends Phaser.Scene {
     this.add.text(panelX, panelY, "⌨️ KEYBOARD SHORTCUTS (HOVER + PRESS)", labelStyle);
     
     const shortcuts = [
-        { key: "[SPACE]", desc: "Inspect Card Info" },
+        { key: "[SPACE]", desc: "Preview Card" },
+        { key: "[ENTER]", desc: "Show Large Card" },
         { key: "[T]    ", desc: "Tap Card (Arena) / Top-Deck a Card (Hand)" },
-        { key: "[D]    ", desc: "Play / Discard (Hand) " },
+        { key: "[D]    ", desc: "Move to Discard Pile" },
+        { key: "[S]    ", desc: "Play into Support Lane" },
+        { key: "[H]    ", desc: "Return a Card to Hand" },
         { key: "[F]    ", desc: "Place Fighter A Face-Down" },
-        { key: "[S]    ", desc: "Play as Stage" },
         { key: "[B]    ", desc: "Bottom-Deck a Card" }
     ];
 
@@ -1836,43 +1849,94 @@ class GameScene extends Phaser.Scene {
         }
     }
 
-
-    handleKeyboardToStageAction(mouseX, mouseY) {
+    // Rename this function to match its new structural behavior or keep the name mapping intact:
+    handleKeyboardToSupportAction(mouseX, mouseY) {
         if (!this.lastReceivedState || !this.lastReceivedState[this.role]) return;
+        
         const state = this.lastReceivedState;
         const c = this.fieldCoordinates.local;
         const hand = state[this.role].hand || [];
-
+        
+        // Scan backwards from front-to-back to catch overlapping hand cards accurately
         for (let index = hand.length - 1; index >= 0; index--) {
             const layout = this.getHandCardLayout(index, hand.length, true);
             const cardX = layout.x;
             const cardY = c.handStart.y + layout.y;
             const halfW = layout.width / 2;
             const halfH = layout.height / 2;
-
-            if (mouseX >= cardX - halfW && mouseX <= cardX + halfW && 
-                mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
+            
+            // Check if the cursor is hovering over this specific card inside the hand grid matrix
+            if (mouseX >= cardX - halfW && mouseX <= cardX + halfW && mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
+                console.log(`📡 [SHORTCUT S EMIT]: Redirecting hand index ${index} face up into the Support Lane...`);
                 
-                console.log(`🎭 [KEYBOARD STAGE]: Executing instant predictive slice for index ${index}...`);
+                // 🔒 REMOVE ALL LOCAL ARRAY SLICING AND LOCAL ASSIGNMENT BUGS.
+                // Let the server validate the move and dictate the animation.
                 
-                // Verify if target stage slot is currently empty locally
-                const bZone = state[this.role].battleZone || {};
-                if (bZone.stage && Object.keys(bZone.stage).length > 0) {
-                    console.log("❌ [LOCAL ALERT]: Stage position is already occupied.");
-                    return;
-                }
+                this.socket.emit("playCardToSupport", {
+                    tableId: this.tableId,
+                    targetPlayer: this.role,
+                    handIndex: index
+                });
+                return;
+            }
+        }
+    }
 
-                // Client-Side Prediction Splice
-                const [stagedCardData] = hand.splice(index, 1);
-                stagedCardData.isFaceDown = false;
-                stagedCardData.isTapped = false;
-                
-                if (!state[this.role].battleZone) state[this.role].battleZone = {};
-                state[this.role].battleZone.stage = stagedCardData;
-
-                // Pipeline Network Call Outbound
-                this.socket.emit("playCardToStage", { tableId: this.tableId, targetPlayer: this.role, handIndex: index });
-                this.handleStateRenderingLoop(state);
+    handleKeyboardHAction(mouseX, mouseY) {
+        if (!this.lastReceivedState || !this.lastReceivedState[this.role]) return;
+        
+        const state = this.lastReceivedState;
+        const c = this.fieldCoordinates.local;
+        const halfW = this.cardWidth / 2;
+        const halfH = this.cardHeight / 2;
+        
+        // ----------------------------------------------------
+        // CONTEXT A: Hovering Over The Local Deck -> Draw Card
+        // ----------------------------------------------------
+        if (mouseX >= c.deck.x - halfW && mouseX <= c.deck.x + halfW && mouseY >= c.deck.y - halfH && mouseY <= c.deck.y + halfH) {
+            if (this.drawerState && this.drawerState.isOpen) return;
+            
+            // Safety check to ensure deck has cards remaining
+            const myDeck = state[this.role].deck || [];
+            if (myDeck.length <= 0) {
+                console.log("⚠️ [SHORTCUT H ABORT]: Deck is empty. Suppressing draw event.");
+                return;
+            }
+            
+            console.log("🎲 [SHORTCUT H]: Clean draw card shortcut issued via keyboard context verification.");
+            
+            // Play draw sound with your dynamic pitch randomization config
+            this.sound.play("sound_draw", { 
+                volume: 0.8,
+                pitch: Phaser.Math.FloatBetween(0.96, 1.04) 
+            });
+            
+            this.socket.emit("drawCard", { tableId: this.tableId, targetPlayer: this.role });
+            return;
+        }
+        
+        // -----------------------------------------------------------
+        // CONTEXT B: Hovering Over A Support Card -> Return to Hand
+        // -----------------------------------------------------------
+        const support = state[this.role].support || [];
+        
+        // Iterate from front-to-back (reverse) to prioritize clicking overlapping cards accurately
+        for (let i = support.length - 1; i >= 0; i--) {
+            const card = support[i];
+            const shiftX = c.supportStart.x + i * c.supportOverlap;
+            
+            // Adjust hitbox orientation cleanly based on Rest Mode (isTapped) state
+            const hW = card.isTapped ? halfH : halfW;
+            const hH = card.isTapped ? halfW : halfH;
+            
+            if (mouseX >= shiftX - hW && mouseX <= shiftX + hW && mouseY >= c.supportStart.y - hH && mouseY <= c.supportStart.y + hH) {
+                console.log(`📡 [SHORTCUT H EMIT]: Reclaiming support index ${i} (${card.id}) back to hand array list.`);
+                                
+                this.socket.emit("returnSupportToHand", {
+                    tableId: this.tableId,
+                    targetPlayer: this.role,
+                    supportIndex: i
+                });
                 return;
             }
         }
@@ -2036,7 +2100,39 @@ class GameScene extends Phaser.Scene {
             const oldBZone = oldState.battleZone || {};
             const newBZone = newState.battleZone || {};
 
-            // 1. DRAW CARD (Hand Grew)
+            // 1. SUPPORT TO HAND (Support Shrank & Hand Grew)
+            if (newHand.length > oldHand.length && newSupport.length < oldSupport.length) {
+                // 1. Identify which index went missing from the support lane array list
+                let missingSupportIdx = oldSupport.length - 1; // Default fallback to top element
+                for (let i = 0; i < oldSupport.length; i++) {
+                    const oldCard = oldSupport[i];
+                    const newCard = newSupport[i];
+                    if (!newCard || oldCard.uuid !== newCard.uuid) {
+                        missingSupportIdx = i;
+                        break;
+                    }
+                }
+
+                // 2. Compute exact starting position based on the identified support index slot
+                const start = this.calculateZoneCoordinates(targetRole, "support", missingSupportIdx);
+                
+                // 3. Compute final resting location in the newly expanded hand tray splay
+                const end = this.calculateZoneCoordinates(targetRole, "hand", newHand.length - 1, newHand.length);
+                
+                // 4. Update the global state reference ahead of running the transition tween
+                this.lastReceivedState = sanitizedState;
+                
+                // 5. Fire flight animation backward at our snappy user-interaction speed (175ms)
+                // Pass isFaceDown config checking player perspective boundaries safely
+                const isMaskedBack = (targetRole !== this.role && this.role !== "spectator");
+                
+                console.log(`✨ [RECLAIM VISUAL]: Spawning return flight trail from support slot index ${missingSupportIdx} to hand.`);
+                this.animateCardFlight(start, end, newHand[newHand.length - 1], isMaskedBack, 175);
+                
+                return true;
+            }
+
+            // 2. DRAW CARD (Hand Grew)
             if (newHand.length > oldHand.length) {
                 const start = this.calculateZoneCoordinates(targetRole, "deck");
                 const end = this.calculateZoneCoordinates(targetRole, "hand", newHand.length - 1, newHand.length);
@@ -2046,39 +2142,51 @@ class GameScene extends Phaser.Scene {
                 return true;
             }
 
-            // 2. DISCARD FROM HAND (Hand Shrank & Discard Grew)
+            // 3. DISCARD FROM HAND (Hand Shrank & Discard Grew)
             if (newHand.length < oldHand.length && newDiscard.length > oldDiscard.length) {
-                const isLocalDrop = (targetRole === this.role && this.lastDropPos);
-                const start = this.calculateZoneCoordinates(targetRole, "hand", oldHand.length - 1, oldHand.length);
+                // 🔍 2. Apply the same precise UUID scanning technique for discards
+                let actualHandIndexMoved = oldHand.length - 1;
+                for (let i = 0; i < oldHand.length; i++) {
+                    if (!newHand[i] || oldHand[i].uuid !== newHand[i].uuid) {
+                        actualHandIndexMoved = i;
+                        break;
+                    }
+                }
+
+                // 🟢 FIXED: Calculate start coordinates using the true index that was discarded
+                const start = this.calculateZoneCoordinates(targetRole, "hand", actualHandIndexMoved, oldHand.length);
                 const end = this.calculateZoneCoordinates(targetRole, "discard");
                 
-                // Choose start location and speed based entirely on server state timing
-                const finalStart = isLocalDrop ? this.lastDropPos : start;
-                const duration = isLocalDrop ? 175 : 300; 
-                this.lastDropPos = null; // Clear immediately
-                
                 this.lastReceivedState = sanitizedState;
-                this.animateCardFlight(finalStart, end, newDiscard[newDiscard.length - 1], false, duration);
+                this.animateCardFlight(start, end, newDiscard[newDiscard.length - 1], false, 300);
                 return true;
             }
 
-            // 3. HAND TO SUPPORT TRAY (Hand Shrank & Support Grew)
+            // 4. HAND TO SUPPORT TRAY (Hand Shrank & Support Grew)
             if (newHand.length < oldHand.length && newSupport.length > oldSupport.length) {
-                const isLocalDrop = (targetRole === this.role && this.lastDropPos);
+                // 🔍 1. Trace exactly which unique card went missing from your hand array
+                let actualHandIndexMoved = oldHand.length - 1; // Fallback to last item
+                
+                for (let i = 0; i < oldHand.length; i++) {
+                    // If the card at index i is missing from the new hand, or its UUID changed, this is our moving card
+                    if (!newHand[i] || oldHand[i].uuid !== newHand[i].uuid) {
+                        actualHandIndexMoved = i;
+                        break;
+                    }
+                }
+
                 const supportIdx = newSupport.length - 1;
-                const start = this.calculateZoneCoordinates(targetRole, "hand", oldHand.length - 1, oldHand.length);
+                
+                // 🟢 FIXED: Calculate start coordinates using the precise index that was hovered/clicked!
+                const start = this.calculateZoneCoordinates(targetRole, "hand", actualHandIndexMoved, oldHand.length);
                 const end = this.calculateZoneCoordinates(targetRole, "support", supportIdx);
                 
-                const finalStart = isLocalDrop ? this.lastDropPos : start;
-                const duration = isLocalDrop ? 175 : 300;
-                this.lastDropPos = null;
-                
                 this.lastReceivedState = sanitizedState;
-                this.animateCardFlight(finalStart, end, newSupport[supportIdx], false, duration);
+                this.animateCardFlight(start, end, newSupport[supportIdx], false, 300);
                 return true;
             }
 
-            // 4. HAND TO FIGHTER SLOT (Hand Shrank & Fighter Slot Filled)
+            // 5. HAND TO FIGHTER SLOT (Hand Shrank & Fighter Slot Filled)
             const slots = ["fighterA", "fighterB"];
             for (const slotKey of slots) {
                 const oldCard = oldBZone[slotKey]?.card;
@@ -2098,7 +2206,7 @@ class GameScene extends Phaser.Scene {
                 }
             }
 
-            // 5. FIGHTER TO DEFEATED ZONE (Fighter Emptied & Defeated Grew)
+            // 6. FIGHTER TO DEFEATED ZONE (Fighter Emptied & Defeated Grew)
             for (const slotKey of slots) {
                 const oldCard = oldBZone[slotKey]?.card;
                 const newCard = newBZone[slotKey]?.card;
