@@ -733,6 +733,14 @@ io.on("connection", socket => {
         return moveCardToZone(socket, tableId, targetPlayer, 'support', supportIndex, 'discard');
     });
 
+    socket.on("drawSupport", ({ tableId, targetPlayer }) => {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+        
+        const deck = table.gameState[targetPlayer]?.deck;
+        return moveCardToZone(socket, tableId, targetPlayer, 'deck', (deck.length - 1), 'support');
+    });
+
 });
 
 console.log(`TCG Server on ${process.env.RAILWAY_PUBLIC_DOMAIN}`);

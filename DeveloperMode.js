@@ -157,7 +157,9 @@ class DeveloperMode extends Phaser.Scene {
 
                 <div style="background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid #334155; display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
                     <button id="actionDrawBtn" style="width:100%; background:#00ff00; color:#000; font-weight:bold; font-size:12px; padding:8px; border:none; border-radius:6px; cursor:pointer;">🎴 DRAW 1 CARD</button>
-                    <div style="display: flex; align-items: center; gap: 6px;">
+                    <button id="actionDrawSupportBtn" style="width:100%; background:#38bdf8; color:#000; font-weight:bold; font-size:12px; padding:8px; border:none; border-radius:6px; cursor:pointer;">🛡️ DRAW TO SUPPORT LANE</button>
+                    
+                    <div style="display: flex; align-items: center; gap: 6px; margin-top: 4px;">
                         <label style="font-size:12px; color:#00ffff; font-weight:bold;">Stack target:</label>
                         <select id="actionStackSlot" style="width:110px; background:#1e293b; color:#fff; border:1px solid #334155; padding:4px; border-radius:6px;">
                             <option value="fighterA">Fighter A</option>
@@ -351,6 +353,7 @@ class DeveloperMode extends Phaser.Scene {
 
             // Tab 3: Detailed macro operations buttons
             if (event.target.id === "actionDrawBtn") this.handleDrawCard();
+            if (event.target.id === "actionDrawSupportBtn") this.handleDrawSupport();
             if (event.target.id === "actionRecycleDiscardBtn") this.handleRecycleDiscard();
             if (event.target.id === "actionDiscardToDefeatedBtn") this.handleDiscardToDefeated();
             if (event.target.id === "actionStackTopDeckBtn") this.handlePlaceDeckToStack();
@@ -671,6 +674,13 @@ class DeveloperMode extends Phaser.Scene {
         const targetPlayer = document.getElementById("actionTargetPlayer").value;
         this.logToConsole(`>> Emitting drawCard: Table ${tableId} for ${targetPlayer}`);
         this.socket.emit("drawCard", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer });
+    }
+
+    handleDrawSupport() {
+        const tableId = document.getElementById("actionTableId").value;
+        const targetPlayer = document.getElementById("actionTargetPlayer").value;
+        this.logToConsole(`>> Emitting drawSupport: Moving top deck card directly to support lane for ${targetPlayer}.`);
+        this.socket.emit("drawSupport", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer });
     }
 
     handleDraw6Cards() {
