@@ -648,6 +648,13 @@ class DeveloperMode extends Phaser.Scene {
         this.socket.emit("loadDeck", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, deckList: processedDeck });
     }
 
+    handleDeckShuffle() {
+        const tableId = document.getElementById('deckTableId').value;
+        const targetPlayer = document.getElementById('deckTargetPlayer').value;
+        this.logToConsole(`>> Emitting shuffleDeck: Table ${tableId} (${targetPlayer}) via unique UUID sort routine.`);
+        this.socket.emit('shuffleDeck', { tableId: parseInt(tableId), targetPlayer });
+    }
+
     handleGetGameState() {
         const tableId = document.getElementById("inspectTableId").value;
         const role = document.getElementById("inspectRole").value;
