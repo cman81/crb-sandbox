@@ -58,7 +58,9 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
-  mainWindow.webContents.openDevTools();
+
+  // uncomment this line to open Dev Tools by default
+//  mainWindow.webContents.openDevTools();
 }
 
 // 📡 Listen for the front-end scene asking for a list of files in the mods folder

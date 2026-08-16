@@ -2075,85 +2075,136 @@ class GameScene extends Phaser.Scene {
     }
 
     displayLargeCardModal(card) {
-        // 1. Guard check to avoid duplicate window injections
-        if (document.getElementById("largeCardModalOverlay")) return;
+        if (this.modalActiveBlocker) return;
 
-        // 2. Freeze canvas hotkeys so actions don't run in the background
         this.input.keyboard.enabled = false;
 
-        const isUnknown = card.title === "Card Back" || card.name === "Card Back";
-        const cardId = card.id || "N/A";
+        // 1. EXTRACT DATA CONSTANTS UP FRONT
+        const isUnknown = !card || card.title === "Card Back" || card.name === "Card Back" || card.isFaceDown;
+        const cardId = isUnknown ? "UNKNOWN" : (card.id || "N/A");
         const title = card.title || card.name || "Unknown Card";
         const description = card.description || card.text || "No rule text provided.";
 
-        // Pure, scalable viewport layout independent of Phaser's scale constraints
-        const modalHtml = `
-            <div id="largeCardModalOverlay" style="
-                position: fixed;
-                top: 0; left: 0; 
-                width: 100vw; height: 100vh;
-                background: rgba(15, 23, 42, 0.85);
-                backdrop-filter: blur(8px);
-                display: flex; justify-content: center; align-items: center;
-                z-index: 10000; cursor: pointer;
-                user-select: none; -webkit-user-select: none;
-            ">
-                <!-- Card Container Cardboard Frame - NOW SECURED AT TRUE 480PX -->
-                <div style="
-                    background: #1e293b;
-                    border: 3px solid #38bdf8;
-                    border-radius: 16px;
-                    width: 480px; 
-                    box-sizing: border-box;
-                    padding: 24px;
-                    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
-                    font-family: monospace; color: #f8fafc;
-                    cursor: default; pointer-events: auto;
-                ">
-                    <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #334155; padding-bottom: 8px; margin-bottom: 16px;">
-                        <span style="color: #38bdf8; font-weight: bold; font-size: 14px;">CODE: ${cardId}</span>
-                        <span style="color: #64748b; font-size: 12px;">🔍 FULL FIELD INSPECTION</span>
-                    </div>
+        const canvasCenterX = 1920 / 2;
+        const canvasCenterY = 1080 / 2;
 
-                    <h1 style="font-size: 24px; color: #f1f5f9; margin: 0 0 16px 0; font-weight: 900; letter-spacing: -0.5px;">
-                        ${title.toUpperCase()}
-                    </h1>
+        // 2. STAGE BACKDROP CAMERA SLICE
+        // Apply the hardware blur safely strictly onto your main board game layer
+        if (this.cameras.main.postFX) {
+            this.modalBlurEffect = this.cameras.main.postFX.addBlur(0, 2, 2, 4);
+            this.tweens.add({
+                targets: this.modalBlurEffect,
+                blur: 8,
+                duration: 150
+            });
+        }
 
-                    <div style="
-                        width: 100%; height: 220px; 
-                        background: #0f172a; border-radius: 8px; 
-                        margin-bottom: 16px; display: flex; 
-                        align-items: center; justify-content: center;
-                        border: 1px solid #334155; color: #475569; font-size: 12px;
-                    ">
-                        [ VISUAL RENDER BUFFER AREA ]
-                    </div>
+        // 3. INSTANTIATE THE OVERLAY MODAL CAMERA (Stays perfectly sharp)
+        // Creates a secondary viewing frame covering your exact viewport canvas configuration
+        this.modalCamera = this.cameras.add(0, 0, 1920, 1080);
+        this.modalCamera.setScroll(0, 0);
 
-                    <div style="
-                        background: #0f172a; border-left: 4px solid #38bdf8;
-                        padding: 16px; border-radius: 4px;
-                        font-size: 14px; line-height: 1.6; color: #e2e8f0;
-                        min-height: 120px; word-wrap: break-word;
-                    ">
-                        ${description}
-                    </div>
+        // 4. LAYER 1: THE DARK GRAPHICS BLOCKER MASK
+        this.modalActiveBlocker = this.add.graphics();
+        this.modalActiveBlocker.fillStyle(0x0f172a, 0.85); // 85% opacity backdrop
+        this.modalActiveBlocker.fillRect(0, 0, 1920, 1080);
+        this.modalActiveBlocker.setInteractive(new Phaser.Geom.Rectangle(0, 0, 1920, 1080), Phaser.Geom.Rectangle.Contains);
 
-                    <div style="text-align: center; margin-top: 20px; font-size: 11px; color: #64748b; font-weight: bold;">
-                        💡 CLICK ANYWHERE OUTSIDE TO DISMISS & RESUME GAME
-                    </div>
-                </div>
-            </div>
-        `;
+        // 5. LAYER 2: THE MODAL DISPLAY ASSET GRAPHICS
+        let bundleKey = "system_ui";
+        let frameKey = "card_back";
+        if (card && card.id && !isUnknown) {
+            frameKey = card.id;
+            if (frameKey.startsWith("BS1-")) bundleKey = "BS01_cards";
+            else if (frameKey.startsWith("BS2-")) bundleKey = "BS02_cards";
+            else if (frameKey.startsWith("BS3-")) bundleKey = "BS03_cards";
+            else if (frameKey.startsWith("BS10-")) bundleKey = "BS10_cards";
+        }
+        const hasRealTexture = this.textures.exists(bundleKey) && this.textures.get(bundleKey).has(frameKey);
 
-        // 3. Mount directly into the standard browser DOM tree
-        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        if (hasRealTexture && !isUnknown) {
+            // --- PROFILE A: CINEMATIC IMAGE ---
+            this.modalDisplayAsset = this.renderCardSprite(canvasCenterX, canvasCenterY, card, false, "field", 0);
+            if (this.modalDisplayAsset) {
+                this.modalDisplayAsset.setDisplaySize(540, 756); // True massive presentation frame
+            }
+        } else {
+            // --- PROFILE B: VECTOR DETAILS FRAME CONTAINER ---
+            this.modalDisplayAsset = this.add.container(canvasCenterX, canvasCenterY);
+            const boxW = 540;
+            const boxH = 420;
 
-        // 4. Secure the single-click dismissal listener loop
-        const overlay = document.getElementById("largeCardModalOverlay");
-        overlay.addEventListener("click", (e) => {
-            if (e.target.id === "largeCardModalOverlay") {
-                this.input.keyboard.enabled = true; // Unfreeze keys
-                overlay.remove(); // Cleanly strip element from body
+            const basePlate = this.add.graphics();
+            basePlate.fillStyle(0x1e293b, 1);
+            basePlate.lineStyle(3, 0x38bdf8, 1);
+            basePlate.fillRoundedRect(-boxW / 2, -boxH / 2, boxW, boxH, 16);
+            basePlate.strokeRoundedRect(-boxW / 2, -boxH / 2, boxW, boxH, 16);
+            this.modalDisplayAsset.add(basePlate);
+
+            const metaText = this.add.text(-boxW / 2 + 24, -boxH / 2 + 24, `CODE: ${cardId}`, { fontSize: "14px", fontFamily: "monospace", fill: "#38bdf8", fontWeight: "bold" });
+            const sysText = this.add.text(boxW / 2 - 24, -boxH / 2 + 24, "🔍 SYSTEM INSPECTOR", { fontSize: "12px", fontFamily: "monospace", fill: "#64748b" }).setOrigin(1, 0);
+            const titleText = this.add.text(-boxW / 2 + 24, -boxH / 2 + 56, title.toUpperCase(), { fontSize: "24px", fontFamily: "monospace", fill: "#f1f5f9", fontWeight: "900" });
+            this.modalDisplayAsset.add([metaText, sysText, titleText]);
+
+            const textBg = this.add.graphics();
+            textBg.fillStyle(0x0f172a, 1);
+            textBg.lineStyle(1, 0x334155, 1);
+            textBg.fillRoundedRect(-boxW / 2 + 24, -boxH / 2 + 100, boxW - 48, 220, 6);
+            textBg.strokeRoundedRect(-boxW / 2 + 24, -boxH / 2 + 100, boxW - 48, 220, 6);
+            textBg.fillStyle(0x38bdf8, 1);
+            textBg.fillRect(-boxW / 2 + 24, -boxH / 2 + 100, 4, 220);
+            this.modalDisplayAsset.add(textBg);
+
+            const descText = this.add.text(-boxW / 2 + 44, -boxH / 2 + 116, description, {
+                fontSize: "14px",
+                fontFamily: "monospace",
+                fill: "#e2e8f0",
+                lineSpacing: 6,
+                wordWrap: { width: boxW - 88 }
+            });
+            this.modalDisplayAsset.add(descText);
+
+            const dismissTip = this.add.text(0, boxH / 2 - 24, "💡 CLICK ANYWHERE TO DISMISS INTERFACE", { fontSize: "11px", fontFamily: "monospace", fill: "#64748b", fontWeight: "bold" }).setOrigin(0.5);
+            this.modalDisplayAsset.add(dismissTip);
+        }
+
+        // 6. 🌟 CRITICAL ROUTING MASK ASSIGNMENTS
+        // A: Tell your main camera loop to IGNORE drawing the modal assets
+        this.cameras.main.ignore([this.modalActiveBlocker, this.modalDisplayAsset]);
+
+        // B: Tell your sharp overlay camera to IGNORE drawing the base board game field children list
+        // This allows the blur filter to safely churn background elements in separation
+        this.children.list.forEach(child => {
+            if (child !== this.modalActiveBlocker && child !== this.modalDisplayAsset) {
+                this.modalCamera.ignore(child);
+            }
+        });
+
+        // 7. TEARDOWN DISMISS LISTENER HANDSHAKE
+        this.modalActiveBlocker.on("pointerdown", () => {
+            this.input.keyboard.enabled = true; // Restore keystrokes
+
+            // Clean up the blur filter on main camera pipeline
+            if (this.modalBlurEffect) {
+                this.cameras.main.postFX.remove(this.modalBlurEffect);
+                this.modalBlurEffect = null;
+            }
+
+            // Cleanly erase assets out of memory arrays
+            if (this.modalDisplayAsset) {
+                this.modalDisplayAsset.destroy();
+                this.modalDisplayAsset = null;
+            }
+
+            if (this.modalActiveBlocker) {
+                this.modalActiveBlocker.destroy();
+                this.modalActiveBlocker = null;
+            }
+
+            // Destroy the stacked camera slice cleanly to free viewport memory allocations
+            if (this.modalCamera) {
+                this.cameras.remove(this.modalCamera);
+                this.modalCamera = null;
             }
         });
     }
