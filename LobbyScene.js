@@ -4,32 +4,53 @@ class LobbyScene extends Phaser.Scene {
     }
 
     create() {
-        // Access the single persistent global socket connection
         this.socket = globalSocket;
 
+        // Title text anchored cleanly at virtual center (960)
         this.add.text(960, 250, 'Competitive Ruleset Battle Sandbox', {
             fontSize: '42px', fill: '#00ff00', fontFamily: 'monospace', fontWeight: 'bold'
         }).setOrigin(0.5);
 
+        // Pristine, explicit card layout with no viewport-hijacking outer dividers
         const htmlContent = `
-            <div style="color: white; font-family: monospace; font-size: 18px; background: #222; padding: 30px; border-radius: 8px; width: 400px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5);">
-                <div style="margin-bottom: 20px;">
-                    <label style="display: inline-block; width: 160px;">Select Table:</label>
-                    <input type="number" id="lobbyTableId" min="1" max="8" value="1" style="width: 70px; font-size: 16px; padding: 5px; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px;">
+            <div style="
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                align-items: center;
+                box-sizing: border-box;
+                
+                color: white; 
+                font-family: monospace; 
+                font-size: 18px; 
+                background: #1e293b; 
+                padding: 30px; 
+                border-radius: 12px; 
+                width: 400px; 
+                border: 2px solid #334155; 
+                box-shadow: 0px 10px 30px rgba(0,0,0,0.75);
+                user-select: none;
+            ">
+                <div style="margin-bottom: 20px; width: 100%; display: flex; justify-content: space-between; align-items: center;">
+                    <label style="font-weight: bold; color: #94a3b8;">Select Table:</label>
+                    <input type="number" id="lobbyTableId" min="1" max="8" value="1" style="width: 80px; font-size: 16px; padding: 6px; background: #0f172a; color: #fff; border: 1px solid #334155; border-radius: 6px; text-align: center;">
                 </div>
-                <div style="margin-bottom: 30px;">
-                    <label style="display: inline-block; width: 160px;">Select Seat Role:</label>
-                    <select id="lobbyRole" style="width: 140px; font-size: 16px; padding: 5px; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px;">
+                <div style="margin-bottom: 30px; width: 100%; display: flex; justify-content: space-between; align-items: center;">
+                    <label style="font-weight: bold; color: #94a3b8;">Select Seat Role:</label>
+                    <select id="lobbyRole" style="width: 150px; font-size: 16px; padding: 6px; background: #0f172a; color: #fff; border: 1px solid #334155; border-radius: 6px;">
                         <option value="playerA">Player A</option>
                         <option value="playerB">Player B</option>
                         <option value="spectator">Spectator</option>
                     </select>
                 </div>
-                <button id="enterMatchBtn" style="width:100%; background: #00ff00; color: #000; font-weight: bold; font-size: 18px; padding: 12px; border: none; border-radius: 4px; cursor: pointer;">CONNECT TO FIELD</button>
+                <button id="enterMatchBtn" style="width:100%; background: #00ff00; color: #000; font-weight: bold; font-size: 18px; padding: 14px; border: none; border-radius: 6px; cursor: pointer;">CONNECT TO FIELD</button>
             </div>
         `;
 
-        this.domLobby = this.add.dom(960, 540).createFromHTML(htmlContent).setOrigin(0.5);
+        // 🌟 THE ALIGNMENT MATRIX RE-ANCHOR
+        // Dropping the 400px box directly at center coordinates (960, 560).
+        // setOrigin(0.5) tells Phaser to anchor the center of the box right over that virtual spot natively!
+        this.domLobby = this.add.dom(960, 560).createFromHTML(htmlContent).setOrigin(0.5);
         this.domLobby.addListener('click');
         
         this.domLobby.on('click', (event) => {
