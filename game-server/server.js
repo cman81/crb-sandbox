@@ -107,13 +107,17 @@ function sendSanitizedState(socket, table, role){
 function moveCardToZone(socket, tableId, targetPlayer, fromZone, fromIndex, toZone) {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
+        if (fromZone == toZone) {
+            return socket.emit("errorMsg", "Zones are the same, nothing to move.");
+        }
 
         const targetArray = table.gameState[targetPlayer]?.[fromZone];
         const destinationArray = table.gameState[targetPlayer]?.[toZone];
         
         if (!targetArray || targetArray.length === 0) return socket.emit("errorMsg", fromZone + "zone is empty!");
         
-        const idx = parseInt(fromIndex);
+        // If we are moving from the deck, disregard index - we are drawing from the end of the array, i.e.: the top of the deck
+        const idx = (fromZone == 'deck') ? (targetArray.length - 1): parseInt(fromIndex);
         if (isNaN(idx) || idx < 0 || idx >= targetArray.length) return socket.emit("errorMsg", "Invalid index selection.");
 
         // 1. Execute the mutation directly on the data model
@@ -769,6 +773,14 @@ io.on("connection", socket => {
         
         const deck = table.gameState[targetPlayer]?.deck;
         return moveCardToZone(socket, tableId, targetPlayer, 'deck', (deck.length - 1), 'support');
+    });
+
+    socket.on('requestCardMove', ({ tableId, targetPlayer, targetZone, targetIndex, destinationZone }) => {
+        const validZones = ['hand', 'support', 'discard', 'defeated', 'deck'];
+        if (!validZones.includes(targetZone)) return socket.emit("errorMsg", "Invalid target."); 
+        if (!validZones.includes(destinationZone)) return socket.emit("errorMsg", "Invalid destination."); 
+
+        return moveCardToZone(socket, tableId, targetPlayer, targetZone, targetIndex, destinationZone);
     });
 
 });

@@ -209,6 +209,39 @@ class DeveloperMode extends Phaser.Scene {
                     </div>
                 </div>
         `;
+        visualHtml += `
+            <div style="background: #0f172a; padding: 12px; border-radius: 8px; border: 1px solid #3b82f6; display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
+                <label style="font-size:12px; color:#3b82f6; font-weight:bold;">🔄 Universal Move Matrix:</label>
+                
+                <div style="display: flex; gap: 6px; align-items: center;">
+                    <label style="font-size:11px; color:#aaa; width: 35px;">From:</label>
+                    <select id="moveSrcZone" style="flex: 1; background:#1e293b; color:#fff; border:1px solid #334155; padding:4px; border-radius:6px; font-size:12px;">
+                        <option value="hand">Hand</option>
+                        <option value="support">Support</option>
+                        <option value="discard">Discard</option>
+                        <option value="defeated">Defeated Pile</option>
+                        <option value="deck">Deck</option>
+                        <option value="extraDeck">Extra Deck</option>
+                    </select>
+                    <label style="font-size:11px; color:#aaa;">Idx:</label>
+                    <input type="number" id="moveSrcIdx" min="0" value="0" style="width:40px; background:#1e293b; color:#fff; border:1px solid #334155; padding:4px; border-radius:6px; text-align:center; font-size:12px;">
+                </div>
+
+                <div style="display: flex; gap: 6px; align-items: center;">
+                    <label style="font-size:11px; color:#aaa; width: 35px;">To:</label>
+                    <select id="moveDestZone" style="flex: 1; background:#1e293b; color:#fff; border:1px solid #334155; padding:4px; border-radius:6px; font-size:12px;">
+                        <option value="hand">Hand</option>
+                        <option value="support">Support</option>
+                        <option value="discard">Discard</option>
+                        <option value="defeated">Defeated Pile</option>
+                        <option value="deck">Deck</option>
+                        <option value="extraDeck">Extra Deck</option>
+                    </select>
+                    <button id="actionUniversalMoveBtn" style="background:#3b82f6; color:#fff; font-weight:bold; font-size:11px; padding:6px 12px; border:none; border-radius:6px; cursor:pointer;">EXECUTE</button>
+                </div>
+            </div>
+        `;
+
         // --- TAB PANEL 3: GAME ACTIONS PANEL (PART B) ---
         visualHtml += `
                 <div style="background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid #00ffcc; display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
@@ -387,6 +420,7 @@ class DeveloperMode extends Phaser.Scene {
             if (event.target.id === "actionToStageBtn") this.handlePlayToStageEmit();
             if (event.target.id === "actionSupportToHandBtn") this.handleReturnSupportToHand();
             if (event.target.id === "actionDiscardSupportBtn") this.handleDiscardSupport();
+            if (event.target.id === "actionUniversalMoveBtn") this.handleUniversalMoveEmit();
 
             // Toolbar: Perspective state inspector manual override poll
             if (event.target.id === "inspectGetStateBtn") this.handleGetGameState();
@@ -852,4 +886,21 @@ class DeveloperMode extends Phaser.Scene {
         this.logToConsole(`↩️ [DEV ADMIN]: Retracting match closure signal for Table ${tableId}, Role: ${targetPlayer}`);
         this.socket.emit("revokeEndGame", { tableId: tableId, targetPlayer: targetPlayer });
     }
+
+    handleUniversalMoveEmit() {
+        const tableId = document.getElementById("actionTableId").value;
+        const targetPlayer = document.getElementById("actionTargetPlayer").value;
+        const targetZone = document.getElementById("moveSrcZone").value;
+        const targetIndex = document.getElementById("moveSrcIdx").value;
+        const destinationZone = document.getElementById("moveDestZone").value;
+        this.logToConsole(`>> Emitting requestCardMove: Shifting ${targetZone} (${targetIndex}) straight into ${destinationZone} for ${targetPlayer}.`);
+        this.socket.emit("requestCardMove", {
+            tableId: parseInt(tableId, 10),
+            targetPlayer: targetPlayer,
+            targetZone: targetZone,
+            targetIndex: parseInt(targetIndex, 10),
+            destinationZone: destinationZone
+        });
+    }
+
 }

@@ -24,7 +24,8 @@
     "files": [
       "*.js",
       "index.html",
-      "vendor/**"
+      "vendor/**",
+      "assets/**"
     ],
     "win": {
       "target": [
