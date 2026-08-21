@@ -203,7 +203,9 @@ class GameScene extends Phaser.Scene {
                 s: "support",
                 d: "discard",
                 f: "defeated",
-                e: "deck"
+                e: "deck",
+                a: "fighterA",
+                b: "fighterB"
             };
 
             const destinationZone = keyMap[key];
@@ -235,7 +237,12 @@ class GameScene extends Phaser.Scene {
                 console.log(`📡 [DYNAMIC SHORTCUT ROUTER]: Moving card index ${targetInfo.index} from ${targetInfo.zoneName} to ${destinationZone}.`);
 
                 // Emit the unified move command to the server
-                this.socket.emit("requestCardMove", {
+                const fighterZones = ['fighterA', 'fighterB']
+                let callback = 'requestCardMove';
+                if (fighterZones.includes(destinationZone)) {
+                    callback = 'requestCardToFighter';
+                }
+                this.socket.emit(callback, {
                     tableId: this.tableId,
                     targetPlayer: targetInfo.ownerId,
                     targetZone: targetInfo.zoneName,
@@ -1196,7 +1203,8 @@ class GameScene extends Phaser.Scene {
         { key: "[S]    ", desc: "Play into Support Lane" },
         { key: "[H]    ", desc: "Return a Card to Hand" },
         { key: "[F]    ", desc: "Place Fighter A Face-Down" },
-        { key: "[B]    ", desc: "Bottom-Deck a Card" }
+        { key: "[A]    ", desc: "Move to Fighter A" },
+        { key: "[B]    ", desc: "Move to Fighter B" }
     ];
 
     shortcuts.forEach((item, index) => {
@@ -2253,7 +2261,7 @@ class GameScene extends Phaser.Scene {
         const oldState = this.lastReceivedState;
         const newState = sanitizedState;
         const rolesToCheck = ["playerA", "playerB"];
-        const listZones = ["hand", "support", "discard", "defeated", "deck"];
+        const listZones = ["hand", "support", "discard", "defeated", "deck", "fighterA", "fighterB"];
 
         // 1. Traverse both seats
         for (const targetRole of rolesToCheck) {
@@ -2266,7 +2274,16 @@ class GameScene extends Phaser.Scene {
 
             // Map out where every card was located in the previous frame
             listZones.forEach(zone => {
-                const list = oldPlayer[zone] || [];
+                let list;
+                switch (zone) {
+                    case 'fighterA':
+                    case 'fighterB':
+                        list = [oldPlayer.battleZone[zone].card] || [];
+                        break;
+                    default:
+                        list = oldPlayer[zone] || [];
+                }
+
                 list.forEach((card, index) => {
                     if (card && card.uuid) {
                         oldCardPositions[card.uuid] = { zone, index, totalCount: list.length };
@@ -2276,7 +2293,15 @@ class GameScene extends Phaser.Scene {
 
             // Map out where every card is located now in the incoming frame
             listZones.forEach(zone => {
-                const list = newPlayer[zone] || [];
+                let list;
+                switch (zone) {
+                    case 'fighterA':
+                    case 'fighterB':
+                        list = [newPlayer.battleZone[zone].card] || [];
+                        break;
+                    default:
+                        list = newPlayer[zone] || [];
+                }
                 list.forEach((card, index) => {
                     if (card && card.uuid) {
                         newCardPositions[card.uuid] = { zone, index, totalCount: list.length, cardRef: card };
@@ -2552,7 +2577,7 @@ class GameScene extends Phaser.Scene {
 
         const halfW = this.cardWidth / 2;
         const halfH = this.cardHeight / 2;
-        const zones = ['defeated', 'support', 'hand', 'discard', 'deck'];
+        const zones = ['defeated', 'support', 'hand', 'discard', 'deck', 'fighterA', 'fighterB'];
 
         for (const p of perspectiveMap) {
             const c = this.fieldCoordinates[p.coordKey];
@@ -2561,7 +2586,15 @@ class GameScene extends Phaser.Scene {
 
             // Loop dynamically through each zone target sequence
             for (const zone of zones) {
-                const cardList = playerData[zone] || [];
+                let cardList;
+                switch (zone) {
+                    case 'fighterA':
+                    case 'fighterB':
+                        cardList = [playerData.battleZone[zone].card] || [];
+                        break;
+                    default:
+                        cardList = playerData[zone] || [];
+                }
                 if (cardList.length === 0) continue;
 
                 // Iterate backward through the pile arrays to grab the top graphic layer first
@@ -2608,6 +2641,14 @@ class GameScene extends Phaser.Scene {
                             targetX = c.deck.x;
                             targetY = c.deck.y;
                             break;
+                        
+                        case 'fighterA':
+                        case 'fighterB':
+                            if (i !== cardList.length - 1) continue;
+                            targetX = c.deck.x;
+                            targetY = c.deck.y;
+                            break;
+
                     }
 
                     // Execute the singular consolidated boundary bounds collision check

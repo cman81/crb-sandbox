@@ -104,6 +104,52 @@ function sendSanitizedState(socket, table, role){
     });
 }
 
+function moveCardToFighter(socket, tableId, targetPlayer, fromZone, fromIndex, toZone) {
+        const table = tables.find(t => t.id === parseInt(tableId));
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+        if (fromZone == toZone) {
+            return socket.emit("errorMsg", "Zones are the same, nothing to move.");
+        }
+
+        const targetArray = table.gameState[targetPlayer]?.[fromZone];
+        const destination = table.gameState[targetPlayer]?.battleZone?.[toZone];
+        
+        if (!targetArray || targetArray.length === 0) return socket.emit("errorMsg", fromZone + "zone is empty!");
+        
+        // If we are moving from the deck, disregard index - we are drawing from the end of the array, i.e.: the top of the deck
+        const idx = (fromZone == 'deck') ? (targetArray.length - 1): parseInt(fromIndex);
+        if (isNaN(idx) || idx < 0 || idx >= targetArray.length) return socket.emit("errorMsg", "Invalid index selection.");
+
+        if (destination.card !== null) {
+            return socket.emit("errorMsg", `${toZone} is not empty, so we can't move a card into it.`);
+        } 
+
+        // 1. Execute the mutation directly on the data model
+        const [cardToMove] = targetArray.splice(idx, 1);
+
+        cardToMove.isTapped = false;
+        cardToMove.isFaceDown = false;
+       
+        destination.card = cardToMove;
+
+        // 2. Aggregate all multi-socket connections for this table instance
+        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
+
+        // 3. Loop over connections and dispatch individualized, FOW-masked state frames
+        targetSockets.forEach(sockId => {
+            const sock = io.sockets.sockets.get(sockId);
+            if (sock) {
+                let viewerRole = "spectator";
+                if (table.playerA.includes(sockId)) viewerRole = "playerA";
+                if (table.playerB.includes(sockId)) viewerRole = "playerB";
+                
+                sendSanitizedState(sock, table, viewerRole);
+            }
+        });
+
+        socket.emit("serverNotice", `Successfully moved card with index ${idx} from ${fromZone} to ${toZone}.`);
+}
+
 function moveCardToZone(socket, tableId, targetPlayer, fromZone, fromIndex, toZone) {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
@@ -782,6 +828,16 @@ io.on("connection", socket => {
 
         return moveCardToZone(socket, tableId, targetPlayer, targetZone, targetIndex, destinationZone);
     });
+
+    socket.on('requestCardToFighter', ({ tableId, targetPlayer, targetZone, targetIndex, destinationZone }) => {
+        const validTargets = ['hand', 'support', 'discard', 'defeated', 'deck'];
+        if (!validTargets.includes(targetZone)) return socket.emit("errorMsg", "Invalid target."); 
+
+        const validDestinations = ['fighterA', 'fighterB'];
+        if (!validDestinations.includes(destinationZone)) return socket.emit("errorMsg", "Invalid destination.");
+
+        return moveCardToFighter(socket, tableId, targetPlayer, targetZone, targetIndex, destinationZone);
+    })
 
 });
 

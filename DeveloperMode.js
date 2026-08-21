@@ -236,6 +236,8 @@ class DeveloperMode extends Phaser.Scene {
                         <option value="defeated">Defeated Pile</option>
                         <option value="deck">Deck</option>
                         <option value="extraDeck">Extra Deck</option>
+                        <option value="fighterA">Fighter A</option>
+                        <option value="fighterB">Fighter B</option>
                     </select>
                     <button id="actionUniversalMoveBtn" style="background:#3b82f6; color:#fff; font-weight:bold; font-size:11px; padding:6px 12px; border:none; border-radius:6px; cursor:pointer;">EXECUTE</button>
                 </div>
@@ -894,6 +896,19 @@ class DeveloperMode extends Phaser.Scene {
         const targetIndex = document.getElementById("moveSrcIdx").value;
         const destinationZone = document.getElementById("moveDestZone").value;
         this.logToConsole(`>> Emitting requestCardMove: Shifting ${targetZone} (${targetIndex}) straight into ${destinationZone} for ${targetPlayer}.`);
+
+        const fighterZones = ['fighterA', 'fighterB'];
+        if (fighterZones.includes(destinationZone)) {
+            this.socket.emit("requestCardToFighter", {
+                tableId: parseInt(tableId, 10),
+                targetPlayer: targetPlayer,
+                targetZone: targetZone,
+                targetIndex: parseInt(targetIndex, 10),
+                destinationZone: destinationZone
+            });
+            return;
+        }
+
         this.socket.emit("requestCardMove", {
             tableId: parseInt(tableId, 10),
             targetPlayer: targetPlayer,
