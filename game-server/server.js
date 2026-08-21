@@ -839,6 +839,16 @@ io.on("connection", socket => {
         return moveCardToFighter(socket, tableId, targetPlayer, targetZone, targetIndex, destinationZone);
     })
 
+    socket.on('requestFighterToZone', ({ tableId, targetPlayer, targetZone, destinationZone }) => {
+        const validTargets = ['fighterA', 'fighterB'];
+        if (!validTargets.includes(targetZone)) return socket.emit("errorMsg", "Invalid target."); 
+
+        const validDestinations = ['hand', 'support', 'discard', 'defeated', 'deck'];
+        if (!validDestinations.includes(destinationZone)) return socket.emit("errorMsg", "Invalid destination.");
+
+        return moveFighterToZone(socket, tableId, targetPlayer, targetZone, destinationZone);
+    })
+
 });
 
 console.log(`TCG Server on ${process.env.RAILWAY_PUBLIC_DOMAIN}`);

@@ -238,6 +238,15 @@ class GameScene extends Phaser.Scene {
 
                 // Emit the unified move command to the server
                 const fighterZones = ['fighterA', 'fighterB']
+                if (fighterZones.includes(targetInfo.zoneName)) {
+                    this.socket.emit('requestFighterToZone', {
+                        tableId: this.tableId,
+                        targetPlayer: targetInfo.ownerId,
+                        targetZone: targetInfo.zoneName,
+                        destinationZone: destinationZone
+                    });
+                }
+
                 let callback = 'requestCardMove';
                 if (fighterZones.includes(destinationZone)) {
                     callback = 'requestCardToFighter';
@@ -2629,26 +2638,14 @@ class GameScene extends Phaser.Scene {
                             break;
 
                         case 'discard':
-                            // Structural check: Only the top card on the stack can be clicked/inspected
-                            if (i !== cardList.length - 1) continue;
-                            targetX = c.discard.x;
-                            targetY = c.discard.y;
-                            break;
-
                         case 'deck':
-                            // Structural check: Only the top card on the stack can be clicked/inspected
-                            if (i !== cardList.length - 1) continue;
-                            targetX = c.deck.x;
-                            targetY = c.deck.y;
-                            break;
-                        
                         case 'fighterA':
                         case 'fighterB':
+                            // Structural check: Only the top card on the stack can be clicked/inspected
                             if (i !== cardList.length - 1) continue;
-                            targetX = c.deck.x;
-                            targetY = c.deck.y;
+                            targetX = c[zone].x;
+                            targetY = c[zone].y;
                             break;
-
                     }
 
                     // Execute the singular consolidated boundary bounds collision check
