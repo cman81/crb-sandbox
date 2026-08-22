@@ -695,23 +695,57 @@ class DeveloperMode extends Phaser.Scene {
         if (!rawText.trim()) return this.logToConsole("[CLIENT ERROR]: Deck text field is completely empty!");
         
         const lines = rawText.split("\n");
+        
+        // Separate allocation targets matching your server model schema
         const processedDeck = [];
+        const processedExtraDeck = [];
+        
+        // Parser State Machine tracker: defaults to writing into main deck
+        let currentTargetZone = "main"; 
+
         const regex = /^\s*(\d+)\s+(.*?)\s*\[([A-Za-z0-9-]+)\]/;
 
-        lines.forEach(line => {
-            const match = line.match(regex);
+        lines.forEach((line, index) => {
+            const cleanLine = line.trim();
+            if (!cleanLine) return; // Ignore blank spaces
+
+            // 1. STATE MACHINE ZONE TRANSITION CHECKERS
+            const lowerLine = cleanLine.toLowerCase();
+            if (lowerLine.includes("decklist")) {
+                currentTargetZone = "main";
+                this.logToConsole(`📝 [PARSER STATE]: Toggled parsing target array focus to MAIN DECK.`);
+                return;
+            }
+            if (lowerLine.includes("extra")) {
+                currentTargetZone = "extra";
+                this.logToConsole(`🎴 [PARSER STATE]: Toggled parsing target array focus to EXTRA DECK.`);
+                return;
+            }
+
+            // 2. CARD REGEX EXTRACTOR MATCH PASS
+            const match = cleanLine.match(regex);
             if (match) {
                 const count = parseInt(match[1], 10);
                 const cardTitle = match[2].trim();
                 const cardCode = match[3].trim();
-                for (let i = 0; i < count; i++) {
-                    processedDeck.push({ id: cardCode, title: cardTitle });
+                
+                if (!isNaN(count) && count > 0) {
+                    const targetPayload = { id: cardCode, title: cardTitle };
+                    
+                    // Direct data routing strictly matching our state tracking destination flags
+                    for (let i = 0; i < count; i++) {
+                        if (currentTargetZone === "main") {
+                            processedDeck.push(targetPayload);
+                        } else if (currentTargetZone === "extra") {
+                            processedExtraDeck.push(targetPayload);
+                        }
+                    }
                 }
             }
         });
 
-        this.logToConsole(`>> Emitting loadDeck: Table ${tableId} (${targetPlayer}) with ${processedDeck.length} flattened entries.`);
-        this.socket.emit("loadDeck", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, deckList: processedDeck });
+        this.logToConsole(`>> Emitting loadDeck: Table ${tableId} (${targetPlayer}) | Main: ${processedDeck.length} cards, Extra: ${processedExtraDeck.length} cards.`);
+        this.socket.emit("loadDeck", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, deckList: processedDeck, extraDeckList: processedExtraDeck });
     }
 
     handleDeckShuffle() {

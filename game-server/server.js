@@ -313,11 +313,11 @@ io.on("connection", socket => {
 
     socket.on("disconnect", () => leaveAll(socket.id));
 
-    socket.on("loadDeck", ({tableId: tableId, targetPlayer: targetPlayer, deckList: deckList}) => {
+    socket.on("loadDeck", ({tableId: tableId, targetPlayer: targetPlayer, deckList: deckList, extraDeckList: extraDeckList}) => {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
         if (targetPlayer !== "playerA" && targetPlayer !== "playerB") return socket.emit("errorMsg", "Invalid target player.");
-        
+
         table.gameState[targetPlayer].deck = deckList.map(cardObj => ({
             id: cardObj.id,
             title: cardObj.title,
@@ -326,8 +326,17 @@ io.on("connection", socket => {
             isTapped: false,
             uuid: uuidv4() // Assign a permanent runtime unique string tracker
         }));
-        
-        socket.emit("serverNotice", `Deck loaded with ${deckList.length} uniquely titled cards.`);
+
+        table.gameState[targetPlayer].extraDeck = extraDeckList.map(cardObj => ({
+            id: cardObj.id,
+            title: cardObj.title,
+            name: `Extra Card ${cardObj.id}`,
+            isFaceDown: true,
+            isTapped: false,
+            uuid: uuidv4()
+        }));
+
+        socket.emit("serverNotice", `Deck loaded with ${deckList.length} uniquely titled cards. Extra Deck: ${extraDeckList.length} entries.`);
     });
 
     socket.on('getGameState', ({ tableId, role }) => {
