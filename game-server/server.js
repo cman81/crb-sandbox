@@ -132,7 +132,7 @@ function moveCardToFighterOrStage(socket, tableId, targetPlayer, fromZone, fromI
         const [cardToMove] = targetArray.splice(idx, 1);
 
         cardToMove.isTapped = false;
-        cardToMove.isFaceDown = false;
+        cardToMove.isFaceDown = (toZone == 'fighterA');
        
         if (toZone == 'stage') {
             destinationBattleZone.stage = cardToMove;
