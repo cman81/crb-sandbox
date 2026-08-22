@@ -1791,6 +1791,15 @@ class GameScene extends Phaser.Scene {
             });
         }
 
+         if (bZone.stage && bZone.stage.isTapped) {
+            this.socket.emit('toggleCardTap', {
+                tableId: this.tableId,
+                targetPlayer: this.role,
+                zone: 'stage',
+                supportIndex: null
+            });
+        }
+
         // 3. Audit Support Lane Cards Matrix Lists
         support.forEach((card, index) => {
             if (card && card.isTapped) {
@@ -2587,7 +2596,7 @@ class GameScene extends Phaser.Scene {
 
         const halfW = this.cardWidth / 2;
         const halfH = this.cardHeight / 2;
-        const zones = ['defeated', 'support', 'hand', 'discard', 'deck', 'fighterA', 'fighterB'];
+        const zones = ['defeated', 'support', 'hand', 'discard', 'deck', 'fighterA', 'fighterB', 'stage'];
 
         for (const p of perspectiveMap) {
             const c = this.fieldCoordinates[p.coordKey];
@@ -2601,6 +2610,9 @@ class GameScene extends Phaser.Scene {
                     case 'fighterA':
                     case 'fighterB':
                         cardList = [playerData.battleZone[zone].card] || [];
+                        break;
+                    case 'stage':
+                        cardList = [playerData.battleZone.stage] || [];
                         break;
                     default:
                         cardList = playerData[zone] || [];
@@ -2642,6 +2654,7 @@ class GameScene extends Phaser.Scene {
                         case 'deck':
                         case 'fighterA':
                         case 'fighterB':
+                        case 'stage':
                             // Structural check: Only the top card on the stack can be clicked/inspected
                             if (i !== cardList.length - 1) continue;
                             targetX = c[zone].x;
