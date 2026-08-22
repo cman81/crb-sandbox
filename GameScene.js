@@ -159,21 +159,14 @@ class GameScene extends Phaser.Scene {
         this.input.keyboard.on("keydown-ENTER", () => {
             const mouseX = this.input.activePointer.x;
             const mouseY = this.input.activePointer.y;
+
+            this.scanCardHitboxesForPreview(mouseX, mouseY);
             
-            // 1. Prioritize any card currently active in the right inspection pane
             if (this.selectedPreviewCard) {
                 this.displayLargeCardModal(this.selectedPreviewCard);
                 return;
             }
 
-            // 2. Fail-safe: Raycast the cursor coordinates directly to find what the user is targeting
-            const targetedCard = this.raycastDefeatedCardAtPosition(mouseX, mouseY);
-            if (targetedCard) {
-                this.displayLargeCardModal(targetedCard);
-            } else if (this.hoveredCardData) {
-                // Fallback to basic hover tracking if outside complex zones
-                this.displayLargeCardModal(this.hoveredCardData);
-            }
         });
 
         // Bind the 'T' key to trigger a real-time card tap/untap state change
@@ -1233,13 +1226,15 @@ class GameScene extends Phaser.Scene {
     const shortcuts = [
         { key: "[SPACE]", desc: "Preview Card" },
         { key: "[ENTER]", desc: "Show Large Card" },
-        { key: "[T]    ", desc: "Tap Card (Arena) / Top-Deck a Card (Hand)" },
-        { key: "[D]    ", desc: "Move to Discard Pile" },
-        { key: "[S]    ", desc: "Play into Support Lane" },
-        { key: "[H]    ", desc: "Return a Card to Hand" },
-        { key: "[F]    ", desc: "Place Fighter A Face-Down" },
-        { key: "[A]    ", desc: "Move to Fighter A" },
-        { key: "[B]    ", desc: "Move to Fighter B" }
+        { key: "[T]    ", desc: "Tap Card" },
+        { key: "[D]    ", desc: "Move to (D)iscard Pile" },
+        { key: "[S]    ", desc: "Move to (S)upport Lane" },
+        { key: "[H]    ", desc: "Move to (H)and" },
+        { key: "[F]    ", desc: "Move to De(f)eated Pile" },
+        { key: "[A]    ", desc: "Move to Fighter (A)" },
+        { key: "[B]    ", desc: "Move to Fighter (B)" },
+        { key: "[G]    ", desc: "Move to Sta(g)e" },
+        { key: "[E]    ", desc: "Return to D(e)ck" },
     ];
 
     shortcuts.forEach((item, index) => {
