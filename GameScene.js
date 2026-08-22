@@ -257,8 +257,9 @@ class GameScene extends Phaser.Scene {
                 console.log(`📡 [DYNAMIC SHORTCUT ROUTER]: Moving card index ${targetInfo.index} from ${targetInfo.zoneName} to ${destinationZone}.`);
 
                 // Emit the unified move command to the server
-                const fighterOrStageZones = ['fighterA', 'fighterB', 'stage'];
+                const fighterOrStageZones = ['fighterA', 'fighterB', 'stage', 'extraA', 'extraB'];
                 if (fighterOrStageZones.includes(targetInfo.zoneName)) {
+                    // server will handle when an extraDeck card tries to move to fighterA/fighterB...
                     this.socket.emit('requestFighterOrStageToZone', {
                         tableId: this.tableId,
                         targetPlayer: targetInfo.ownerId,
@@ -420,6 +421,12 @@ class GameScene extends Phaser.Scene {
             },
             previewAnchor: { x: 1728, y: 540 }
         };
+
+        // extraA and extraB cards get placed directly over fighterA and fighterB respectively
+        this.fieldCoordinates.local.extraA = this.fieldCoordinates.local.fighterA;
+        this.fieldCoordinates.local.extraB = this.fieldCoordinates.local.fighterB;
+        this.fieldCoordinates.remote.extraA = this.fieldCoordinates.remote.fighterA;
+        this.fieldCoordinates.remote.extraB = this.fieldCoordinates.remote.fighterB;
     }
 
     /**
@@ -803,7 +810,7 @@ class GameScene extends Phaser.Scene {
         }
         
         if (zoneKey === "fighterA" || zoneKey === "fighterB") {
-            this.renderFighterZoneContents(point, battleZone[zoneKey]);
+            this.renderFighterZoneContents(point, battleZone, zoneKey);
             
             if (zoneKey === "fighterA" && battleZone.fighterA && battleZone.fighterA.card) {
                 const targetCard = battleZone.fighterA.card;
@@ -1020,11 +1027,15 @@ class GameScene extends Phaser.Scene {
     /**
      * Handles rendering for active fighter cards and nested face-down pile overlays.
      */
-    renderFighterZoneContents(point, fighterSlot) {
+    renderFighterZoneContents(point, battleZone, zoneKey) {
+        const fighterSlot = battleZone[zoneKey];
         if (!fighterSlot) return;
 
         const activeCard = fighterSlot.card;
-        if (activeCard && Object.keys(activeCard).length > 0) {
+        const extraCard = (zoneKey == 'fighterA') ? battleZone.extraA : battleZone.extraB;
+        if (extraCard) {
+            this.renderCardSprite(point.x, point.y, extraCard, extraCard.isTapped);
+        } else if (activeCard && Object.keys(activeCard).length > 0) {
             this.renderCardSprite(point.x, point.y, activeCard, activeCard.isTapped);
         }
         if (fighterSlot.faceDownStack) {
@@ -1230,87 +1241,85 @@ class GameScene extends Phaser.Scene {
 
     // --- SUB-ROUTINE 7: CARD INSPECTOR WRAPPER ---
     drawPreviewPanel(){
-    const preview = this.fieldCoordinates.previewAnchor;
-    const bigWidth = 260;
-    const bigHeight = 364;
-    const boundaryLeft = 1536;
-    const visualElementsToDestroy = [];
+        const preview = this.fieldCoordinates.previewAnchor;
+        const bigWidth = 260;
+        const bigHeight = 364;
+        const boundaryLeft = 1536;
+        const visualElementsToDestroy = [];
 
-    // Clear old elements past the canvas split boundary line
-    this.children.list.forEach(child => {
-        if ((child.type === "Text" || child.type === "Image" || child.type === "Container") && child.x > boundaryLeft) {
-            visualElementsToDestroy.push(child);
+        // Clear old elements past the canvas split boundary line
+        this.children.list.forEach(child => {
+            if ((child.type === "Text" || child.type === "Image" || child.type === "Container") && child.x > boundaryLeft) {
+                visualElementsToDestroy.push(child);
+            }
+        });
+        visualElementsToDestroy.forEach(child => child.destroy());
+
+        // --- NEW: UPPER RIGHT KEYBOARD QUICK REFERENCE PANEL ---
+        const panelX = 1556;
+        const panelY = 55;
+        
+        // Panel Styling Guidelines
+        const labelStyle = { fontSize: "11px", fontFamily: "monospace", fill: "#94a3b8", fontWeight: "bold" };
+        const keyStyle = { fontSize: "11px", fontFamily: "monospace", fill: "#38bdf8", fontWeight: "bold" };
+        const descStyle = { fontSize: "11px", fontFamily: "monospace", fill: "#e2e8f0" };
+
+        this.add.text(panelX, panelY, "⌨️ KEYBOARD SHORTCUTS (HOVER + PRESS)", labelStyle);
+        
+        const shortcuts = [
+            { key: "[SPACE]", desc: "Preview Card" },
+            { key: "[ENTER]", desc: "Show Large Card" },
+            { key: "[T]    ", desc: "Tap Card" },
+            { key: "[D]    ", desc: "Move to (D)iscard Pile" },
+            { key: "[S]    ", desc: "Move to (S)upport Lane" },
+            { key: "[H]    ", desc: "Move to (H)and" },
+            { key: "[F]    ", desc: "Move to De(f)eated Pile" },
+            { key: "[A]    ", desc: "Move to Fighter (A)" },
+            { key: "[B]    ", desc: "Move to Fighter (B)" },
+            { key: "[G]    ", desc: "Move to Sta(g)e" },
+            { key: "[E]    ", desc: "Return to D(e)ck" },
+        ];
+
+        shortcuts.forEach((item, index) => {
+            const rowY = panelY + 22 + (index * 18);
+            // Print the active hotkey character tag
+            this.add.text(panelX, rowY, item.key, keyStyle);
+            // Print the localized execution action string description offset horizontally
+            this.add.text(panelX + 60, rowY, `- ${item.desc}`, descStyle);
+        });
+        // --------------------------------------------------------
+
+        // Keep your core Big Card Inspection Preview drawing logic exactly the same below...
+        this.fieldGraphics.fillStyle(132631, 1);
+        this.fieldGraphics.fillRect(preview.x - bigWidth / 2, preview.y - bigHeight / 2, bigWidth, bigHeight);
+        this.fieldGraphics.lineStyle(3, this.selectedPreviewCard ? 3718648 : 3359061, 1);
+        this.fieldGraphics.strokeRect(preview.x - bigWidth / 2, preview.y - bigHeight / 2, bigWidth, bigHeight);
+
+        if (this.selectedPreviewCard) {
+            const card = this.selectedPreviewCard;
+            const savedW = this.cardWidth;
+            const savedH = this.cardHeight;
+            this.cardWidth = bigWidth;
+            this.cardHeight = bigHeight;
+            this.renderCardSprite(preview.x, preview.y, card, false);
+            this.cardWidth = savedW;
+            this.cardHeight = savedH;
+            const isUnknown = card.title === "Card Back" || card.name === "Card Back";
+            this.add.text(preview.x, preview.y + bigHeight / 2 + 20, `CODE: ${isUnknown ? "UNKNOWN HIDDEN" : card.id || "N/A"}`, {
+                fontSize: "13px",
+                fontFamily: "monospace",
+                fill: "#38bdf8",
+                fontWeight: "bold"
+            }).setOrigin(.5);
+        } else {
+            this.add.text(preview.x, preview.y, "[ HOVER CURSOR OVER A CARD\n& PRESS SPACEBAR TO INSPECT ]", {
+                fontSize: "12px",
+                fontFamily: "monospace",
+                fill: "#64748b",
+                align: "center"
+            }).setOrigin(.5);
         }
-    });
-    visualElementsToDestroy.forEach(child => child.destroy());
-
-    // --- NEW: UPPER RIGHT KEYBOARD QUICK REFERENCE PANEL ---
-    const panelX = 1556;
-    const panelY = 55;
-    
-    // Panel Styling Guidelines
-    const labelStyle = { fontSize: "11px", fontFamily: "monospace", fill: "#94a3b8", fontWeight: "bold" };
-    const keyStyle = { fontSize: "11px", fontFamily: "monospace", fill: "#38bdf8", fontWeight: "bold" };
-    const descStyle = { fontSize: "11px", fontFamily: "monospace", fill: "#e2e8f0" };
-
-    this.add.text(panelX, panelY, "⌨️ KEYBOARD SHORTCUTS (HOVER + PRESS)", labelStyle);
-    
-    const shortcuts = [
-        { key: "[SPACE]", desc: "Preview Card" },
-        { key: "[ENTER]", desc: "Show Large Card" },
-        { key: "[T]    ", desc: "Tap Card" },
-        { key: "[D]    ", desc: "Move to (D)iscard Pile" },
-        { key: "[S]    ", desc: "Move to (S)upport Lane" },
-        { key: "[H]    ", desc: "Move to (H)and" },
-        { key: "[F]    ", desc: "Move to De(f)eated Pile" },
-        { key: "[A]    ", desc: "Move to Fighter (A)" },
-        { key: "[B]    ", desc: "Move to Fighter (B)" },
-        { key: "[G]    ", desc: "Move to Sta(g)e" },
-        { key: "[E]    ", desc: "Return to D(e)ck" },
-    ];
-
-    shortcuts.forEach((item, index) => {
-        const rowY = panelY + 22 + (index * 18);
-        // Print the active hotkey character tag
-        this.add.text(panelX, rowY, item.key, keyStyle);
-        // Print the localized execution action string description offset horizontally
-        this.add.text(panelX + 60, rowY, `- ${item.desc}`, descStyle);
-    });
-    // --------------------------------------------------------
-
-    // Keep your core Big Card Inspection Preview drawing logic exactly the same below...
-    this.fieldGraphics.fillStyle(132631, 1);
-    this.fieldGraphics.fillRect(preview.x - bigWidth / 2, preview.y - bigHeight / 2, bigWidth, bigHeight);
-    this.fieldGraphics.lineStyle(3, this.selectedPreviewCard ? 3718648 : 3359061, 1);
-    this.fieldGraphics.strokeRect(preview.x - bigWidth / 2, preview.y - bigHeight / 2, bigWidth, bigHeight);
-
-    if (this.selectedPreviewCard) {
-        const card = this.selectedPreviewCard;
-        const savedW = this.cardWidth;
-        const savedH = this.cardHeight;
-        this.cardWidth = bigWidth;
-        this.cardHeight = bigHeight;
-        this.renderCardSprite(preview.x, preview.y, card, false);
-        this.cardWidth = savedW;
-        this.cardHeight = savedH;
-        const isUnknown = card.title === "Card Back" || card.name === "Card Back";
-        this.add.text(preview.x, preview.y + bigHeight / 2 + 20, `CODE: ${isUnknown ? "UNKNOWN HIDDEN" : card.id || "N/A"}`, {
-            fontSize: "13px",
-            fontFamily: "monospace",
-            fill: "#38bdf8",
-            fontWeight: "bold"
-        }).setOrigin(.5);
-    } else {
-        this.add.text(preview.x, preview.y, "[ HOVER CURSOR OVER A CARD\n& PRESS SPACEBAR TO INSPECT ]", {
-            fontSize: "12px",
-            fontFamily: "monospace",
-            fill: "#64748b",
-            align: "center"
-        }).setOrigin(.5);
     }
-}
-
-
 
     // --- HELPER METHOD: MOUSE VECTOR SCANNER ---
     scanCardHitboxesForPreview(mouseX, mouseY) {
@@ -1488,13 +1497,15 @@ class GameScene extends Phaser.Scene {
                 }
             }
 
-            // 5. SCAN REMAINING STATIC CARD IMAGES (FIGHTERS, STAGE)
+            // 5. SCAN REMAINING STATIC CARD IMAGES (FIGHTERS, STAGE, EXTRA)
             const bZone = state[p.stateKey]?.battleZone || {};
             const staticSlots = [
+                { coord: c.extraA, card: bZone.extraA },
+                { coord: c.extraB, card: bZone.extraB },
                 { coord: c.fighterA, card: bZone.fighterA?.card },
                 { coord: c.fighterB, card: bZone.fighterB?.card },
-                { coord: c.stage, card: bZone.stage }
-            ];
+                { coord: c.stage, card: bZone.stage },
+            ]; // important: scan 'extra' slots before fighters. If they exist, 'extras' are placed directly on top! 
 
             for (const slot of staticSlots) {
                 if (slot.card && mouseX >= slot.coord.x - halfW && mouseX <= slot.coord.x + halfW &&
@@ -2668,7 +2679,8 @@ class GameScene extends Phaser.Scene {
 
         const halfW = this.cardWidth / 2;
         const halfH = this.cardHeight / 2;
-        const zones = ['defeated', 'support', 'hand', 'discard', 'deck', 'fighterA', 'fighterB', 'stage'];
+        // 'extra' zones need to be scanned before fighters...
+        const zones = ['defeated', 'support', 'hand', 'discard', 'deck', 'extraA', 'extraB', 'fighterA', 'fighterB', 'stage'];
 
         for (const p of perspectiveMap) {
             const c = this.fieldCoordinates[p.coordKey];
@@ -2681,10 +2693,12 @@ class GameScene extends Phaser.Scene {
                 switch (zone) {
                     case 'fighterA':
                     case 'fighterB':
-                        cardList = [playerData.battleZone[zone].card] || [];
+                        cardList = (playerData.battleZone[zone].card) ? [playerData.battleZone[zone].card] : [];
                         break;
                     case 'stage':
-                        cardList = [playerData.battleZone.stage] || [];
+                    case 'extraA':
+                    case 'extraB':
+                        cardList = (playerData.battleZone[zone]) ? [playerData.battleZone[zone]] : [];
                         break;
                     default:
                         cardList = playerData[zone] || [];
@@ -2727,6 +2741,8 @@ class GameScene extends Phaser.Scene {
                         case 'fighterA':
                         case 'fighterB':
                         case 'stage':
+                        case 'extraA':
+                        case 'extraB':
                             // Structural check: Only the top card on the stack can be clicked/inspected
                             if (i !== cardList.length - 1) continue;
                             targetX = c[zone].x;

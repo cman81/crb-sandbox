@@ -29,6 +29,8 @@ const tables = Array.from({ length: 8 }, (_, i) => ({
             defeatedPoints: 0, battleZone: {
                 fighterA: { card: null, faceDownStack: [] },
                 fighterB: { card: null, faceDownStack: [] },
+                extraA: null,
+                extraB: null,
                 stage: null
             }
         },
@@ -37,6 +39,8 @@ const tables = Array.from({ length: 8 }, (_, i) => ({
             defeatedPoints: 0, battleZone: {
                 fighterA: { card: null, faceDownStack: [] },
                 fighterB: { card: null, faceDownStack: [] },
+                extraA: null,
+                extraB: null,
                 stage: null
             }
         }
@@ -68,7 +72,9 @@ function sendSanitizedState(socket, table, role){
             fighterB: {
                 card: maskIfHidden(battleZone.fighterB.card),
                 faceDownStack: isSpec ? battleZone.fighterB.faceDownStack : battleZone.fighterB.faceDownStack.map(maskCard)
-            }
+            },
+            extraA: battleZone.extraA,
+            extraB: battleZone.extraB,
         };
     };
 
@@ -111,6 +117,15 @@ function moveCardToFighterOrStage(socket, tableId, targetPlayer, fromZone, fromI
             return socket.emit("errorMsg", "Zones are the same, nothing to move.");
         }
 
+        if (fromZone == 'extraDeck') {
+            if (toZone == 'fighterA') {
+                toZone = 'extraA';
+            }
+            if (toZone == 'fighterB') {
+                toZone = 'extraB';
+            }
+        }
+
         const targetArray = table.gameState[targetPlayer]?.[fromZone];
         const destinationBattleZone = table.gameState[targetPlayer]?.battleZone;
         
@@ -120,8 +135,9 @@ function moveCardToFighterOrStage(socket, tableId, targetPlayer, fromZone, fromI
         const idx = (fromZone == 'deck') ? (targetArray.length - 1): parseInt(fromIndex);
         if (isNaN(idx) || idx < 0 || idx >= targetArray.length) return socket.emit("errorMsg", "Invalid index selection.");
 
-        const destinationCard = (toZone == 'stage')
-            ? destinationBattleZone.stage
+        const stageOrExtra = ['stage', 'extraA', 'extraB'];
+        const destinationCard = (stageOrExtra.includes(toZone))
+            ? destinationBattleZone[toZone]
             : destinationBattleZone[toZone].card;
 
         if (destinationCard !== null) {
@@ -134,8 +150,8 @@ function moveCardToFighterOrStage(socket, tableId, targetPlayer, fromZone, fromI
         cardToMove.isTapped = false;
         cardToMove.isFaceDown = (toZone == 'fighterA');
        
-        if (toZone == 'stage') {
-            destinationBattleZone.stage = cardToMove;
+        if (stageOrExtra.includes(toZone)) {
+            destinationBattleZone[toZone] = cardToMove;
         } else {
             destinationBattleZone[toZone].card = cardToMove;
         }
@@ -222,7 +238,9 @@ function moveFighterOrStageToZone(socket, tableId, targetPlayer, slot, toZone, i
 
     const pState = table.gameState[targetPlayer];
     let targetCard = pState?.battleZone?.[slot]?.card;
-    if (slot == 'stage') {
+
+    const stageOrExtra = ['stage', 'extraA', 'extraB'];
+    if (stageOrExtra.includes(slot)) {
         targetCard = pState?.battleZone?.[slot];
     }
     if (!targetCard) return socket.emit("errorMsg", "Card not found in battle slot " + slot);
@@ -231,7 +249,7 @@ function moveFighterOrStageToZone(socket, tableId, targetPlayer, slot, toZone, i
     if (!destinationArray) return socket.emit("errorMsg", `Destination zone '${toZone}' not found.`);
 
     // 1. Mutate state model: empty the fighter/stage slot database node cleanly
-    if (slot == 'stage') {
+    if (stageOrExtra.includes(slot)) {
         pState.battleZone[slot] = null;
     } else {
         pState.battleZone[slot].card = null;
@@ -839,20 +857,20 @@ io.on("connection", socket => {
     });
 
     socket.on('requestCardToFighterOrStage', ({ tableId, targetPlayer, targetZone, targetIndex, destinationZone }) => {
-        const validTargets = ['hand', 'support', 'discard', 'defeated', 'deck'];
+        const validTargets = ['hand', 'support', 'discard', 'defeated', 'deck', 'extraDeck'];
         if (!validTargets.includes(targetZone)) return socket.emit("errorMsg", "Invalid target."); 
 
-        const validDestinations = ['fighterA', 'fighterB', 'stage'];
+        const validDestinations = ['fighterA', 'fighterB', 'stage', 'extraA', 'extraB'];
         if (!validDestinations.includes(destinationZone)) return socket.emit("errorMsg", "Invalid destination.");
 
         return moveCardToFighterOrStage(socket, tableId, targetPlayer, targetZone, targetIndex, destinationZone);
     })
 
     socket.on('requestFighterOrStageToZone', ({ tableId, targetPlayer, targetZone, destinationZone, isPlaceOnTop }) => {
-        const validTargets = ['fighterA', 'fighterB', 'stage'];
+        const validTargets = ['fighterA', 'fighterB', 'stage', 'extraA', 'extraB'];
         if (!validTargets.includes(targetZone)) return socket.emit("errorMsg", "Invalid target."); 
 
-        const validDestinations = ['hand', 'support', 'discard', 'defeated', 'deck'];
+        const validDestinations = ['hand', 'support', 'discard', 'defeated', 'deck', 'extraDeck'];
         if (!validDestinations.includes(destinationZone)) return socket.emit("errorMsg", "Invalid destination.");
 
         return moveFighterOrStageToZone(socket, tableId, targetPlayer, targetZone, destinationZone, isPlaceOnTop);
