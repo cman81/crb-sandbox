@@ -562,7 +562,7 @@ class GameScene extends Phaser.Scene {
         else if (card.id.startsWith('ST7-')) bundleKey = 'ST07_cards';
         else if (card.id.startsWith('ST8-')) bundleKey = 'ST08_cards';
         else if (card.id.startsWith('ST9-')) bundleKey = 'ST09_cards';
-        else if (card.id.startsWith('ST10-')) bundleKey = 'ST010_cards';
+        else if (card.id.startsWith('ST10-')) bundleKey = 'ST10_cards';
         return bundleKey;
     }
 
