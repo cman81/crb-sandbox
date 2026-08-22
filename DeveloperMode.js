@@ -243,7 +243,10 @@ class DeveloperMode extends Phaser.Scene {
                         <option value="fighterB">Fighter B</option>
                         <option value="stage">Stage</option>
                     </select>
-                    <button id="actionUniversalMoveBtn" style="background:#3b82f6; color:#fff; font-weight:bold; font-size:11px; padding:6px 12px; border:none; border-radius:6px; cursor:pointer;">EXECUTE</button>
+                    <div style="display: flex; gap: 4px;">
+                        <button id="universalMoveTopBtn" style="background:#10b981; color:#fff; font-weight:bold; font-size:10px; padding:6px 8px; border:none; border-radius:6px; cursor:pointer;">TO TOP</button>
+                        <button id="universalMoveBotBtn" style="background:#3b82f6; color:#fff; font-weight:bold; font-size:10px; padding:6px 8px; border:none; border-radius:6px; cursor:pointer;">TO BOT</button>
+                    </div>
                 </div>
             </div>
         `;
@@ -426,7 +429,8 @@ class DeveloperMode extends Phaser.Scene {
             if (event.target.id === "actionToStageBtn") this.handlePlayToStageEmit();
             if (event.target.id === "actionSupportToHandBtn") this.handleReturnSupportToHand();
             if (event.target.id === "actionDiscardSupportBtn") this.handleDiscardSupport();
-            if (event.target.id === "actionUniversalMoveBtn") this.handleUniversalMoveEmit();
+            if (event.target.id === "universalMoveTopBtn") this.handleUniversalMoveEmit(true);
+            if (event.target.id === "universalMoveBotBtn") this.handleUniversalMoveEmit(false);
 
             // Toolbar: Perspective state inspector manual override poll
             if (event.target.id === "inspectGetStateBtn") this.handleGetGameState();
@@ -893,24 +897,31 @@ class DeveloperMode extends Phaser.Scene {
         this.socket.emit("revokeEndGame", { tableId: tableId, targetPlayer: targetPlayer });
     }
 
-    handleUniversalMoveEmit() {
+    handleUniversalMoveEmit(isPlaceOnTop = true) {
         const tableId = document.getElementById("actionTableId").value;
         const targetPlayer = document.getElementById("actionTargetPlayer").value;
         const targetZone = document.getElementById("moveSrcZone").value;
         const targetIndex = document.getElementById("moveSrcIdx").value;
         const destinationZone = document.getElementById("moveDestZone").value;
-        this.logToConsole(`>> Emitting requestCardMove: Shifting ${targetZone} (${targetIndex}) straight into ${destinationZone} for ${targetPlayer}.`);
+        
+        const alignmentLabel = isPlaceOnTop ? "TOP" : "BOTTOM";
+        this.logToConsole(`>> Emitting universal request: Shifting ${targetZone} (${targetIndex}) into ${destinationZone} [Stack Target: ${alignmentLabel}] for ${targetPlayer}.`);
 
         const fighterOrStage = ['fighterA', 'fighterB', 'stage'];
+        
+        // Route 1: Source card is leaving an arena battlefield slot
         if (fighterOrStage.includes(targetZone)) {
             this.socket.emit("requestFighterOrStageToZone", {
                 tableId: parseInt(tableId, 10),
                 targetPlayer: targetPlayer,
                 targetZone: targetZone,
-                destinationZone: destinationZone
+                destinationZone: destinationZone,
+                isPlaceOnTop: isPlaceOnTop
             });
             return;
         }
+        
+        // Route 2: Destination card is landing in an arena slot (Stays un-impacted by stack alignment)
         if (fighterOrStage.includes(destinationZone)) {
             this.socket.emit("requestCardToFighterOrStage", {
                 tableId: parseInt(tableId, 10),
@@ -922,12 +933,15 @@ class DeveloperMode extends Phaser.Scene {
             return;
         }
 
+        // Route 3: Standard flat zone-to-zone transport array mapping
+        // We pass the new isPlaceOnTop flag directly inside the data packet structure
         this.socket.emit("requestCardMove", {
             tableId: parseInt(tableId, 10),
             targetPlayer: targetPlayer,
             targetZone: targetZone,
             targetIndex: parseInt(targetIndex, 10),
-            destinationZone: destinationZone
+            destinationZone: destinationZone,
+            isPlaceOnTop: isPlaceOnTop 
         });
     }
 

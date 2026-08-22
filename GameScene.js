@@ -190,6 +190,32 @@ class GameScene extends Phaser.Scene {
             this.handleHandToDeckShortcut(mouseX, mouseY, "top"); // zone: hand
         });
 
+        this.input.keyboard.on("keydown-E", () => {
+            if (this.role === "spectator") return;
+            const mouseX = this.input.activePointer.x;
+            const mouseY = this.input.activePointer.y;
+            
+            // Scan exactly what card the player's cursor is hovering over
+            const targetInfo = this.findCardAtCoordinates(mouseX, mouseY);
+            
+            if (targetInfo) {
+                // Enforce basic team security checks
+                if (targetInfo.ownerId !== this.role) {
+                    console.log("⚠️ [ACTION BLOCKED]: You cannot move your opponent's cards.");
+                    return;
+                }
+
+                const validZones = ['hand', 'defeated', 'support', 'discard', 'fighterA', 'fighterB', 'stage'];
+                if (!validZones.includes(targetInfo.zoneName)) {
+                    return;
+                }
+
+                // Pass the full target info payload to the modal constructor
+                this.displayDeckPlacementModal(targetInfo);
+            }
+        });
+
+
         // Various keys for moving a card from one zone to another:
         // (H)and, (S)upport, (D)iscard, De(f)eated, D(e)ck
         this.input.keyboard.on("keydown", event => {
@@ -203,7 +229,6 @@ class GameScene extends Phaser.Scene {
                 s: "support",
                 d: "discard",
                 f: "defeated",
-                e: "deck",
                 a: "fighterA",
                 b: "fighterB",
                 g: "stage"
@@ -2679,5 +2704,91 @@ class GameScene extends Phaser.Scene {
         return null; // Mouse cursor is over empty table canvas space
     }
 
+    displayDeckPlacementModal(targetInfo) {
+        // Prevent stacking duplicate placement menus
+        if (document.getElementById("deckPlacementModalContainer")) return;
+
+        // Temporarily pause scene keyboard captures so keys don't trigger underlying loops
+        this.input.keyboard.enabled = false;
+
+        const cardTitle = targetInfo.card.title || "this card";
+        const sourceZoneName = targetInfo.zoneName.toUpperCase();
+
+        const modalHtml = `
+            <div id="deckPlacementModalContainer" style="
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                color: #f8fafc;
+                font-family: monospace;
+                font-size: 14px;
+                background: #0f172a;
+                padding: 30px;
+                border-radius: 12px;
+                width: 340px;
+                text-align: center;
+                border: 2px solid #38bdf8;
+                box-shadow: 0px 10px 30px rgba(0,0,0,0.85);
+                z-index: 10000;
+            ">
+                <h3 style="color: #38bdf8; margin-top: 0; font-size: 18px; margin-bottom: 10px;">DECK PLACEMENT</h3>
+                <p style="margin-bottom: 20px; color: #94a3b8; line-height: 1.4;">
+                    Where would you like to place <br>
+                    <b style="color:#e2e8f0;">${cardTitle}</b> <br>
+                    from your <span style="color: #f43f5e; fontWeight: bold;">${sourceZoneName}</span>?
+                </p>
+                <div style="display: flex; gap: 10px; justify-content: center;">
+                    <button id="placeDeckTopBtn" style="flex: 1; background: #10b981; color: #ffffff; font-weight: bold; padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-family: monospace;">🔝 TOP</button>
+                    <button id="placeDeckBottomBtn" style="flex: 1; background: #3b82f6; color: #ffffff; font-weight: bold; padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-family: monospace;">📥 BOTTOM</button>
+                </div>
+                <button id="cancelDeckPlacementBtn" style="margin-top: 15px; width: 100%; background: #334155; color: #94a3b8; padding: 8px; border: none; border-radius: 6px; cursor: pointer; font-family: monospace;">CANCEL</button>
+            </div>
+        `;
+
+        const placementDom = this.add.dom(960, 540).createFromHTML(modalHtml).setOrigin(.5);
+        placementDom.setDepth(6000);
+        placementDom.addListener("click");
+
+        placementDom.on("click", event => {
+            const id = event.target.id;
+            if (!id) return;
+
+            const cleanupModal = () => {
+                this.input.keyboard.enabled = true;
+                const rawNode = document.getElementById("deckPlacementModalContainer");
+                if (rawNode) rawNode.remove();
+                placementDom.destroy();
+            };
+
+            // Universal structure mapping payload
+            let payload = {
+                tableId: this.tableId,
+                targetPlayer: this.role,
+                targetZone: targetInfo.zoneName,
+                targetIndex: targetInfo.index,
+                destinationZone: 'deck'
+            };
+
+            if (id === "cancelDeckPlacementBtn") {
+                cleanupModal();
+                return;
+            }
+
+            payload.isPlaceOnTop = (id === "placeDeckTopBtn");
+            const topBotLabel = (id === "placeDeckTopBtn") ? 'TOP' : 'BOTTOM';
+            console.log(`📡 [UNIVERSAL DECK]: Moving index ${targetInfo.index} from ${targetInfo.zoneName} to ${topBotLabel} of deck.`);
+            
+            const fighterOrStage = ['fighterA', 'fighterB', 'stage'];
+            if (fighterOrStage.includes(payload.targetZone)) {
+                this.socket.emit('requestFighterOrStageToZone', payload);
+                cleanupModal();
+                return;
+            }
+            this.socket.emit("requestCardMove", payload);
+            cleanupModal();
+
+        });
+    }
 
 }
