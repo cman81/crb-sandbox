@@ -224,7 +224,8 @@ class GameScene extends Phaser.Scene {
                 f: "defeated",
                 a: "fighterA",
                 b: "fighterB",
-                g: "stage"
+                g: "stage",
+                x: "extraDeck"
             };
 
             const destinationZone = keyMap[key];
@@ -277,6 +278,13 @@ class GameScene extends Phaser.Scene {
                     targetIndex: targetInfo.index,
                     destinationZone: destinationZone
                 });
+
+                if (targetInfo.zoneName === "extraDeck") {
+                    this.toggleStackDrawer(null);
+                }
+                if (key == "x") {
+                    this.toggleStackDrawer(this.role, 'extraDeck');
+                }
             }
         });
 
@@ -757,6 +765,30 @@ class GameScene extends Phaser.Scene {
             // Triggers the dedicated "Card Back" shape programmatically if texture bundles are absent
             this.renderCardSprite(c.deck.x, c.deck.y, { name: "Card Back", isFaceDown: true }, false);
         }
+
+        // Calculate vertical layout step position relative to the discard pile boundary
+        const extraDeckBtnY = isLocalSeat 
+            ? c.discard.y + this.cardHeight / 2 + 22   // Below local discard
+            : c.discard.y - this.cardHeight / 2 - 22;  // Above remote discard
+
+        const extraDeckBtnStyle = {
+            fontSize: "12px",
+            fontFamily: "monospace",
+            fill: "#38bdf8",
+            fontWeight: "bold",
+            backgroundColor: "#1e293b",
+            padding: { x: 10, y: 5 }
+        };
+
+        // Render text anchor layout
+        const extraDeckBtn = this.add.text(c.discard.x, extraDeckBtnY, "🃏 EXTRA DECK", extraDeckBtnStyle).setOrigin(0.5);
+        this.fieldGraphics.lineStyle(1, 3718648, 0.6);
+        this.fieldGraphics.strokeRect(extraDeckBtn.x - extraDeckBtn.width / 2, extraDeckBtn.y - extraDeckBtn.height / 2, extraDeckBtn.width, extraDeckBtn.height);
+
+        // Bind input tracker to slide out the matching player asset lane
+        extraDeckBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+            this.toggleStackDrawer(stateKey, "extraDeck");
+        });
     }
 
     /**
@@ -1518,7 +1550,7 @@ class GameScene extends Phaser.Scene {
     /**
      * Toggles the sliding animation layout state of the view drawer overlay.
      * @param {string|null} playerKey - 'playerA' or 'playerB' to display, or null to close.
-     * @param {string} zoneType - 'discard' or 'defeated' depending on origin clicked.
+     * @param {string} zoneType - 'discard' or 'defeated' or 'extraDeck' depending on origin clicked.
      */
     toggleStackDrawer(playerKey, zoneType = "discard") {
         // If the container doesn't exist, or was cleared, force clean baseline definitions
@@ -1581,7 +1613,16 @@ class GameScene extends Phaser.Scene {
         const playerKey = this.drawerState.playerKey;
         const zoneType = this.drawerState.zoneType || "discard";
         const targetState = this.lastReceivedState && this.lastReceivedState[playerKey] ? this.lastReceivedState[playerKey] : {};
-        const cardList = zoneType === "defeated" ? targetState.defeated || [] : targetState.discard || [];
+        
+        // 🆕 Expand data selection array mapping
+        let cardList = [];
+        if (zoneType === "defeated") {
+            cardList = targetState.defeated || [];
+        } else if (zoneType === "extraDeck") {
+            cardList = targetState.extraDeck || [];
+        } else {
+            cardList = targetState.discard || [];
+        }
 
         const bgPlate = this.add.graphics();
         bgPlate.fillStyle(0x0f172a, 0.98); 
@@ -1652,21 +1693,32 @@ class GameScene extends Phaser.Scene {
             const posX = gridStartX + col * spacingX;
             const posY = gridStartY + row * spacingY;
 
-            const baseIndexBeforeRender = this.children.list.length;
 
-            // Render card block (generates fallback container natively)
-            const drawerCardImg = this.renderCardSprite(posX, posY, card, false, "field");
+            // 🔒 HAND-STYLE SECURITY ENGINE:
+            // If it's the extra deck zone, force a card back ONLY if it belongs to the remote opponent.
+            // If it belongs to the local player, we clone it and force 'isFaceDown = false' so they can see it!
+            let finalCardData = card;
 
+            if (zoneType === "extraDeck") {
+                if (playerKey !== this.role) {
+                    // Opponent's card: Always lock as a card back
+                    finalCardData = { name: "Card Back", isFaceDown: true };
+                } else if (card) {
+                    // Local player's card: Reveal it by forcing face down to be false
+                    finalCardData = { ...card, isFaceDown: false, isFaceUp: true };
+                }
+            }
+
+            const drawerCardImg = this.renderCardSprite(posX, posY, finalCardData, false, "field");
             if (drawerCardImg) {
-                drawerCardImg.setData("drawerCardRef", card);
-                
+                drawerCardImg.setData("drawerCardRef", finalCardData);
                 // Recompute original array indexes mathematically to preserve flawless targeting
                 const originalIndex = (cardList.length - 1) - index;
                 drawerCardImg.setData("drawerCardIndex", originalIndex);
 
                 // FIX: Split interaction attachment logic completely away from rendering steps
                 // This ensures cards are ALWAYS displayed in the drawer tree container loop
-                if (isOwner && !isDefeatedView && this.role !== "spectator") {
+                if (isOwner && zoneType === "discard" && this.role !== "spectator") {
                     if (drawerCardImg.type === "Container") {
                         drawerCardImg.setInteractive(
                             new Phaser.Geom.Rectangle(-this.cardWidth / 2, -this.cardHeight / 2, this.cardWidth, this.cardHeight), 
@@ -1681,9 +1733,6 @@ class GameScene extends Phaser.Scene {
                         this.socket.emit("moveDiscardToDefeated", { tableId: this.tableId, targetPlayer: playerKey, discardIndex: originalIndex });
                     });
                 }
-
-                // CRUCIAL POSITION FIX: Moved outside the conditional block so that cards 
-                // are safely nested inside the drawer menu tree layer no matter what!
                 this.drawerContainer.add(drawerCardImg);
             }
         });
@@ -2603,6 +2652,9 @@ class GameScene extends Phaser.Scene {
     }
 
     findCardAtCoordinates(mouseX, mouseY) {
+        const foundCard = this.findCardInDrawer();
+        if (foundCard) return foundCard;
+
         if (!this.lastReceivedState) return null;
 
         const state = this.lastReceivedState;
@@ -2784,6 +2836,37 @@ class GameScene extends Phaser.Scene {
             cleanupModal();
 
         });
+    }
+
+    findCardInDrawer() {
+        // 🆕 DRAWER HOVER CHECKER: If a drawer is open, check it FIRST
+        if (this.drawerContainer && this.drawerState && this.drawerState.isOpen) {
+            // Raycast directly through the items currently sitting inside the drawer container
+            const targets = this.input.manager.hitTest(this.input.activePointer, this.drawerContainer.list, this.cameras.main);
+            
+            for (const target of targets) {
+                if (target.data && target.data.has("drawerCardRef")) {
+                    const cardData = target.data.get("drawerCardRef");
+                    const cardIndex = target.data.get("drawerCardIndex"); // Retrieve the original pile index
+                    
+                    // Security Lockout: Opponents cannot use shortcuts on your hidden card stacks
+                    if (this.drawerState.playerKey !== this.role) {
+                        console.log("⚠️ [ACTION BLOCKED]: You cannot move your opponent's extra deck cards.");
+                        return null;
+                    }
+
+                    console.log(`🎯 [DRAWER HOTKEY TARGET]: Located cursor over drawer index ${cardIndex} in zone '${this.drawerState.zoneType}'`);
+                    
+                    // Return the same payload structure your keydown router expects!
+                    return {
+                        card: cardData,
+                        ownerId: this.drawerState.playerKey,
+                        zoneName: this.drawerState.zoneType, // Will report "extraDeck" or "discard"
+                        index: cardIndex
+                    };
+                }
+            }
+        }
     }
 
 }

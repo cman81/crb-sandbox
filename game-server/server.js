@@ -184,12 +184,14 @@ function moveCardToZone(socket, tableId, targetPlayer, fromZone, fromIndex, toZo
             case 'discard':
             case 'support':
             case 'defeated':
+            case 'extraDeck':
                 cardToMove.isFaceDown = false;
                 break;
             case 'deck':
                 cardToMove.isFaceDown = true;
                 break;
         }
+        
         if (isPlaceOnTop) {
             destinationArray.push(cardToMove);
         } else {
@@ -829,7 +831,7 @@ io.on("connection", socket => {
     });
 
     socket.on('requestCardMove', ({ tableId, targetPlayer, targetZone, targetIndex, destinationZone, isPlaceOnTop = true }) => {
-        const validZones = ['hand', 'support', 'discard', 'defeated', 'deck'];
+        const validZones = ['hand', 'support', 'discard', 'defeated', 'deck', 'extraDeck'];
         if (!validZones.includes(targetZone)) return socket.emit("errorMsg", "Invalid target."); 
         if (!validZones.includes(destinationZone)) return socket.emit("errorMsg", "Invalid destination."); 
 

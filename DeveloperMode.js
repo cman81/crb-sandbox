@@ -225,6 +225,7 @@ class DeveloperMode extends Phaser.Scene {
                         <option value="fighterA">Fighter A</option>
                         <option value="fighterB">Fighter B</option>
                         <option value="stage">Stage</option>
+                        <option value="extraDeck">Extra Deck</option>
                     </select>
                     <label style="font-size:11px; color:#aaa;">Idx:</label>
                     <input type="number" id="moveSrcIdx" min="0" value="0" style="width:40px; background:#1e293b; color:#fff; border:1px solid #334155; padding:4px; border-radius:6px; text-align:center; font-size:12px;">
@@ -242,6 +243,7 @@ class DeveloperMode extends Phaser.Scene {
                         <option value="fighterA">Fighter A</option>
                         <option value="fighterB">Fighter B</option>
                         <option value="stage">Stage</option>
+                        <option value="extraDeck">Extra Deck</option>
                     </select>
                     <div style="display: flex; gap: 4px;">
                         <button id="universalMoveTopBtn" style="background:#10b981; color:#fff; font-weight:bold; font-size:10px; padding:6px 8px; border:none; border-radius:6px; cursor:pointer;">TO TOP</button>
