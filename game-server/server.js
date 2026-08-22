@@ -104,7 +104,7 @@ function sendSanitizedState(socket, table, role){
     });
 }
 
-function moveCardToFighter(socket, tableId, targetPlayer, fromZone, fromIndex, toZone) {
+function moveCardToFighterOrStage(socket, tableId, targetPlayer, fromZone, fromIndex, toZone) {
         const table = tables.find(t => t.id === parseInt(tableId));
         if (!table) return socket.emit("errorMsg", "Table not found.");
         if (fromZone == toZone) {
@@ -112,7 +112,7 @@ function moveCardToFighter(socket, tableId, targetPlayer, fromZone, fromIndex, t
         }
 
         const targetArray = table.gameState[targetPlayer]?.[fromZone];
-        const destination = table.gameState[targetPlayer]?.battleZone?.[toZone];
+        const destinationBattleZone = table.gameState[targetPlayer]?.battleZone;
         
         if (!targetArray || targetArray.length === 0) return socket.emit("errorMsg", fromZone + "zone is empty!");
         
@@ -120,7 +120,11 @@ function moveCardToFighter(socket, tableId, targetPlayer, fromZone, fromIndex, t
         const idx = (fromZone == 'deck') ? (targetArray.length - 1): parseInt(fromIndex);
         if (isNaN(idx) || idx < 0 || idx >= targetArray.length) return socket.emit("errorMsg", "Invalid index selection.");
 
-        if (destination.card !== null) {
+        const destinationCard = (toZone == 'stage')
+            ? destinationBattleZone.stage
+            : destinationBattleZone[toZone].card;
+
+        if (destinationCard !== null) {
             return socket.emit("errorMsg", `${toZone} is not empty, so we can't move a card into it.`);
         } 
 
@@ -130,7 +134,11 @@ function moveCardToFighter(socket, tableId, targetPlayer, fromZone, fromIndex, t
         cardToMove.isTapped = false;
         cardToMove.isFaceDown = false;
        
-        destination.card = cardToMove;
+        if (toZone == 'stage') {
+            destinationBattleZone.stage = cardToMove;
+        } else {
+            destinationBattleZone[toZone].card = cardToMove;
+        }
 
         // 2. Aggregate all multi-socket connections for this table instance
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
@@ -202,19 +210,26 @@ function moveCardToZone(socket, tableId, targetPlayer, fromZone, fromIndex, toZo
         socket.emit("serverNotice", `Successfully moved card with index ${idx} from ${fromZone} to ${toZone}.`);
 }
 
-function moveFighterToZone(socket, tableId, targetPlayer, slot, toZone) {
+function moveFighterOrStageToZone(socket, tableId, targetPlayer, slot, toZone) {
     const table = tables.find(t => t.id === parseInt(tableId));
     if (!table) return socket.emit("errorMsg", "Table not found.");
 
     const pState = table.gameState[targetPlayer];
-    const targetCard = pState?.battleZone?.[slot]?.card;
+    let targetCard = pState?.battleZone?.[slot]?.card;
+    if (slot == 'stage') {
+        targetCard = pState?.battleZone?.[slot];
+    }
     if (!targetCard) return socket.emit("errorMsg", "Card not found in battle slot " + slot);
 
     const destinationArray = pState?.[toZone];
     if (!destinationArray) return socket.emit("errorMsg", `Destination zone '${toZone}' not found.`);
 
-    // 1. Mutate state model: empty the fighter slot database node cleanly
-    pState.battleZone[slot].card = null;
+    // 1. Mutate state model: empty the fighter/stage slot database node cleanly
+    if (slot == 'stage') {
+        pState.battleZone[slot] = null;
+    } else {
+        pState.battleZone[slot].card = null;
+    }
     
     // 2. Prepare card state properties according to uniform destination rules
     targetCard.isTapped = false;
@@ -593,11 +608,11 @@ io.on("connection", socket => {
     });
 
     socket.on("moveFighterToDefeated", ({ tableId, targetPlayer, slot }) => {
-        return moveFighterToZone(socket, tableId, targetPlayer, slot, 'defeated');
+        return moveFighterOrStageToZone(socket, tableId, targetPlayer, slot, 'defeated');
     });
 
     socket.on("moveFighterToSupport", ({ tableId, targetPlayer, slot }) => {
-        return moveFighterToZone(socket, tableId, targetPlayer, slot, 'support');
+        return moveFighterOrStageToZone(socket, tableId, targetPlayer, slot, 'support');
     });
 
     socket.on("discardCardFromHand", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex}) => {
@@ -829,24 +844,24 @@ io.on("connection", socket => {
         return moveCardToZone(socket, tableId, targetPlayer, targetZone, targetIndex, destinationZone);
     });
 
-    socket.on('requestCardToFighter', ({ tableId, targetPlayer, targetZone, targetIndex, destinationZone }) => {
+    socket.on('requestCardToFighterOrStage', ({ tableId, targetPlayer, targetZone, targetIndex, destinationZone }) => {
         const validTargets = ['hand', 'support', 'discard', 'defeated', 'deck'];
         if (!validTargets.includes(targetZone)) return socket.emit("errorMsg", "Invalid target."); 
 
-        const validDestinations = ['fighterA', 'fighterB'];
+        const validDestinations = ['fighterA', 'fighterB', 'stage'];
         if (!validDestinations.includes(destinationZone)) return socket.emit("errorMsg", "Invalid destination.");
 
-        return moveCardToFighter(socket, tableId, targetPlayer, targetZone, targetIndex, destinationZone);
+        return moveCardToFighterOrStage(socket, tableId, targetPlayer, targetZone, targetIndex, destinationZone);
     })
 
-    socket.on('requestFighterToZone', ({ tableId, targetPlayer, targetZone, destinationZone }) => {
-        const validTargets = ['fighterA', 'fighterB'];
+    socket.on('requestFighterOrStageToZone', ({ tableId, targetPlayer, targetZone, destinationZone }) => {
+        const validTargets = ['fighterA', 'fighterB', 'stage'];
         if (!validTargets.includes(targetZone)) return socket.emit("errorMsg", "Invalid target."); 
 
         const validDestinations = ['hand', 'support', 'discard', 'defeated', 'deck'];
         if (!validDestinations.includes(destinationZone)) return socket.emit("errorMsg", "Invalid destination.");
 
-        return moveFighterToZone(socket, tableId, targetPlayer, targetZone, destinationZone);
+        return moveFighterOrStageToZone(socket, tableId, targetPlayer, targetZone, destinationZone);
     })
 
 });

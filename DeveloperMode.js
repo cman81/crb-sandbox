@@ -224,6 +224,7 @@ class DeveloperMode extends Phaser.Scene {
                         <option value="extraDeck">Extra Deck</option>
                         <option value="fighterA">Fighter A</option>
                         <option value="fighterB">Fighter B</option>
+                        <option value="stage">Stage</option>
                     </select>
                     <label style="font-size:11px; color:#aaa;">Idx:</label>
                     <input type="number" id="moveSrcIdx" min="0" value="0" style="width:40px; background:#1e293b; color:#fff; border:1px solid #334155; padding:4px; border-radius:6px; text-align:center; font-size:12px;">
@@ -240,6 +241,7 @@ class DeveloperMode extends Phaser.Scene {
                         <option value="extraDeck">Extra Deck</option>
                         <option value="fighterA">Fighter A</option>
                         <option value="fighterB">Fighter B</option>
+                        <option value="stage">Stage</option>
                     </select>
                     <button id="actionUniversalMoveBtn" style="background:#3b82f6; color:#fff; font-weight:bold; font-size:11px; padding:6px 12px; border:none; border-radius:6px; cursor:pointer;">EXECUTE</button>
                 </div>
@@ -899,9 +901,9 @@ class DeveloperMode extends Phaser.Scene {
         const destinationZone = document.getElementById("moveDestZone").value;
         this.logToConsole(`>> Emitting requestCardMove: Shifting ${targetZone} (${targetIndex}) straight into ${destinationZone} for ${targetPlayer}.`);
 
-        const fighterZones = ['fighterA', 'fighterB'];
-        if (fighterZones.includes(targetZone)) {
-            this.socket.emit("requestFighterToZone", {
+        const fighterOrStage = ['fighterA', 'fighterB', 'stage'];
+        if (fighterOrStage.includes(targetZone)) {
+            this.socket.emit("requestFighterOrStageToZone", {
                 tableId: parseInt(tableId, 10),
                 targetPlayer: targetPlayer,
                 targetZone: targetZone,
@@ -909,8 +911,8 @@ class DeveloperMode extends Phaser.Scene {
             });
             return;
         }
-        if (fighterZones.includes(destinationZone)) {
-            this.socket.emit("requestCardToFighter", {
+        if (fighterOrStage.includes(destinationZone)) {
+            this.socket.emit("requestCardToFighterOrStage", {
                 tableId: parseInt(tableId, 10),
                 targetPlayer: targetPlayer,
                 targetZone: targetZone,

@@ -205,7 +205,8 @@ class GameScene extends Phaser.Scene {
                 f: "defeated",
                 e: "deck",
                 a: "fighterA",
-                b: "fighterB"
+                b: "fighterB",
+                g: "stage"
             };
 
             const destinationZone = keyMap[key];
@@ -237,9 +238,9 @@ class GameScene extends Phaser.Scene {
                 console.log(`📡 [DYNAMIC SHORTCUT ROUTER]: Moving card index ${targetInfo.index} from ${targetInfo.zoneName} to ${destinationZone}.`);
 
                 // Emit the unified move command to the server
-                const fighterZones = ['fighterA', 'fighterB']
-                if (fighterZones.includes(targetInfo.zoneName)) {
-                    this.socket.emit('requestFighterToZone', {
+                const fighterOrStageZones = ['fighterA', 'fighterB', 'stage'];
+                if (fighterOrStageZones.includes(targetInfo.zoneName)) {
+                    this.socket.emit('requestFighterOrStageToZone', {
                         tableId: this.tableId,
                         targetPlayer: targetInfo.ownerId,
                         targetZone: targetInfo.zoneName,
@@ -248,8 +249,8 @@ class GameScene extends Phaser.Scene {
                 }
 
                 let callback = 'requestCardMove';
-                if (fighterZones.includes(destinationZone)) {
-                    callback = 'requestCardToFighter';
+                if (fighterOrStageZones.includes(destinationZone)) {
+                    callback = 'requestCardToFighterOrStage';
                 }
                 this.socket.emit(callback, {
                     tableId: this.tableId,
