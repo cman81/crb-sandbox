@@ -1652,9 +1652,7 @@ class GameScene extends Phaser.Scene {
 
         const isOwner = this.role === playerKey;
         const isDefeatedView = zoneType === "defeated";
-        const instructionString = isOwner && !isDefeatedView && this.role !== "spectator"
-            ? "💡 CLICK A CARD TO MOVE IT TO DEFEATED | PRESS [SPACEBAR] TO PREVIEW DETAILED CODE FRAME"
-            : "💡 INSPECTION MODE | PRESS [SPACEBAR] TO PREVIEW DETAILED CODE FRAME";
+        const instructionString = "💡 INSPECTION MODE | PRESS [SPACEBAR] TO PREVIEW DETAILED CODE FRAME";
 
         const subText = this.make.text({
             x: 40, y: 65,
@@ -1727,23 +1725,6 @@ class GameScene extends Phaser.Scene {
                 const originalIndex = (cardList.length - 1) - index;
                 drawerCardImg.setData("drawerCardIndex", originalIndex);
 
-                // FIX: Split interaction attachment logic completely away from rendering steps
-                // This ensures cards are ALWAYS displayed in the drawer tree container loop
-                if (isOwner && zoneType === "discard" && this.role !== "spectator") {
-                    if (drawerCardImg.type === "Container") {
-                        drawerCardImg.setInteractive(
-                            new Phaser.Geom.Rectangle(-this.cardWidth / 2, -this.cardHeight / 2, this.cardWidth, this.cardHeight), 
-                            Phaser.Geom.Rectangle.Contains
-                        );
-                    } else {
-                        drawerCardImg.setInteractive({ useHandCursor: true });
-                    }
-
-                    drawerCardImg.on("pointerdown", () => {
-                        console.log(`📡 [ENGINE DRAWER EMIT]: Moving original index ${originalIndex} from discard to defeated...`);
-                        this.socket.emit("moveDiscardToDefeated", { tableId: this.tableId, targetPlayer: playerKey, discardIndex: originalIndex });
-                    });
-                }
                 this.drawerContainer.add(drawerCardImg);
             }
         });
