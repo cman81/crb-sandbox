@@ -41,132 +41,189 @@ class GameScene extends Phaser.Scene {
         this.registerMouseInteractionListeners();
     }
 
+     /**
+     * Sets up mouse actions for dragging cards, dropping cards into zones, and clicking the deck.
+     * Tells the server when actions happen and returns cards if a move is invalid.
+     */
     registerMouseInteractionListeners() {
-        this.input.on('drag', (pointer, gameObject, dragX, dragY) => {
-            // Keep the card tracking directly underneath the user's cursor position mid-flight
+        // 1. Handle Active Dragging Movements
+        this.input.on("drag", (pointer, gameObject, dragX, dragY) => {
             gameObject.x = dragX;
             gameObject.y = dragY;
-            gameObject.setDepth(1000); // Force the moving card above all board dividers
+            gameObject.setDepth(1000);
         });
 
-        this.input.on('dragend', (pointer, gameObject, dropped) => {
-            // If the card was let go in open dead-space (not on a zone), snap it back to its seat
-            if (!dropped) {
-                if (gameObject.data && gameObject.data.has('originalX')) {
-                    gameObject.x = gameObject.data.get('originalX');
-                    gameObject.y = gameObject.data.get('originalY');
-                    gameObject.setDepth(0);
-                }
+        // 2. Handle Failed Drag Releases
+        this.input.on("dragend", (pointer, gameObject, dropped) => {
+            if (!dropped && gameObject.data?.has("originalX")) {
+                this.resetCardPosition(gameObject);
             }
         });
 
+        // 3. Handle Dropping Cards onto Drop Zones
         this.input.on("drop", (pointer, gameObject, dropZone) => {
             const handIndex = gameObject.data.get("handIndex");
             const zoneKey = dropZone.data.get("zoneKey");
-            
-            if (this.role === "spectator" || typeof handIndex === "undefined" || handIndex === null) {
-                gameObject.x = gameObject.data.get("originalX");
-                gameObject.y = gameObject.data.get("originalY");
-                gameObject.setDepth(0);
+
+            if (this.role === "spectator" || handIndex === undefined || handIndex === null) {
+                this.resetCardPosition(gameObject);
                 return;
             }
 
-            const state = this.lastReceivedState;
-            const myBZone = state?.[this.role]?.battleZone || {};
-
-            // 🔒 MOUSE DROP CONSTRAINT FILTER
-            if (zoneKey === "fighterA" || zoneKey === "fighterB" || zoneKey === "stage") {
-                const existingCardInSlot = zoneKey === "stage" ? myBZone.stage : myBZone[zoneKey]?.card;
-                
-                if (existingCardInSlot && Object.keys(existingCardInSlot).length > 0) {
-                    console.log(`⚠️ [ACTION BLOCKED]: Cannot play card. ${zoneKey} is already occupied.`);
-                    
-                    // Revert ghost properties back to solid standard card positioning
-                    gameObject.setAlpha(1);
-                    gameObject.setInteractive();
-                    gameObject.x = gameObject.data.get("originalX");
-                    gameObject.y = gameObject.data.get("originalY");
-                    gameObject.setDepth(0);
-                    return;
-                }
+            // Prevent stacking if the target slot is already occupied
+            if (this.isZoneOccupied(zoneKey)) {
+                console.log(`⚠️ [ACTION BLOCKED]: Cannot play card. ${zoneKey} is already occupied.`);
+                this.resetCardPosition(gameObject);
+                return;
             }
-            
+
+            // Temporarily freeze input while the server processes the move
             this.lastDropPos = { x: pointer.x, y: pointer.y };
             gameObject.setAlpha(0.8);
             gameObject.disableInteractive();
             gameObject.setData("isPendingServer", true);
-            
-            if (zoneKey === "support") {
-                this.socket.emit("playCardToSupport", { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex });
-            } else if (zoneKey === "fighterA" || zoneKey === "fighterB") {
-                this.socket.emit("playCardToFighter", { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex, targetSlot: zoneKey });
-            } else if (zoneKey === "discard") {
-                this.socket.emit("discardCardFromHand", { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex });
-            } else if (zoneKey === "stage") {
-                this.socket.emit("playCardToStage", { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex });
-            } else {
-                // Reset if dropped in an invalid zone
-                this.lastDropPos = null;
-                gameObject.setAlpha(1);
-                gameObject.setInteractive();
-                gameObject.setData("isPendingServer", false);
-                gameObject.x = gameObject.data.get("originalX");
-                gameObject.y = gameObject.data.get("originalY");
-                gameObject.setDepth(0);
-            }
+
+            // Execute network payload transfer using the new assistant method
+            this.sendCardPlayToServer(zoneKey, handIndex, gameObject);
         });
 
-        this.input.on('pointerdown', (pointer) => {
+        // 4. Handle Deck Clicking Interactions
+        this.input.on("pointerdown", pointer => {
             if (this.role === "spectator" || !this.lastReceivedState) return;
-            
-            // Isolate the physical boundary coordinates for your local deck
-            const deckCoord = this.fieldCoordinates.local.deck;
-            const halfW = this.cardWidth / 2;
-            const halfH = this.cardHeight / 2;
-            
-            // Check if the click occurred exactly within the local deck's rectangular bounds
-            if (pointer.x >= deckCoord.x - halfW && pointer.x <= deckCoord.x + halfW &&
-                pointer.y >= deckCoord.y - halfH && pointer.y <= deckCoord.y + halfH) {
-            if (this.drawerState && this.drawerState.isOpen) return;
-                
-                // 🔒 SAFETY GUARD: Check if your local deck array actually has cards remaining
-                const myStateData = this.lastReceivedState[this.role] || {};
-                const deckArray = myStateData.deck || [];
-                const cardsRemaining = Array.isArray(deckArray) ? deckArray.length : 0;
-                
-                if (cardsRemaining <= 0) {
-                    console.log("⚠️ [AUDIO ABORT]: Deck is empty. Suppressing draw audio cue.");
-                    return; // Abort cleanly before playing sound or emitting to server
-                }
-                
-                console.log("🎲 [DECOUPLED INPUT]: Clean singular deck draw event issued via permanent listener.");
-                this.sound.play("sound_draw", { 
-                    volume: 0.8,
-                    pitch: Phaser.Math.FloatBetween(0.96, 1.04) 
-                });
-                this.socket.emit("drawCard", { tableId: this.tableId, targetPlayer: this.role });
+            if (this.drawerState?.isOpen) return;
+
+            if (this.isPointerOverDeck(pointer)) {
+                this.executeDeckDrawAction();
             }
         });
     }
 
-    registerKeyboardShortcuts() {
-        this.input.keyboard.on("keydown-SPACE", () => {
-            const mouseX = this.input.activePointer.x;
-            const mouseY = this.input.activePointer.y;
-            this.scanCardHitboxesForPreview(mouseX, mouseY);
+    /**
+     * Sends a network event to the server when a card is dropped into a zone.
+     * Resets the card position if the targeted zone is invalid.
+     * 
+     * @param {string} zoneKey - Target zone identifier.
+     * @param {number} handIndex - Hand array index of the moved card.
+     * @param {Phaser.GameObjects.GameObject} gameObject - The card visual component.
+     */
+    sendCardPlayToServer(zoneKey, handIndex, gameObject) {
+        const payload = { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex };
+
+        switch (zoneKey) {
+            case "support":
+                this.socket.emit("playCardToSupport", payload);
+                break;
+            case "fighterA":
+            case "fighterB":
+                this.socket.emit("playCardToFighter", { ...payload, targetSlot: zoneKey });
+                break;
+            case "discard":
+                this.socket.emit("discardCardFromHand", payload);
+                break;
+            case "stage":
+                this.socket.emit("playCardToStage", payload);
+                break;
+            default:
+                // Fallback for invalid custom targets
+                this.lastDropPos = null;
+                gameObject.setData("isPendingServer", false);
+                this.resetCardPosition(gameObject);
+                break;
+        }
+    }
+
+    /**
+     * Resets a card's position, opacity, and interactivity back to its default state.
+     * 
+     * @param {Phaser.GameObjects.GameObject} gameObject - The card visual component.
+     */
+    resetCardPosition(gameObject) {
+        gameObject.x = gameObject.data.get("originalX");
+        gameObject.y = gameObject.data.get("originalY");
+        gameObject.setAlpha(1);
+        gameObject.setInteractive();
+        gameObject.setDepth(0);
+    }
+
+    /**
+     * Checks if the mouse pointer is hovering over the deck coordinates.
+     * 
+     * @param {Object} pointer - Mouse pointer object.
+     * @returns {boolean} True if the pointer is over the deck.
+     */
+    isPointerOverDeck(pointer) {
+        const deckCoord = this.fieldCoordinates?.local?.deck;
+        if (!deckCoord) return false;
+
+        const halfW = this.cardWidth / 2;
+        const halfH = this.cardHeight / 2;
+
+        return (
+            pointer.x >= deckCoord.x - halfW &&
+            pointer.x <= deckCoord.x + halfW &&
+            pointer.y >= deckCoord.y - halfH &&
+            pointer.y <= deckCoord.y + halfH
+        );
+    }
+
+    /**
+     * Checks the player's remaining deck size and sends a draw command to the server.
+     * Suppresses the draw sound cue if the deck is completely empty.
+     */
+    executeDeckDrawAction() {
+        const myStateData = this.lastReceivedState[this.role] || {};
+        const deckArray = myStateData.deck || [];
+        const cardsRemaining = Array.isArray(deckArray) ? deckArray.length : 0;
+
+        if (cardsRemaining <= 0) {
+            console.log("⚠️ [AUDIO ABORT]: Deck is empty. Suppressing draw audio cue.");
+            return;
+        }
+
+        console.log("🎲 [DECOUPLED INPUT]: Clean singular deck draw event issued via permanent listener.");
+        
+        // Play audio feedback with a small randomized pitch shift
+        this.sound.play("sound_draw", {
+            volume: 0.8,
+            pitch: Phaser.Math.FloatBetween(0.96, 1.04)
         });
 
-        this.input.keyboard.on("keydown-ENTER", () => {
-            const mouseX = this.input.activePointer.x;
-            const mouseY = this.input.activePointer.y;
+        this.socket.emit("drawCard", { tableId: this.tableId, targetPlayer: this.role });
+    }
 
-            this.scanCardHitboxesForPreview(mouseX, mouseY);
+    /**
+     * Checks if a specific field zone already has a card inside it.
+     * 
+     * @param {string} zoneKey - Target zone identifier.
+     * @returns {boolean} True if the zone is already occupied.
+     */
+    isZoneOccupied(zoneKey) {
+        const state = this.lastReceivedState;
+        const myBZone = state?.[this.role]?.battleZone || {};
+
+        if (zoneKey === "stage") {
+            return myBZone.stage && Object.keys(myBZone.stage).length > 0;
+        }
+        if (zoneKey === "fighterA" || zoneKey === "fighterB") {
+            const slotCard = myBZone[zoneKey]?.card;
+            return slotCard && Object.keys(slotCard).length > 0;
+        }
+        return false;
+    }
+
+    registerKeyboardShortcuts() {
+        // Spacebar triggers a quick card preview on the right panel
+        this.input.keyboard.on("keydown-SPACE", () => {
+            this.scanCardHitboxesForPreview();
+        });
+
+        // Enter triggers a full-sized card inspection modal zoom overlay
+        this.input.keyboard.on("keydown-ENTER", () => {
+            this.scanCardHitboxesForPreview();
             
             if (this.selectedPreviewCard) {
                 this.displayLargeCardModal(this.selectedPreviewCard);
-                return;
             }
-
         });
 
         // Bind the 'T' key to trigger a real-time card tap/untap state change
@@ -240,8 +297,6 @@ class GameScene extends Phaser.Scene {
             if (this.role === "spectator") return;
 
             const key = event.key.toLowerCase();
-            
-            // Map keys to our whitelisted list-based destination zones
             const keyMap = {
                 h: "hand",
                 s: "support",
@@ -252,68 +307,76 @@ class GameScene extends Phaser.Scene {
                 g: "stage",
                 x: "extraDeck"
             };
-
             const destinationZone = keyMap[key];
-            if (!destinationZone) return; // Ignore keys we aren't listening for
+            if (!destinationZone) return;
 
-            // Grab current mouse pointer coordinates
             const mouseX = this.input.activePointer.x;
             const mouseY = this.input.activePointer.y;
-
-            // Use our consolidated raycaster matrix loop
             const targetInfo = this.findCardAtCoordinates(mouseX, mouseY);
 
             if (targetInfo) {
-                // Prevent moving a card into the exact zone it is already sitting in
-                if (targetInfo.zoneName === destinationZone) {
-                    console.log(`⚠️ [ACTION BLOCKED]: Card is already in the ${destinationZone} zone.`);
-                    return;
-                }
-
-                // Enforce local seat security rules
-                if (targetInfo.ownerId !== this.role) {
-                    console.log("⚠️ [ACTION BLOCKED]: You cannot move your opponent's cards!");
-                    return;
-                }
-
-                // Explicitly cache the hover coordinates as the starting flight position for animation
-                this.lastDropPos = { x: mouseX, y: mouseY };
-
-                console.log(`📡 [DYNAMIC SHORTCUT ROUTER]: Moving card index ${targetInfo.index} from ${targetInfo.zoneName} to ${destinationZone}.`);
-
-                // Emit the unified move command to the server
-                const fighterOrStageZones = ['fighterA', 'fighterB', 'stage', 'extraA', 'extraB'];
-                if (fighterOrStageZones.includes(targetInfo.zoneName)) {
-                    // server will handle when an extraDeck card tries to move to fighterA/fighterB...
-                    this.socket.emit('requestFighterOrStageToZone', {
-                        tableId: this.tableId,
-                        targetPlayer: targetInfo.ownerId,
-                        targetZone: targetInfo.zoneName,
-                        destinationZone: destinationZone
-                    });
-                }
-
-                let callback = 'requestCardMove';
-                if (fighterOrStageZones.includes(destinationZone)) {
-                    callback = 'requestCardToFighterOrStage';
-                }
-                this.socket.emit(callback, {
-                    tableId: this.tableId,
-                    targetPlayer: targetInfo.ownerId,
-                    targetZone: targetInfo.zoneName,
-                    targetIndex: targetInfo.index,
-                    destinationZone: destinationZone
-                });
-
-                if (targetInfo.zoneName === "extraDeck") {
-                    this.toggleStackDrawer(null);
-                }
-                if (key == "x") {
-                    this.toggleStackDrawer(this.role, 'extraDeck');
-                }
+                this.executeKeyboardZoneTransfer(targetInfo, destinationZone, mouseX, mouseY, key);
             }
         });
+    }
 
+    /**
+     * Moves a card to a new zone when you press a keyboard shortcut, then updates the screen and sends the
+     * move to the server.
+     * 
+     * @param {Object} targetInfo - Card info.
+     * @param {string} destinationZone - Zone where the card is heading.
+     * @param {number} mouseX - Mouse pointer x-coorindate.
+     * @param {number} mouseY - Mouse pointer y-coorindate.
+     * @param {string} key - Keyboard key that was pressed.
+     */
+    executeKeyboardZoneTransfer(targetInfo, destinationZone, mouseX, mouseY, key) {
+        // Enforce boundary parameters: Block moving opponent assets or tracking redundant zones
+        if (targetInfo.zoneName === destinationZone) {
+            console.log(`⚠️ [ACTION BLOCKED]: Card is already in the ${destinationZone} zone.`);
+            return;
+        }
+        if (targetInfo.ownerId !== this.role) {
+            console.log("⚠️ [ACTION BLOCKED]: You cannot move your opponent's cards!");
+            return;
+        }
+
+        // Cache the last target location vectors for flight pathway interpolation engines
+        this.lastDropPos = { x: mouseX, y: mouseY };
+        console.log(`📡 [DYNAMIC SHORTCUT ROUTER]: Moving card index ${targetInfo.index} from ${targetInfo.zoneName} to ${destinationZone}.`);
+
+        const fighterOrStageZones = ["fighterA", "fighterB", "stage", "extraA", "extraB"];
+
+        // 1. Route actions if moving OUT of a restricted combat zone slot matrix
+        if (fighterOrStageZones.includes(targetInfo.zoneName)) {
+            this.socket.emit("requestFighterOrStageToZone", {
+                tableId: this.tableId,
+                targetPlayer: targetInfo.ownerId,
+                targetZone: targetInfo.zoneName,
+                destinationZone: destinationZone
+            });
+        }
+
+        // 2. Select the correct callback method depending on where the item is going INTO
+        const callbackEvent = fighterOrStageZones.includes(destinationZone) 
+            ? "requestCardToFighterOrStage" 
+            : "requestCardMove";
+
+        this.socket.emit(callbackEvent, {
+            tableId: this.tableId,
+            targetPlayer: targetInfo.ownerId,
+            targetZone: targetInfo.zoneName,
+            targetIndex: targetInfo.index,
+            destinationZone: destinationZone
+        });
+
+        // 3. Coordinate sliding menu drawer states dynamically based on hotkeys pressed
+        if (targetInfo.zoneName === "extraDeck") {
+            this.toggleStackDrawer(null);
+        }
+        if (key === "x") {
+            this.toggleStackDrawer(this.role, "extraDeck");
+        }
     }
 
     setupNetworkEventListeners() {
@@ -484,9 +547,18 @@ class GameScene extends Phaser.Scene {
         this.dividerGraphics = null;
     }
 
-    // --- HELPER ROUTINE: CARD SPRITE FACTORY ---
-    // Renders either the high-fidelity card graphic or a face-down card back
-    // ADDED PARAMETER: 'currentZone' explicitly separates hand logic from other board tiles
+    /**
+     * Renders a card image or generates a vector fallback if the asset is missing.
+     * Sets up scaling parameters, textures, tracking data, and pointer inspection events.
+     * 
+     * @param {number} x - Target center x-coordinate.
+     * @param {number} y - Target center y-coordinate.
+     * @param {Object} card - Card info.
+     * @param {boolean} isTapped - Tapped rotation state.
+     * @param {string} [currentZone="field"] - Target zone identity.
+     * @param {number} [baseDepth=50] - Rendering layer priority.
+     * @returns {Phaser.GameObjects.Image|Phaser.GameObjects.Container} Rendered Phaser component.
+     */
     renderCardSprite(x, y, card, isTapped, currentZone = "field", baseDepth = 50) {
         let bundleKey = "system_ui";
         let frameKey = "card_back";
@@ -497,11 +569,13 @@ class GameScene extends Phaser.Scene {
 
         const isCardBack = !card || card.title === "Card Back" || card.name === "Card Back" || card.isFaceDown;
 
+        // 1. Calculate dynamic hand scale parameters
         if (this.lastReceivedState && card && !isCardBack && currentZone === "hand") {
             const playerState = this.lastReceivedState[this.role] || {};
             const handArray = playerState.hand || [];
             const cardIdToMatch = card.id || "";
             const handIndex = handArray.findIndex(c => c && c.id === cardIdToMatch);
+
             if (handIndex !== -1) {
                 const layout = this.getHandCardLayout(handIndex, handArray.length, true);
                 appliedWidth = layout.width;
@@ -511,8 +585,7 @@ class GameScene extends Phaser.Scene {
         }
 
         if (!isCardBack) {
-            const cardId = card.id || "";
-            frameKey = cardId;
+            frameKey = card.id || "";
             bundleKey = this.getBundleKeyFromCard(card, bundleKey);
         }
 
@@ -520,76 +593,144 @@ class GameScene extends Phaser.Scene {
             useFallback = true;
         }
 
-        const targetAngle = isTapped === true || (isTapped !== false && card?.isTapped) ? -90 : 0;
+        const targetAngle = (isTapped === true || (isTapped !== false && card?.isTapped)) ? -90 : 0;
 
-        // PATH 1: Real Texture Image Generation Pass
+        // 2. Branch A: Standard Image Asset Render Path
         if (!useFallback) {
             const cardSprite = this.add.image(x, y, bundleKey, frameKey);
             cardSprite.setDisplaySize(appliedWidth, appliedHeight);
             cardSprite.setAngle(targetAngle);
             cardSprite.setDepth(baseDepth);
-            
-            if (card && card.uuid) {
-                cardSprite.setData("uuid", card.uuid);
-            }
-            
-            // FIX: Check if this image asset is currently in our animation list
-            if (card && card.uuid && this.animatingUuids && this.animatingUuids.indexOf(card.uuid) !== -1) {
-                cardSprite.setAlpha(0); // Force the background clone to hide
-            }
-            
+
+            if (card?.uuid) cardSprite.setData("uuid", card.uuid);
+            if (card?.uuid && this.animatingUuids?.indexOf(card.uuid) !== -1) cardSprite.setAlpha(0);
+
             this.attachCardInspectionListeners(cardSprite, card, isCardBack);
-            return cardSprite; 
+            return cardSprite;
         }
 
-
-        // PATH 2: Decoupled Vector Fallback Container Pass
+        // 3. Branch B: Procedural Vector Fallback Container Path
         const fallbackContainer = this.add.container(x, y);
         fallbackContainer.setDepth(baseDepth);
-
-        const halfW = appliedWidth / 2;
-        const halfH = appliedHeight / 2;
+        fallbackContainer.setAngle(targetAngle);
 
         if (isCardBack) {
             this.drawVectorCardBack(fallbackContainer, appliedWidth, appliedHeight, currentScaleFactor);
         } else {
-            const cardShape = this.add.graphics();
-            cardShape.fillStyle(16119285, 1);
-            cardShape.lineStyle(2, 9741240, 1);
-            cardShape.fillRoundedRect(-halfW, -halfH, appliedWidth, appliedHeight, 6);
-            cardShape.strokeRoundedRect(-halfW, -halfH, appliedWidth, appliedHeight, 6);
-            fallbackContainer.add(cardShape);
-
-            const titleFontSize = Math.max(7, Math.floor(10 * currentScaleFactor));
-            const rawTitle = card.title || card.name || "Unknown Card";
-            const titleStyle = { fontSize: `${titleFontSize}px`, fontFamily: "monospace", fill: "#1e293b", fontWeight: "bold", align: "center", wordWrap: { width: appliedWidth - 8 } };
-            const titleText = this.add.text(0, -halfH + Math.floor(12 * currentScaleFactor), rawTitle, titleStyle).setOrigin(.5, 0);
-            fallbackContainer.add(titleText);
-
-            const idFontSize = Math.max(6, Math.floor(9 * currentScaleFactor));
-            const idStyle = { fontSize: `${idFontSize}px`, fontFamily: "monospace", fill: "#64748b", fontWeight: "bold" };
-            const idText = this.add.text(-halfW + Math.floor(6 * currentScaleFactor), halfH - Math.floor(10 * currentScaleFactor), card.id || "N/A", idStyle).setOrigin(0, .5);
-            fallbackContainer.add(idText);
+            this.drawVectorCardFront(fallbackContainer, card, appliedWidth, appliedHeight, currentScaleFactor);
         }
 
-        fallbackContainer.setAngle(targetAngle);
-        
-        // STAMP UUID FOR FALLBACK CARDS: Attach unique data tokens
-        if (card && card.uuid) {
-            fallbackContainer.setData("uuid", card.uuid);
-        }
+        if (card?.uuid) fallbackContainer.setData("uuid", card.uuid);
         fallbackContainer.setData("cardData", card);
         fallbackContainer.setData("computedWidth", appliedWidth);
         fallbackContainer.setData("computedHeight", appliedHeight);
-        
-        // Check if this specific card's unique UUID is currently in our animation list
-        if (card && card.uuid && this.animatingUuids && this.animatingUuids.indexOf(card.uuid) !== -1) {
-            // Force the background clone card to be completely invisible while the spin happens
+
+        if (card?.uuid && this.animatingUuids?.indexOf(card.uuid) !== -1) {
             fallbackContainer.setAlpha(0);
         }
 
         this.attachCardInspectionListeners(fallbackContainer, card, isCardBack);
-        return fallbackContainer; 
+        return fallbackContainer;
+    }
+
+    /**
+     * Draws the text elements, rounded borders, and background plate for a fallback card front.
+     * Separates complex text wrap configurations and vector rendering from the main sprite pipeline.
+     * 
+     * @param {Phaser.GameObjects.Container} container - Target parent container component.
+     * @param {Object} card - Card info.
+     * @param {number} width - Rendered width boundary.
+     * @param {number} height - Rendered height boundary.
+     * @param {number} scaleFactor - Hand display scale multiplier.
+     */
+    drawVectorCardFront(container, card, width, height, scaleFactor) {
+        const halfW = width / 2;
+        const halfH = height / 2;
+
+        const cardShape = this.add.graphics();
+        cardShape.fillStyle(16119285, 1); // #f5f5f5
+        cardShape.lineStyle(2, 9741240, 1); // #94a3b8
+        cardShape.fillRoundedRect(-halfW, -halfH, width, height, 6);
+        cardShape.strokeRoundedRect(-halfW, -halfH, width, height, 6);
+        container.add(cardShape);
+
+        // Render card title text with wrap parameters
+        const titleFontSize = Math.max(7, Math.floor(10 * scaleFactor));
+        const rawTitle = card.title || card.name || "Unknown Card";
+        const titleStyle = {
+            fontSize: `${titleFontSize}px`,
+            fontFamily: "monospace",
+            fill: "#1e293b",
+            fontWeight: "bold",
+            align: "center",
+            wordWrap: { width: width - 8 }
+        };
+        const titleText = this.add.text(0, -halfH + Math.floor(12 * scaleFactor), rawTitle, titleStyle).setOrigin(0.5, 0);
+        container.add(titleText);
+
+        // Render bottom corner card code ID markers
+        const idFontSize = Math.max(6, Math.floor(9 * scaleFactor));
+        const idStyle = {
+            fontSize: `${idFontSize}px`,
+            fontFamily: "monospace",
+            fill: "#64748b",
+            fontWeight: "bold"
+        };
+        const idText = this.add.text(-halfW + Math.floor(6 * scaleFactor), halfH - Math.floor(10 * scaleFactor), card.id || "N/A", idStyle).setOrigin(0, 0.5);
+        container.add(idText);
+    }
+
+    /**
+     * Draws the striped procedural pattern overlay for a fallback card back.
+     * Separates math-heavy canvas line generation cycles from core asset managers.
+     * 
+     * @param {Phaser.GameObjects.Container} container - Target parent container component.
+     * @param {number} width - Rendered width boundary.
+     * @param {number} height - Rendered height boundary.
+     * @param {number} scaleFactor - Hand display scale multiplier.
+     */
+    drawVectorCardBack(container, width, height, scaleFactor) {
+        const halfW = width / 2;
+        const halfH = height / 2;
+
+        const cardShape = container.scene.add.graphics();
+        container.add(cardShape);
+        
+        cardShape.fillStyle(730437, 1);
+        cardShape.lineStyle(2, 3718648, 1);
+        cardShape.fillRoundedRect(-halfW, -halfH, width, height, 6);
+        cardShape.strokeRoundedRect(-halfW, -halfH, width, height, 6);
+        cardShape.lineStyle(2, 1261684, 0.4);
+
+        const stripeSpacing = Math.max(10, Math.floor(16 * scaleFactor));
+        for (let offset = -height; offset < width + height; offset += stripeSpacing) {
+            let startX = offset;
+            let startY = -halfH;
+            let endX = offset + height;
+            let endY = halfH;
+
+            if (startX < -halfW) {
+                startY += -halfW - startX;
+                startX = -halfW;
+            }
+            if (endX > halfW) {
+                endY -= endX - halfW;
+                endX = halfW;
+            }
+            if (startY < halfH && endY > -halfH && startX < halfW && endX > -halfW) {
+                cardShape.lineBetween(startX, startY, endX, endY);
+            }
+        }
+
+        const logoFontSize = Math.max(14, Math.floor(22 * scaleFactor));
+        const logoStyle = { fontSize: `${logoFontSize}px`, fontFamily: "monospace", fill: "#38bdf8", fontWeight: "900", align: "center" };
+        const logoText = this.add.text(0, -Math.floor(10 * scaleFactor), "CRB", logoStyle).setOrigin(0.5);
+        container.add(logoText);
+
+        const tagFontSize = Math.max(8, Math.floor(11 * scaleFactor));
+        const tagStyle = { fontSize: `${tagFontSize}px`, fontFamily: "monospace", fill: "#e2e8f0", fontWeight: "bold", align: "center" };
+        const tagText = this.add.text(0, Math.floor(16 * scaleFactor), "Sandbox", tagStyle).setOrigin(0.5);
+        container.add(tagText);
     }
 
     getBundleKeyFromCard(card, bundleKey) {
@@ -826,8 +967,7 @@ class GameScene extends Phaser.Scene {
 
         // Render text anchor layout
         const extraDeckBtn = this.add.text(c.discard.x, extraDeckBtnY, "🃏 EXTRA DECK", extraDeckBtnStyle).setOrigin(0.5);
-        this.fieldGraphics.lineStyle(1, 3718648, 0.6);
-        this.fieldGraphics.strokeRect(extraDeckBtn.x - extraDeckBtn.width / 2, extraDeckBtn.y - extraDeckBtn.height / 2, extraDeckBtn.width, extraDeckBtn.height);
+        this.drawButtonOutline(extraDeckBtn);
 
         // Bind input tracker to slide out the matching player asset lane
         extraDeckBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
@@ -972,14 +1112,13 @@ class GameScene extends Phaser.Scene {
             const btnStyle = { fontSize: "13px", fontFamily: "monospace", fill: "#38bdf8", fontWeight: "bold", backgroundColor: "#1e293b", padding: { x: 8, y: 4 } };
             
             const addBtn = this.add.text(point.x - 30, btnY, "+1", btnStyle).setOrigin(0.5);
-            this.fieldGraphics.lineStyle(1, 3718648, .6);
-            this.fieldGraphics.strokeRect(addBtn.x - addBtn.width / 2, addBtn.y - addBtn.height / 2, addBtn.width, addBtn.height);
+            this.drawButtonOutline(addBtn);
             addBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
                 this.socket.emit("placeDeckCardToStack", { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey })
             });
 
             const remBtn = this.add.text(point.x + 30, btnY, "-1", btnStyle).setOrigin(0.5);
-            this.fieldGraphics.lineStyle(1, 3718648, .6);
+            this.drawButtonOutline(remBtn);
             this.fieldGraphics.strokeRect(remBtn.x - remBtn.width / 2, remBtn.y - remBtn.height / 2, remBtn.width, remBtn.height);
             remBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
                 this.socket.emit("flipAndDiscardFromStack", { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey })
@@ -1093,9 +1232,8 @@ class GameScene extends Phaser.Scene {
 
         if(isLocalSeat && this.role !== "spectator"){
             const untapStyle = { fontSize: "11px", fontFamily: "monospace", fill: "#10b981", fontWeight: "bold", backgroundColor: "#064e3b", padding: { x: 8, y: 4 } };
-            const untapAllBtn = this.add.text(point.x - 75, point.y + countYOffset, "UNTAP ALL", untapStyle).setOrigin(.5);
-            this.fieldGraphics.lineStyle(1, 1096065, .5);
-            this.fieldGraphics.strokeRect(untapAllBtn.x - untapAllBtn.width / 2, untapAllBtn.y - untapAllBtn.height / 2, untapAllBtn.width, untapAllBtn.height);
+            const untapAllBtn = this.add.text(point.x - 75, point.y + countYOffset, "UNTAP ALL", untapStyle).setOrigin(0.5);
+            this.drawButtonOutline(untapAllBtn, 1096065); 
             untapAllBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
                 this.executeUntapAllMacro();
             });
@@ -1105,22 +1243,7 @@ class GameScene extends Phaser.Scene {
             this.renderCardSprite(point.x, point.y, { name: "Card Back", isFaceDown: true }, false);
         }
     }
-
-
-    /**
-     * Safely renders the topmost item of a public pile lane face up on the grid coordinates.
-     */
-    renderPublicPileTopCard(point, pileArray, stateKey, zoneKey) {
-        if (pileArray && pileArray.length > 0) {
-            const topCard = pileArray[pileArray.length - 1];
-            if (topCard) {
-                // FIX: Route the top card of the stack directly into your unified 
-                // fallback card checker so it renders an off-white block instantly!
-                this.renderCardSprite(point.x, point.y, topCard, topCard.isTapped || false, "field");
-            }
-        }
-    }
-
+    
     /**
      * Handles rendering the score counter and score increment/decrement buttons (+1, -1).
      */
@@ -1144,15 +1267,13 @@ class GameScene extends Phaser.Scene {
             };
 
             const incPtBtn = this.add.text(defeatedPoint.x - 30, ptBtnY, "+1", ptBtnStyle).setOrigin(0.5);
-            this.fieldGraphics.lineStyle(1, 6583435, 0.6);
-            this.fieldGraphics.strokeRect(incPtBtn.x - incPtBtn.width / 2, incPtBtn.y - incPtBtn.height / 2, incPtBtn.width, incPtBtn.height);
+            this.drawButtonOutline(incPtBtn, 6583435);
             incPtBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
                 this.socket.emit("adjustDefeatedPoints", { tableId: this.tableId, targetPlayer: this.role, amount: 1 });
             });
 
             const decPtBtn = this.add.text(defeatedPoint.x + 30, ptBtnY, "-1", ptBtnStyle).setOrigin(0.5);
-            this.fieldGraphics.lineStyle(1, 6583435, 0.6);
-            this.fieldGraphics.strokeRect(decPtBtn.x - decPtBtn.width / 2, decPtBtn.y - decPtBtn.height / 2, decPtBtn.width, decPtBtn.height);
+            this.drawButtonOutline(decPtBtn, 6583435);
             decPtBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
                 this.socket.emit("adjustDefeatedPoints", { tableId: this.tableId, targetPlayer: this.role, amount: -1 });
             });
@@ -1355,203 +1476,36 @@ class GameScene extends Phaser.Scene {
         }
     }
 
-    // --- HELPER METHOD: MOUSE VECTOR SCANNER ---
+    /**
+     * Scans the card underneath the mouse cursor to show its preview on the right panel.
+     * Defaults to the live mouse pointer position if coordinates are not provided.
+     * 
+     * @param {number} [mouseX] - Mouse pointer x-coordinate.
+     * @param {number} [mouseY] - Mouse pointer y-coordinate.
+     */
     scanCardHitboxesForPreview(mouseX, mouseY) {
-        // CRITICAL DRAWER SCAN INTERCEPT LINK: If drawer is open, bypass board vectors and scan drawer items
-        if (this.drawerContainer && this.drawerState && this.drawerState.isOpen) {
-            // Test collisions against interactive images attached inside the drawer container
-            const targets = this.input.manager.hitTest(this.input.activePointer, this.drawerContainer.list, this.cameras.main);
-            for (const target of targets) {
-                if (target.data && target.data.has('drawerCardRef')) {
-                    const cardData = target.data.get('drawerCardRef');
-                    console.log(`🎯 [DRAWER INSPECT]: Locked card focus frame identity: ${cardData.id}`);
-                    this.selectedPreviewCard = cardData;
-                    this.drawPreviewPanel(); // Isolated refresh pass updates Column 3 instantly
-                    return;
-                }
+        const targetX = mouseX !== undefined ? mouseX : this.input.activePointer.x;
+        const targetY = mouseY !== undefined ? mouseY : this.input.activePointer.y;
+
+        // 1. Check open drawer overlays first
+        if (this.drawerContainer && this.drawerState?.isOpen) {
+            const drawerTarget = this.findCardInDrawer();
+            if (drawerTarget) {
+                this.selectedPreviewCard = drawerTarget.card;
+                this.drawPreviewPanel();
             }
-            return; // Block further execution loops while the drawer is active
+            return;
         }
 
         if (!this.lastReceivedState) return;
 
-        const state = this.lastReceivedState;
-        const isPlayerB = this.role === 'playerB';
-        const perspectiveMap = [
-            { stateKey: isPlayerB ? 'playerB' : 'playerA', coordKey: 'local' },
-            { stateKey: isPlayerB ? 'playerA' : 'playerB', coordKey: 'remote' }
-        ];
-
-        const halfW = this.cardWidth / 2;
-        const halfH = this.cardHeight / 2;
-
-        // 1. SCAN FIGHTER FACEDOWN STACKS (Flipped CCW Collision Profiles)
-        const stackScale = 0.55;
-        const stackWidth = this.cardHeight * stackScale; 
-        const stackHeight = this.cardWidth * stackScale; 
-        const stackHorizOffset = 85;                     
-        const stackInitialSplay = -25;                   
-        const stackSplayStepY = 18;                      
-
-        for (const p of perspectiveMap) {
-            const c = this.fieldCoordinates[p.coordKey];
-            const bZone = state[p.stateKey]?.battleZone || {};
-            const targets = [
-                { slot: bZone.fighterA, baseCoord: c.fighterA },
-                { slot: bZone.fighterB, baseCoord: c.fighterB }
-            ];
-
-            for (const item of targets) {
-                if (item.slot && Array.isArray(item.slot.faceDownStack)) {
-                    const stack = item.slot.faceDownStack;
-                    for (let index = stack.length - 1; index >= 0; index--) {
-                        const card = stack[index];
-                        const stackCardX = item.baseCoord.x + stackHorizOffset;
-                        const stackCardY = item.baseCoord.y + stackInitialSplay + (index * stackSplayStepY);
-
-                        if (mouseX >= stackCardX - stackWidth/2 && mouseX <= stackCardX + stackWidth/2 &&
-                            mouseY >= stackCardY - stackHeight/2 && mouseY <= stackCardY + stackHeight/2) {
-                            
-                            this.selectedPreviewCard = card;
-                            this.drawPreviewPanel();
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. SCAN THE HAND REGION (COLUMN 1)
-        for (const p of perspectiveMap) {
-            const c = this.fieldCoordinates[p.coordKey];
-            const hand = state[p.stateKey]?.hand || [];
-            const totalCards = hand.length;
-            const isLocalSeat = c === this.fieldCoordinates.local;
-
-            for (let index = 0; index < hand.length; index++) {
-                const card = hand[index];
-                
-                // Reuse layout math
-                const layout = this.getHandCardLayout(index, totalCards, isLocalSeat);
-                const cardX = layout.x;
-                const cardY = c.handStart.y + layout.y;
-                const halfW = layout.width / 2;
-                const halfH = layout.height / 2;
-
-                if (mouseX >= cardX - halfW && mouseX <= cardX + halfW &&
-                    mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
-                    this.selectedPreviewCard = card;
-                    this.drawPreviewPanel();
-                    return;
-                }
-            }
-
-            // 3. SCAN THE SUPPORT AREA TRAY (COLUMN 2)
-            const support = state[p.stateKey]?.support || [];
-            const reversedSupport = support.slice().reverse();
-
-            for (let reversedIndex = 0; reversedIndex < reversedSupport.length; reversedIndex++) {
-                const card = reversedSupport[reversedIndex];
-                const originalIndex = (support.length - 1) - reversedIndex;
-                
-                const shiftX = c.supportStart.x + (originalIndex * c.supportOverlap);
-                const shiftY = c.supportStart.y;
-
-                if (mouseX >= shiftX - halfW && mouseX <= shiftX + halfW &&
-                    mouseY >= shiftY - halfH && mouseY <= shiftY + halfH) {
-                    
-                    this.selectedPreviewCard = card;
-                    this.drawPreviewPanel();
-                    return; 
-                }
-            }
-
-            // 4. INTEGRATED: SCAN THE DISCARD PILE (COLUMN 2 SLOTS)
-            const discard = state[p.stateKey]?.discard || [];
-            if (discard.length > 0) {
-                if (mouseX >= c.discard.x - halfW && mouseX <= c.discard.x + halfW &&
-                    mouseY >= c.discard.y - halfH && mouseY <= c.discard.y + halfH) {
-                    
-                    // Grab the top card from the array tail
-                    const topDiscardCard = discard[discard.length - 1];
-                    if (topDiscardCard) {
-                        console.log(`🎯 [ISOLATED PREVIEW TARGET]: Top discard card locked: ${topDiscardCard.id}`);
-                        this.selectedPreviewCard = topDiscardCard;
-                        this.drawPreviewPanel();
-                        return;
-                    }
-                }
-            }
-
-            const defeatedZoneCards = state[p.stateKey]?.defeated || [];
-            if (defeatedZoneCards.length > 0) {
-                const matchedWaterfallCards = [];
-
-                // 1. Iterate through the entire pile array
-                defeatedZoneCards.forEach((card, index) => {
-                    // Map the explicit 30px waterfall rendering step offset
-                    const targetCardX = c.defeated.x;
-                    const targetCardY = c.defeated.y + (index * 30);
-
-                    // 2. Check individual layout coordinates against your cursor
-                    if (mouseX >= targetCardX - halfW && mouseX <= targetCardX + halfW &&
-                        mouseY >= targetCardY - halfH && mouseY <= targetCardY + halfH) {
-                        
-                        // Push card and its depth layer context into a collections pool
-                        matchedWaterfallCards.push({
-                            cardData: card,
-                            depth: 50 + index
-                        });
-                    }
-                });
-
-                // 3. Resolve the collision check target safely
-                if (matchedWaterfallCards.length > 0) {
-                    // Sort highest depth to lowest depth to maintain intuitive layer overlap priority
-                    matchedWaterfallCards.sort((a, b) => b.depth - a.depth);
-
-                    // OPTION A: Default focus to the topmost card hit under the pointer cursor
-                    const targetCard = matchedWaterfallCards[0].cardData;
-
-                    // OPTION B (Advanced Cycling Trick): 
-                    // If your preview panel is ALREADY looking at one of these hits, 
-                    // select the card right underneath it to allow shifting/cycling!
-                    let finalSelection = targetCard;
-                    if (this.selectedPreviewCard) {
-                        const currentIdx = matchedWaterfallCards.findIndex(item => item.cardData.id === this.selectedPreviewCard.id);
-                        if (currentIdx !== -1 && currentIdx + 1 < matchedWaterfallCards.length) {
-                            finalSelection = matchedWaterfallCards[currentIdx + 1].cardData;
-                        }
-                    }
-
-                    console.log(`🎯 [WATERFALL TARGET]: Locked focus on stack layer card: ${finalSelection.id}`);
-                    this.selectedPreviewCard = finalSelection;
-                    this.drawPreviewPanel();
-                    return; // Complete validation frame pass safely
-                }
-            }
-
-            // 5. SCAN REMAINING STATIC CARD IMAGES (FIGHTERS, STAGE, EXTRA)
-            const bZone = state[p.stateKey]?.battleZone || {};
-            const staticSlots = [
-                { coord: c.extraA, card: bZone.extraA },
-                { coord: c.extraB, card: bZone.extraB },
-                { coord: c.fighterA, card: bZone.fighterA?.card },
-                { coord: c.fighterB, card: bZone.fighterB?.card },
-                { coord: c.stage, card: bZone.stage },
-            ]; // important: scan 'extra' slots before fighters. If they exist, 'extras' are placed directly on top! 
-
-            for (const slot of staticSlots) {
-                if (slot.card && mouseX >= slot.coord.x - halfW && mouseX <= slot.coord.x + halfW &&
-                    mouseY >= slot.coord.y - halfH && mouseY <= slot.coord.y + halfH) {
-                    this.selectedPreviewCard = slot.card;
-                    this.drawPreviewPanel();
-                    return;
-                }
-            }
+        // 2. Scan the field for any card overlapping the target coordinates
+        const foundTarget = this.findCardAtCoordinates(targetX, targetY);
+        if (foundTarget) {
+            this.selectedPreviewCard = foundTarget.card;
+            this.drawPreviewPanel();
         }
     }
-
 
     /**
      * Renders a faceDownStack to the right of a specific fighter slot.
@@ -2170,71 +2124,6 @@ class GameScene extends Phaser.Scene {
         }
     }
 
-    drawVectorCardBack(container, width, height, scaleFactor) {
-        const halfW = width / 2;
-        const halfH = height / 2;
-        
-        // 🛠️ PHASER 3 FIX: Generate the graphics node directly bound to the container's local scene reference
-        const cardShape = container.scene.add.graphics();
-        container.add(cardShape); // Mount immediately to lock local drawing matrices
-
-        cardShape.fillStyle(730437, 1);
-        cardShape.lineStyle(2, 3718648, 1);
-        
-        // 1. Core Card Frame Boundaries
-        cardShape.fillRoundedRect(-halfW, -halfH, width, height, 6);
-        cardShape.strokeRoundedRect(-halfW, -halfH, width, height, 6);
-
-        // 2. Linear Diagonal Striping Texture Layer
-        cardShape.lineStyle(2, 1261684, 0.4); 
-        const stripeSpacing = Math.max(10, Math.floor(16 * scaleFactor));
-        
-        for (let offset = -height; offset < width + height; offset += stripeSpacing) {
-            let startX = offset;
-            let startY = -halfH;
-            let endX = offset + height;
-            let endY = halfH;
-
-            // Manual canvas boundary clamping to keep lines safe inside corners
-            if (startX < -halfW) {
-                startY += (-halfW - startX);
-                startX = -halfW;
-            }
-            if (endX > halfW) {
-                endY -= (endX - halfW);
-                endX = halfW;
-            }
-
-            if (startY < halfH && endY > -halfH && startX < halfW && endX > -halfW) {
-                cardShape.lineBetween(startX, startY, endX, endY);
-            }
-        }
-
-        // 3. Centered Large "CRB" Emblem Typography
-        const logoFontSize = Math.max(14, Math.floor(22 * scaleFactor));
-        const logoStyle = {
-            fontSize: `${logoFontSize}px`,
-            fontFamily: "monospace",
-            fill: "#38bdf8",
-            fontWeight: "900",
-            align: "center"
-        };
-        const logoText = this.add.text(0, -Math.floor(10 * scaleFactor), "CRB", logoStyle).setOrigin(0.5);
-        container.add(logoText);
-
-        // 4. "Sandbox" Script Tagline Placement
-        const tagFontSize = Math.max(8, Math.floor(11 * scaleFactor));
-        const tagStyle = {
-            fontSize: `${tagFontSize}px`,
-            fontFamily: "monospace",
-            fill: "#e2e8f0",
-            fontWeight: "bold",
-            align: "center"
-        };
-        const tagText = this.add.text(0, Math.floor(16 * scaleFactor), "Sandbox", tagStyle).setOrigin(0.5);
-        container.add(tagText);
-    }
-
     animateCardFlight(startPos, endPos, cardData, isFaceDown = false, duration = 350, customStartPos = null) {
         // LOCATE AND CLEAN UP THE GHOST CARD
         this.children.list.forEach(child => {
@@ -2307,96 +2196,101 @@ class GameScene extends Phaser.Scene {
         }
     }
 
+    /**
+     * Moves a card to a new zone when you press a keyboard shortcut, then updates the screen and sends the
+     * move to the server.
+     * 
+     * @param {Object} sanitizedState - Incoming game state payload.
+     * @returns {boolean} True if an animation sequence was successfully initialized.
+     */
     checkAndAnimateStateChanges(sanitizedState) {
         if (!this.lastReceivedState) return false;
 
-        const oldState = this.lastReceivedState;
-        const newState = sanitizedState;
         const rolesToCheck = ["playerA", "playerB"];
-        const listZones = ["hand", "support", "discard", "defeated", "deck", "fighterA", "fighterB"];
 
-        // 1. Traverse both seats
         for (const targetRole of rolesToCheck) {
-            const oldPlayer = oldState[targetRole] || {};
-            const newPlayer = newState[targetRole] || {};
+            const oldPlayer = this.lastReceivedState[targetRole] || {};
+            const newPlayer = sanitizedState[targetRole] || {};
 
-            // Keep track of every card UUID found in the old state vs the new state
-            const oldCardPositions = {};
-            const newCardPositions = {};
+            // Flatten loops: Build flat lookup maps using our extracted helper method
+            const oldCardPositions = this.mapPlayerCardPositions(oldPlayer);
+            const newCardPositions = this.mapPlayerCardPositions(newPlayer);
 
-            // Map out where every card was located in the previous frame
-            listZones.forEach(zone => {
-                let list;
-                switch (zone) {
-                    case 'fighterA':
-                    case 'fighterB':
-                        list = [oldPlayer.battleZone[zone].card] || [];
-                        break;
-                    default:
-                        list = oldPlayer[zone] || [];
-                }
-
-                list.forEach((card, index) => {
-                    if (card && card.uuid) {
-                        oldCardPositions[card.uuid] = { zone, index, totalCount: list.length };
-                    }
-                });
-            });
-
-            // Map out where every card is located now in the incoming frame
-            listZones.forEach(zone => {
-                let list;
-                switch (zone) {
-                    case 'fighterA':
-                    case 'fighterB':
-                        list = [newPlayer.battleZone[zone].card] || [];
-                        break;
-                    default:
-                        list = newPlayer[zone] || [];
-                }
-                list.forEach((card, index) => {
-                    if (card && card.uuid) {
-                        newCardPositions[card.uuid] = { zone, index, totalCount: list.length, cardRef: card };
-                    }
-                });
-            });
-
-            // 2. Find the card that crossed boundaries between zones
             for (const uuid in newCardPositions) {
                 const prev = oldCardPositions[uuid];
                 const current = newCardPositions[uuid];
 
-                // If it existed before but changed its zone layout name, we have our moving target!
+                // Delta validation rule pass: Identify crossing zone coordinates
                 if (prev && prev.zone !== current.zone) {
-                    console.log(`✨ [CONSOLIDATED DELTA ENGINE]: Card ${current.cardRef.id} moved from '${prev.zone}' to '${current.zone}' (${targetRole}).`);
-
-                    // Calculate where the card should fly from
-                    let startPos = this.calculateZoneCoordinates(targetRole, prev.zone, prev.index, prev.totalCount);
-                    
-                    // 🌟 SHORTCUT INTEGRATION FIX: 
-                    // If the local player triggered this with a click/key hover, override the start coordinate 
-                    if (targetRole === this.role && this.lastDropPos) {
-                        startPos = { x: this.lastDropPos.x, y: this.lastDropPos.y };
-                    }
-
-                    // Calculate where the card is heading
-                    const endPos = this.calculateZoneCoordinates(targetRole, current.zone, current.index, current.totalCount);
-
-                    // Hide cards going to hidden remote layouts (fog of war rule compliance)
-                    const isMaskedBack = targetRole !== this.role && this.role !== "spectator" && current.zone === "hand";
-
-                    // Update snapshot cache right before animating to prevent frame tearing desyncs
-                    this.lastReceivedState = sanitizedState;
-                    this.lastDropPos = null; // Clear key hover tracking token immediately
-
-                    // Execute flight trail physics
-                    this.animateCardFlight(startPos, endPos, current.cardRef, isMaskedBack, 300);
-                    return true; 
+                    this.executeStateTransitionAnimation(targetRole, prev, current, sanitizedState);
+                    return true;
                 }
             }
         }
 
-        return false; // No list-based transitions detected
+        return false;
+    }
+
+    /**
+     * Loops through all zones on a player's side of the board to find where every card is.
+     * Puts all of the card positions into a single flat list to make searching faster.
+     * 
+     * @param {Object} player - Player data from the server state.
+     * @returns {Object} A flat list of card positions sorted by card UUID numbers.
+     */
+    mapPlayerCardPositions(player) {
+        const positions = {};
+        const listZones = ["hand", "support", "discard", "defeated", "deck", "fighterA", "fighterB", "stage"];
+
+        listZones.forEach(zone => {
+            let list = [];
+            
+            // Centralized path routing logic
+            if (zone === "fighterA" || zone === "fighterB") {
+                list = player.battleZone?.[zone]?.card ? [player.battleZone[zone].card] : [];
+            } else if (zone === "stage") {
+                list = player.battleZone?.stage ? [player.battleZone.stage] : [];
+            } else {
+                list = player[zone] || [];
+            }
+
+            list.forEach((card, index) => {
+                if (card && card.uuid) {
+                    positions[card.uuid] = { zone, index, totalCount: list.length, cardRef: card };
+                }
+            });
+        });
+
+        return positions;
+    }
+
+    /**
+     * Figures out the start and end positions of a moving card and starts its flight animation.
+     * Updates the saved game state and clears any leftover mouse drag positions.
+     * 
+     * @param {string} targetRole - The player seat currently making a move.
+     * @param {Object} prev - The card's previous location data.
+     * @param {Object} current - The card's new destination location data.
+     * @param {Object} sanitizedState - The new game state payload from the server.
+     */
+    executeStateTransitionAnimation(targetRole, prev, current, sanitizedState) {
+        console.log(`✨ [CONSOLIDATED DELTA ENGINE]: Card ${current.cardRef.id} moved from '${prev.zone}' to '${current.zone}' (${targetRole}).`);
+
+        let startPos = this.calculateZoneCoordinates(targetRole, prev.zone, prev.index, prev.totalCount);
+        
+        // Handle optimistic cursor path overrides for interactive loops
+        if (targetRole === this.role && this.lastDropPos) {
+            startPos = { x: this.lastDropPos.x, y: this.lastDropPos.y };
+        }
+
+        const endPos = this.calculateZoneCoordinates(targetRole, current.zone, current.index, current.totalCount);
+        const isMaskedBack = targetRole !== this.role && this.role !== "spectator" && current.zone === "hand";
+
+        // Save states and clean tracking metrics immediately to prevent layout tearing bugs
+        this.lastReceivedState = sanitizedState;
+        this.lastDropPos = null;
+
+        this.animateCardFlight(startPos, endPos, current.cardRef, isMaskedBack, 300);
     }
 
     attachCardInspectionListeners(displayObject, card, isCardBack) {
@@ -2796,6 +2690,23 @@ class GameScene extends Phaser.Scene {
                 }
             }
         }
+    }
+
+    /**
+     * Draws a clean vector rectangle border around a text button component.
+     * Uses the center origin math of the text block to center the border lines.
+     * 
+     * @param {Phaser.GameObjects.Text} textButton - The text object button.
+     * @param {number} [color=3718648] - Decimal hex code color value.
+     */
+    drawButtonOutline(textButton, color = 3718648) {
+        this.fieldGraphics.lineStyle(1, color, 0.6);
+        this.fieldGraphics.strokeRect(
+            textButton.x - textButton.width / 2, 
+            textButton.y - textButton.height / 2, 
+            textButton.width, 
+            textButton.height
+        );
     }
 
 }
