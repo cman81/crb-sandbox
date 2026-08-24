@@ -506,8 +506,12 @@ io.on("connection", socket => {
         const support = table.gameState[targetPlayer]?.support;
         let targetCard = null;
 
-        if (zone === "fighterA") targetCard = bZone?.fighterA?.card;
-        else if (zone === "fighterB") targetCard = bZone?.fighterB?.card;
+        if (zone === "fighterA") {
+            targetCard = (bZone?.extraA) ? (bZone?.extraA) : bZone?.fighterA?.card;
+        }
+        else if (zone === "fighterB") {
+            targetCard = (bZone?.extraB) ? (bZone?.extraB) : bZone?.fighterB?.card;
+        }
         else if (zone === "stage") targetCard = bZone?.stage;
         else if (zone === "support" && Array.isArray(support)) targetCard = support[parseInt(supportIndex)];
 

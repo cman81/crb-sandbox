@@ -343,8 +343,20 @@ class GameScene extends Phaser.Scene {
                         const targetState = this.lastReceivedState[tapData.targetPlayer];
                         const bZone = targetState.battleZone || {};
 
-                        if (tapData.zone === "fighterA" && bZone.fighterA && bZone.fighterA.card) bZone.fighterA.card.isTapped = tapData.isTapped;
-                        else if (tapData.zone === "fighterB" && bZone.fighterB && bZone.fighterB.card) bZone.fighterB.card.isTapped = tapData.isTapped;
+                        if (tapData.zone === "fighterA" && bZone.fighterA && bZone.fighterA.card) {
+                            if (bZone.extraA) {
+                                bZone.extraA.isTapped = tapData.isTapped;
+                            } else {
+                                bZone.fighterA.card.isTapped = tapData.isTapped;
+                            }
+                        }
+                        else if (tapData.zone === "fighterB" && bZone.fighterB && bZone.fighterB.card) {
+                            if (bZone.extraB) {
+                                bZone.extraB.isTapped = tapData.isTapped;
+                            } else {
+                                bZone.fighterB.card.isTapped = tapData.isTapped;
+                            }
+                        }
                         else if (tapData.zone === "stage" && bZone.stage) bZone.stage.isTapped = tapData.isTapped;
                         else if (tapData.zone === "support" && Array.isArray(targetState.support) && targetState.support[tapData.supportIndex]) {
                             targetState.support[tapData.supportIndex].isTapped = tapData.isTapped;
@@ -1745,9 +1757,9 @@ class GameScene extends Phaser.Scene {
         const halfW = this.cardWidth / 2;
         const halfH = this.cardHeight / 2;
 
-        // 1. SCAN LOCAL FIGHTER A
+        // 1. SCAN LOCAL FIGHTER A - (Also handles extraA)
         if (bZone.fighterA && bZone.fighterA.card) {
-            const card = bZone.fighterA.card;
+            const card = (bZone.extraA) ? bZone.extraA : bZone.fighterA.card;
             // Dynamic check: Invert detection dimensions if the asset card is tapped
             const hW = card.isTapped ? halfH : halfW;
             const hH = card.isTapped ? halfW : halfH;
@@ -1759,9 +1771,9 @@ class GameScene extends Phaser.Scene {
             }
         }
 
-        // 2. SCAN LOCAL FIGHTER B
+        // 2. SCAN LOCAL FIGHTER B - (Also handles extraB)
         if (bZone.fighterB && bZone.fighterB.card) {
-            const card = bZone.fighterB.card;
+            const card = (bZone.extraB) ? bZone.extraB : bZone.fighterB.card;
             const hW = card.isTapped ? halfH : halfW;
             const hH = card.isTapped ? halfW : halfH;
 
@@ -2426,7 +2438,6 @@ class GameScene extends Phaser.Scene {
 
         return false; // No list-based transitions detected
     }
-
 
     attachCardInspectionListeners(displayObject, card, isCardBack) {
         // Only bind interaction loops if it's a real card face (ignore empty backs)
