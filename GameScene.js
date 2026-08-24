@@ -1015,17 +1015,14 @@ class GameScene extends Phaser.Scene {
                     return;
                 }
 
-                // 4. REUSING YOUR RAYCAST ENGINE:
-                // Pass the live mouse click coordinates directly to your universal helper
-                const hitCard = this.raycastDefeatedCardAtPosition(pointer.worldX, pointer.worldY);
-
-                if (hitCard) {
-                    console.log(`🎯 [RAYCAST CLICK]: Validated cursor intersection on card ${hitCard.id}. Opening drawer...`);
+                // Verify we hit a valid asset and that it specifically belongs to the defeated pile
+                const targetInfo = this.findCardAtCoordinates(pointer.worldX, pointer.worldY);
+                if (targetInfo && targetInfo.zoneName === "defeated") {
+                    console.log(`🎯 [RAYCAST CLICK]: Validated cursor intersection on card ${targetInfo.card.id}. Opening drawer...`);
                     this.toggleStackDrawer(stateKey, zoneKey);
                 }
             });
         }
-
 
         if (zoneKey === "stage") {
             const propName = `localDrop_${zoneKey}`;
@@ -1945,63 +1942,6 @@ class GameScene extends Phaser.Scene {
     }
 
     /**
-     * Traces mouse vectors against local hand cards to execute an instant key-driven discard.
-     */
-    handleKeyboardDiscardAction(mouseX, mouseY) {
-        if (!this.lastReceivedState || !this.lastReceivedState[this.role]) return;
-        
-        const state = this.lastReceivedState;
-        const c = this.fieldCoordinates.local;
-        const halfW = this.cardWidth / 2;
-        const halfH = this.cardHeight / 2;
-        
-        // -----------------------------------------------------------
-        // CONTEXT A: Hovering Over A Support Card -> Move to Discard
-        // -----------------------------------------------------------
-        const support = state[this.role].support || [];
-        
-        // Scan front-to-back (reverse) to grab overlapping cards accurately
-        for (let i = support.length - 1; i >= 0; i--) {
-            const card = support[i];
-            const shiftX = c.supportStart.x + i * c.supportOverlap;
-            
-            // Dynamically shift boundaries based on Rest Mode orientation
-            const hW = card.isTapped ? halfH : halfW;
-            const hH = card.isTapped ? halfW : halfH;
-            
-            if (mouseX >= shiftX - hW && mouseX <= shiftX + hW && mouseY >= c.supportStart.y - hH && mouseY <= c.supportStart.y + hH) {
-                console.log(`📡 [SHORTCUT D EMIT]: Discarding support lane card index ${i} (${card.id})...`);
-                
-                // Emit to your newly created backend socket handler
-                this.socket.emit("discardSupport", {
-                    tableId: this.tableId,
-                    targetPlayer: this.role,
-                    supportIndex: i
-                });
-                return; // Exit early so it doesn't fall through to hand discard check
-            }
-        }
-
-        // -----------------------------------------------------------
-        // CONTEXT B: Fallback (Hovering Over Hand) -> Existing Discard Loop
-        // -----------------------------------------------------------
-        const hand = state[this.role].hand || [];
-        for (let index = hand.length - 1; index >= 0; index--) {
-            const layout = this.getHandCardLayout(index, hand.length, true);
-            const cardX = layout.x;
-            const cardY = c.handStart.y + layout.y;
-            const handHalfW = layout.width / 2;
-            const handHalfH = layout.height / 2;
-            
-            if (mouseX >= cardX - handHalfW && mouseX <= cardX + handHalfW && mouseY >= cardY - handHalfH && mouseY <= cardY + handHalfH) {
-                console.log(`📡 [DECOUPLED DISCARD EMIT]: Target locked on hand index ${index}. Sending request to server.`);
-                this.socket.emit("discardCardFromHand", { tableId: this.tableId, targetPlayer: this.role, handIndex: index });
-                return;
-            }
-        }
-    }
-
-    /**
      * Scans local hand cards under cursor to move a card to the top or bottom of the deck.
      */
     handleHandToDeckShortcut(mouseX, mouseY, destination) {
@@ -2613,45 +2553,6 @@ class GameScene extends Phaser.Scene {
         this.hoveredCardData = null;
         this.animatingUuids = [];
         this.lastReceivedState = null;
-    }
-
-    raycastDefeatedCardAtPosition(mouseX, mouseY) {
-        if (!this.lastReceivedState) return null;
-        const state = this.lastReceivedState;
-        const isPlayerB = this.role === "playerB";
-        const perspectiveMap = [
-            { stateKey: isPlayerB ? "playerB" : "playerA", coordKey: "local" },
-            { stateKey: isPlayerB ? "playerA" : "playerB", coordKey: "remote" }
-        ];
-        
-        const halfW = this.cardWidth / 2;
-        const halfH = this.cardHeight / 2;
-
-        for (const p of perspectiveMap) {
-            const c = this.fieldCoordinates[p.coordKey];
-            const defeatedZoneCards = state[p.stateKey]?.defeated || [];
-            
-            // Sweep the defeated waterfall array from bottom-to-top (visual top-to-bottom)
-            if (defeatedZoneCards.length > 0) {
-                const matchedWaterfallCards = [];
-                defeatedZoneCards.forEach((card, index) => {
-                    const targetCardX = c.defeated.x;
-                    const targetCardY = c.defeated.y + (index * 30); // 30px vertical step rule
-
-                    if (mouseX >= targetCardX - halfW && mouseX <= targetCardX + halfW &&
-                        mouseY >= targetCardY - halfH && mouseY <= targetCardY + halfH) {
-                        matchedWaterfallCards.push({ cardData: card, depth: 50 + index });
-                    }
-                });
-
-                if (matchedWaterfallCards.length > 0) {
-                    // Sort by highest depth so the topmost card visually under the cursor is picked
-                    matchedWaterfallCards.sort((a, b) => b.depth - a.depth);
-                    return matchedWaterfallCards[0].cardData;
-                }
-            }
-        }
-        return null;
     }
 
     findCardAtCoordinates(mouseX, mouseY) {
