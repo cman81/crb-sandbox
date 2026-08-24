@@ -208,6 +208,31 @@ class GameScene extends Phaser.Scene {
             }
         });
 
+        // 🧪 SEAT-SWAP SANDBOX CHEAT CODE: Press [K] to toggle between Player A and Player B seats instantly
+        this.input.keyboard.on("keydown-K", () => {
+            // Ignore if you are currently just a spectator
+            if (this.role === "spectator") {
+                console.log("⚠️ [CHEAT CODE ABORTED]: Spectators cannot jump into active player seats.");
+                return;
+            }
+
+            const oldRole = this.role;
+            // Swap the string variable seamlessly
+            this.role = oldRole === "playerA" ? "playerB" : "playerA";
+            
+            console.log(`⚡ [SANDBOX CHEAT]: Swapping active seating perspectives from ${oldRole} ➡️ ${this.role}`);
+
+            // 1. Notify the server of our updated state identity
+            this.socket.emit("joinTable", { tableId: this.tableId, role: this.role });
+            
+            // 2. Request a clean master state refresh payload from the server channel
+            this.socket.emit("getGameState", { tableId: this.tableId, role: this.role });
+
+            // 3. Force Phaser to clear and redraw everything from our new perspective angle
+            if (this.lastReceivedState) {
+                this.handleStateRenderingLoop(this.lastReceivedState);
+            }
+        });
 
         // Various keys for moving a card from one zone to another:
         // (H)and, (S)upport, (D)iscard, De(f)eated, D(e)ck
@@ -1942,36 +1967,31 @@ class GameScene extends Phaser.Scene {
     }
 
     /**
-     * Scans local hand cards under cursor to move a card to the top or bottom of the deck.
+     * Routes a card from the user's hand back into their main deck repository stack.
+     * Reuses the central coordinate index layer to handle slot target verification.
+     * 
+     * @param {number} mouseX - Current pointer position tracking width axis.
+     * @param {number} mouseY - Current pointer position tracking height axis.
+     * @param {string} destination - Direction modifier, either "top" or "bottom".
+     * @returns {void} Emits the respective deck layout update event to the server.
      */
     handleHandToDeckShortcut(mouseX, mouseY, destination) {
-        if (!this.lastReceivedState || !this.lastReceivedState[this.role]) return;
+        if (!this.lastReceivedState) return;
+
+        // Route coordinates straight through your master targeting engine
+        const targetInfo = this.findCardAtCoordinates(mouseX, mouseY);
+
+        // Enforce that the targeted card is in your hand and belongs to you
+        if (!targetInfo || targetInfo.ownerId !== this.role || targetInfo.zoneName !== "hand") return;
+
+        console.log(`📡 [DECOUPLED DECK MOVE EMIT]: Moving hand index ${targetInfo.index} to ${destination} of deck.`);
         
-        const state = this.lastReceivedState;
-        const c = this.fieldCoordinates.local;
-        const hand = state[this.role].hand || [];
-
-        for (let index = hand.length - 1; index >= 0; index--) {
-            const layout = this.getHandCardLayout(index, hand.length, true);
-            const cardX = layout.x;
-            const cardY = c.handStart.y + layout.y;
-            const halfW = layout.width / 2;
-            const halfH = layout.height / 2;
-
-            if (mouseX >= cardX - halfW && mouseX <= cardX + halfW &&
-                mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
-                
-                console.log(`📡 [DECOUPLED DECK MOVE EMIT]: Moving hand index ${index} to ${destination} of deck.`);
-                
-                // EMIT INTENT ONLY: Let the server process the transaction safely
-                if (destination === "top") {
-                    this.socket.emit("playHandToTopDeck", { tableId: this.tableId, targetPlayer: this.role, handIndex: index });
-                } else {
-                    this.socket.emit("playHandToBottomDeck", { tableId: this.tableId, targetPlayer: this.role, handIndex: index });
-                }
-                return;
-            }
-        }
+        const socketEvent = destination === "top" ? "playHandToTopDeck" : "playHandToBottomDeck";
+        this.socket.emit(socketEvent, {
+            tableId: this.tableId,
+            targetPlayer: this.role,
+            handIndex: targetInfo.index
+        });
     }
 
     handleKeyboardFaceDownAction(mouseX, mouseY) {
