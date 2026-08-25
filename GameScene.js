@@ -1129,6 +1129,14 @@ class GameScene extends Phaser.Scene {
             this.fieldGraphics.lineStyle(1, 15680580, .6);
             this.fieldGraphics.strokeRect(defeatBtn.x - defeatBtn.width / 2, defeatBtn.y - defeatBtn.height / 2, defeatBtn.width, defeatBtn.height);
             defeatBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+                const myBattleZone = this.lastReceivedState[this.role].battleZone;
+                if (zoneKey == 'fighterA' && myBattleZone.extraA) {
+                    zoneKey = 'extraA';
+                }
+                if (zoneKey == 'fighterB' && myBattleZone.extraB) {
+                    zoneKey = 'extraB';
+                }
+
                 this.socket.emit("moveFighterToDefeated", { tableId: this.tableId, targetPlayer: this.role, slot: zoneKey })
             });
         }
