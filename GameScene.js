@@ -1571,7 +1571,7 @@ class GameScene extends Phaser.Scene {
 
         // 1. Check open drawer overlays first
         if (this.drawerContainer && this.drawerState?.isOpen) {
-            const drawerTarget = this.findCardInDrawer();
+            const drawerTarget = this.findCardInDrawer(true);
             if (drawerTarget) {
                 this.selectedPreviewCard = drawerTarget.card;
                 this.drawPreviewPanel();
@@ -2559,6 +2559,14 @@ class GameScene extends Phaser.Scene {
         this.lastReceivedState = null;
     }
 
+    /**
+     * Finds which card is under the mouse cursor using its X and Y screen positions.
+     * Scans open drawers first, then checks both players' board zones from top to bottom.
+     *
+     * @param {number} mouseX - The current horizontal mouse position on the screen.
+     * @param {number} mouseY - The current vertical mouse position on the screen.
+     * @returns {Object|null} An object with the card data, owner, zone name, and index, or null if empty space was clicked.
+     */
     findCardAtCoordinates(mouseX, mouseY) {
         const foundCard = this.findCardInDrawer();
         if (foundCard) return foundCard;
@@ -2751,7 +2759,14 @@ class GameScene extends Phaser.Scene {
         });
     }
 
-    findCardInDrawer() {
+    /**
+     * Checks if the mouse cursor is hovering over a card inside an open drawer.
+     * Blocks actions if you try to modify an opponent's card without permission.
+     *
+     * @param {boolean} [isPreviewing=false] - True if just checking without taking an action.
+     * @returns {Object|null} An object containing the card data and position information, or null if no card is found.
+     */
+    findCardInDrawer(isPreviewing = false) {
         // 🆕 DRAWER HOVER CHECKER: If a drawer is open, check it FIRST
         if (this.drawerContainer && this.drawerState && this.drawerState.isOpen) {
             // Raycast directly through the items currently sitting inside the drawer container
@@ -2763,7 +2778,7 @@ class GameScene extends Phaser.Scene {
                     const cardIndex = target.data.get("drawerCardIndex"); // Retrieve the original pile index
                     
                     // Security Lockout: Opponents cannot use shortcuts on your hidden card stacks
-                    if (this.drawerState.playerKey !== this.role) {
+                    if (!isPreviewing && this.drawerState.playerKey !== this.role) {
                         console.log("⚠️ [ACTION BLOCKED]: You cannot move your opponent's extra deck cards.");
                         return null;
                     }
