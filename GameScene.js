@@ -331,6 +331,15 @@ class GameScene extends Phaser.Scene {
      * @param {string} key - Keyboard key that was pressed.
      */
     executeKeyboardZoneTransfer(targetInfo, destinationZone, mouseX, mouseY, key) {
+        // infer that, if we are trying to move a card to fighter and it's occupied, move a card to its extra zone
+        const myBattleZone = this.lastReceivedState[this.role].battleZone;
+        if (destinationZone == 'fighterA' && myBattleZone.fighterA.card) {
+            destinationZone = 'extraA';
+        }
+        if (destinationZone == 'fighterB' && myBattleZone.fighterB.card) {
+            destinationZone = 'extraB';
+        }
+
         // Enforce boundary parameters: Block moving opponent assets or tracking redundant zones
         if (targetInfo.zoneName === destinationZone) {
             console.log(`⚠️ [ACTION BLOCKED]: Card is already in the ${destinationZone} zone.`);
@@ -2177,17 +2186,14 @@ class GameScene extends Phaser.Scene {
 
         switch (zoneKey) {
             case "deck":
-                return c.deck;
             case "discard":
-                return c.discard;
             case "defeated":
-                return c.defeated;
             case "stage":
-                return c.stage;
             case "fighterA":
-                return c.fighterA;
             case "fighterB":
-                return c.fighterB;
+            case "extraA":
+            case "extraB":
+                return c[zoneKey];
             case "support":
                 return {
                     x: c.supportStart.x + (itemIndex * c.supportOverlap),
@@ -2248,7 +2254,7 @@ class GameScene extends Phaser.Scene {
      */
     mapPlayerCardPositions(player) {
         const positions = {};
-        const listZones = ["hand", "support", "discard", "defeated", "deck", "fighterA", "fighterB", "stage"];
+        const listZones = ["hand", "support", "discard", "defeated", "deck", "fighterA", "fighterB", "stage", "extraA", "extraB"];
 
         listZones.forEach(zone => {
             let list = [];
@@ -2256,8 +2262,8 @@ class GameScene extends Phaser.Scene {
             // Centralized path routing logic
             if (zone === "fighterA" || zone === "fighterB") {
                 list = player.battleZone?.[zone]?.card ? [player.battleZone[zone].card] : [];
-            } else if (zone === "stage") {
-                list = player.battleZone?.stage ? [player.battleZone.stage] : [];
+            } else if (zone === "stage" || zone === "extraA" || zone === "extraB") {
+                list = player.battleZone?.[zone] ? [player.battleZone[zone]] : [];
             } else {
                 list = player[zone] || [];
             }
