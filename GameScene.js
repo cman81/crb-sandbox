@@ -267,15 +267,19 @@ class GameScene extends Phaser.Scene {
 
         // 🧪 SEAT-SWAP SANDBOX CHEAT CODE: Press [K] to toggle between Player A and Player B seats instantly
         this.input.keyboard.on("keydown-K", () => {
-            // Ignore if you are currently just a spectator
-            if (this.role === "spectator") {
-                console.log("⚠️ [CHEAT CODE ABORTED]: Spectators cannot jump into active player seats.");
-                return;
-            }
-
             const oldRole = this.role;
             // Swap the string variable seamlessly
-            this.role = oldRole === "playerA" ? "playerB" : "playerA";
+            switch (oldRole) {
+                case 'playerA':
+                    this.role = 'playerB';
+                    break;
+                case 'playerB':
+                    this.role = 'spectator';
+                    break;
+                case 'spectator':
+                    this.role = 'playerA';
+                    break;
+            }
             
             console.log(`⚡ [SANDBOX CHEAT]: Swapping active seating perspectives from ${oldRole} ➡️ ${this.role}`);
 
@@ -985,14 +989,31 @@ class GameScene extends Phaser.Scene {
     }
 
     /**
-     * Handles the individual rendering pipeline lifecycle for any given grid zone box.
+     * Draws a card slot and sets up its controls.
+     * Opens pile drawers for everyone while locking local board buttons to the correct seat.
+     *
+     * @param {Object} point - The X and Y coordinates for the center of the slot.
+     * @param {string} label - The text label displayed on the slot.
+     * @param {string} zoneKey - The slot type (like 'fighterA', 'discard', 'stage').
+     * @param {Object} pData - The player's data sent from the server.
+     * @param {string} stateKey - Who owns this slot ('playerA' or 'playerB').
+     * @param {boolean} isLocalSeat - True if this slot belongs to you.
      */
     processZoneSlot(point, label, zoneKey, pData, stateKey, isLocalSeat) {
         const battleZone = pData.battleZone || {};
         this.drawZoneBoxGeometry(point, label);
         
-        if (isLocalSeat && this.role !== "spectator") {
+        // 1. GLOBAL DRAWER ACCESS PATHWAY: Discard and Defeated bypass standard local seat restrictions.
+        // This allows you, your opponent, and spectators to inspect pile configurations.
+        if (zoneKey === "discard" || zoneKey === "defeated") {
+            this.configurePileDrawerInteractivity(point, zoneKey, stateKey);
+        } 
+        // 2. STANDARD OPERATIONAL PATHWAY: Only the sitting player gets buttons/drop zones
+        else if (isLocalSeat && this.role !== "spectator") {
             this.configureLocalSlotInteractivity(point, zoneKey, stateKey);
+        } else {
+            // Clear old inputs to prevent ghost clicks if players change seats or reconnect
+            this.stripSlotInteractivity(zoneKey, stateKey);
         }
         
         if (zoneKey === "fighterA" || zoneKey === "fighterB") {
@@ -1021,7 +1042,7 @@ class GameScene extends Phaser.Scene {
                     this[overlayPropName].setDisplaySize(this.cardWidth, this.cardHeight);
                     this[overlayPropName].setDepth(120);
 
-                    // --- NEW: FACE-DOWN TRICKERY TOOLTIP DISPLAY LOGIC ---
+                    // --- FACE-DOWN TRICKERY TOOLTIP DISPLAY LOGIC ---
                     // Position the tooltip 70 pixels to the right of the card center
                     const tooltipX = point.x + (this.cardWidth / 2) + 15;
                     const tooltipStyle = {
@@ -1039,7 +1060,6 @@ class GameScene extends Phaser.Scene {
                     // Draw a subtle cyan accent line connecting the card edge to the tooltip balloon
                     this.fieldGraphics.lineStyle(1, 3718648, 0.6);
                     this.fieldGraphics.lineBetween(point.x + (this.cardWidth / 2), point.y, tooltipX, point.y);
-                    // ------------------------------------------------------
 
                     if (isLocalSeat && this.role !== "spectator") {
                         this[overlayPropName].setInteractive({ useHandCursor: true });
@@ -1107,7 +1127,11 @@ class GameScene extends Phaser.Scene {
     }
 
     /**
-     * Establishes the Phaser Drop Zones and interactive stack manipulation panels (+1, -1, ☠️).
+     * Adds the interaction buttons (+1, -1, ☠️) to your fighter slots.
+     *
+     * @param {Object} point - The X and Y coordinates for the center of the slot.
+     * @param {string} zoneKey - The slot type ('fighterA' or 'fighterB').
+     * @param {string} stateKey - Who owns this slot ('playerA' or 'playerB').
      */
     configureLocalSlotInteractivity(point, zoneKey, stateKey) {
         if (zoneKey === "fighterA" || zoneKey === "fighterB") {
@@ -1123,14 +1147,14 @@ class GameScene extends Phaser.Scene {
             const addBtn = this.add.text(point.x - 30, btnY, "+1", btnStyle).setOrigin(0.5);
             this.drawButtonOutline(addBtn);
             addBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
-                this.socket.emit("placeDeckCardToStack", { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey })
+                this.socket.emit("placeDeckCardToStack", { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
             });
 
             const remBtn = this.add.text(point.x + 30, btnY, "-1", btnStyle).setOrigin(0.5);
             this.drawButtonOutline(remBtn);
             this.fieldGraphics.strokeRect(remBtn.x - remBtn.width / 2, remBtn.y - remBtn.height / 2, remBtn.width, remBtn.height);
             remBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
-                this.socket.emit("flipAndDiscardFromStack", { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey })
+                this.socket.emit("flipAndDiscardFromStack", { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
             });
 
             const styleDefeat = { fontSize: "14px", fontFamily: "monospace", fill: "#ef4444", fontWeight: "bold", backgroundColor: "#1e1b4b", padding: { x: 8, y: 4 } };
@@ -1150,67 +1174,108 @@ class GameScene extends Phaser.Scene {
             });
         }
 
-        if (zoneKey === "discard" || zoneKey === "defeated") {
-            const clickHitName = `${zoneKey}ClickHit_${stateKey}`;
-            const dropHitName = `${zoneKey}DropHit_${stateKey}`;
-            
-            if (this[clickHitName]) { this[clickHitName].destroy(); this[clickHitName] = null; }
-            if (this[dropHitName]) { this[dropHitName].destroy(); this[dropHitName] = null; }
-
-            // FIXED: Safely fetch the array using the active stateKey from your cached server data
-            const playerDataCache = this.lastReceivedState && this.lastReceivedState[stateKey] ? this.lastReceivedState[stateKey] : {};
-            const targetPile = playerDataCache[zoneKey] || [];
-            const totalStackedCards = Array.isArray(targetPile) ? targetPile.length : 0;
-
-            // 1. Standard flat drop zone layer for moving things to discard
-            if (zoneKey === "discard") {
-                this[dropHitName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
-                this[dropHitName].setRectangleDropZone(this.cardWidth, this.cardHeight);
-                this[dropHitName].setData("zoneKey", zoneKey);
-                this[dropHitName].setDepth(100);
-            }
-
-            // 2. DYNAMIC GEOMETRIC FOOTPRINT:
-            // Expand the collision box height so it blankets the visual waterfall area
-            let computedZoneHeight = this.cardHeight;
-            let computedOffsetY = 0;
-
-            if (zoneKey === "defeated" && totalStackedCards > 0) {
-                computedZoneHeight = this.cardHeight + ((totalStackedCards - 1) * 30);
-                computedOffsetY = ((totalStackedCards - 1) * 30) / 2;
-            }
-
-            // 3. Create the pointer interaction listener grid
-            this[clickHitName] = this.add.zone(point.x, point.y + computedOffsetY, this.cardWidth, computedZoneHeight);
-            this[clickHitName].setInteractive({ useHandCursor: true });
-            this[clickHitName].setData("zoneKey", zoneKey);
-            this[clickHitName].setDepth(150);
-
-            this[clickHitName].on("pointerdown", pointer => {
-                // FAIL-SAFE: Block if an asset drag loop is currently active
-                if (this.input.dragactive) return;
-                
-                // Discard pile is flat, open it instantly
-                if (zoneKey === "discard") {
-                    this.toggleStackDrawer(stateKey, zoneKey);
-                    return;
-                }
-
-                // Verify we hit a valid asset and that it specifically belongs to the defeated pile
-                const targetInfo = this.findCardAtCoordinates(pointer.worldX, pointer.worldY);
-                if (targetInfo && targetInfo.zoneName === "defeated") {
-                    console.log(`🎯 [RAYCAST CLICK]: Validated cursor intersection on card ${targetInfo.card.id}. Opening drawer...`);
-                    this.toggleStackDrawer(stateKey, zoneKey);
-                }
-            });
-        }
-
         if (zoneKey === "stage") {
             const propName = `localDrop_${zoneKey}`;
             if (this[propName]) this[propName].destroy();
             this[propName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
             this[propName].setRectangleDropZone(this.cardWidth, this.cardHeight);
             this[propName].setData("zoneKey", zoneKey);
+        }
+    }
+
+    /**
+     * Sets up click zones for the Discard and Defeated piles.
+     * Allows you, your opponent, and spectators to click and view these piles.
+     *
+     * @param {Object} point - The X and Y coordinates for the center of the pile.
+     * @param {string} zoneKey - The pile type ('discard' or 'defeated').
+     * @param {string} stateKey - Who owns this pile ('playerA' or 'playerB').
+     */
+    configurePileDrawerInteractivity(point, zoneKey, stateKey) {
+        const clickHitName = `${zoneKey}ClickHit_${stateKey}`;
+        const dropHitName = `${zoneKey}DropHit_${stateKey}`;
+        
+        if (this[clickHitName]) { this[clickHitName].destroy(); this[clickHitName] = null; }
+        if (this[dropHitName]) { this[dropHitName].destroy(); this[dropHitName] = null; }
+
+        // Safely look up how many cards are currently stacked in this pile
+        const activeCache = this.lastReceivedState || {};
+        const playerDataCache = activeCache[stateKey] || {};
+        const targetPile = playerDataCache[zoneKey] || [];
+        const totalStackedCards = Array.isArray(targetPile) ? targetPile.length : 0;
+
+        // 1. DROP ZONE PROTECTION: Only spawn the drag-receiver zone if this pile belongs to your local seat
+        const isMyLocalSeat = (stateKey === this.role); 
+
+        if (zoneKey === "discard" && isMyLocalSeat && this.role !== "spectator") {
+            this[dropHitName] = this.add.zone(point.x, point.y, this.cardWidth, this.cardHeight);
+            this[dropHitName].setRectangleDropZone(this.cardWidth, this.cardHeight);
+            this[dropHitName].setData("zoneKey", zoneKey);
+            this[dropHitName].setDepth(100);
+        }
+
+        // 2. DYNAMIC GEOMETRIC FOOTPRINT:
+        // Expand the collision box height so it blankets the visual waterfall area
+        let computedZoneHeight = this.cardHeight;
+        let computedOffsetY = 0;
+
+        if (zoneKey === "defeated" && totalStackedCards > 0) {
+            computedZoneHeight = this.cardHeight + ((totalStackedCards - 1) * 30);
+            computedOffsetY = ((totalStackedCards - 1) * 30) / 2;
+        }
+
+        // 3. PUBLIC CLICK ZONE GENERATION: Available to everyone on the table
+        this[clickHitName] = this.add.zone(point.x, point.y + computedOffsetY, this.cardWidth, computedZoneHeight);
+        this[clickHitName].setInteractive({ useHandCursor: true });
+        this[clickHitName].setData("zoneKey", zoneKey);
+        this[clickHitName].setDepth(150);
+
+        this[clickHitName].on("pointerdown", pointer => {
+            // Prevent opening the drawer view if the user is currently dragging a card
+            if (this.input.dragactive) return;
+            
+            // Discard pile is flat, open it instantly
+            if (zoneKey === "discard") {
+                this.toggleStackDrawer(stateKey, zoneKey);
+                return;
+            }
+
+            // Verify we hit a valid asset and that it specifically belongs to the defeated pile
+            const targetInfo = this.findCardAtCoordinates(pointer.worldX, pointer.worldY);
+            if (targetInfo && targetInfo.zoneName === "defeated") {
+                console.log(`🎯 [RAYCAST CLICK]: Opening drawer for ${stateKey}'s defeated pile.`);
+                this.toggleStackDrawer(stateKey, zoneKey);
+            }
+        });
+    }
+
+
+    /**
+     * Destroys all localized drop zones, custom raycast pointer elements, and variable physics tracking shapes
+     * bound to a specific card layout footprint. Used to cleanly lock down screens or scrub assets when 
+     * roles shuffle or server instances restart mid-match.
+     *
+     * @param {string} zoneKey - The structural layout identifier string whose bounds are being cleared of input behaviors.
+     * @param {string} stateKey - The contextual ownership namespace tracker mapping the asset data tree ('playerA' or 'playerB').
+     * @returns {void}
+     */
+    stripSlotInteractivity(zoneKey, stateKey) {
+        const propName = `localDrop_${zoneKey}`;
+        const clickHitName = `${zoneKey}ClickHit_${stateKey}`;
+        const dropHitName = `${zoneKey}DropHit_${stateKey}`;
+
+        // Cleanly destroy and remove references to interaction zones
+        if (this[propName]) { 
+            this[propName].destroy(); 
+            this[propName] = null; 
+        }
+        if (this[clickHitName]) { 
+            this[clickHitName].destroy(); 
+            this[clickHitName] = null; 
+        }
+        if (this[dropHitName]) { 
+            this[dropHitName].destroy(); 
+            this[dropHitName] = null; 
         }
     }
 
@@ -1647,7 +1712,18 @@ class GameScene extends Phaser.Scene {
         bgPlate.lineBetween(1536, 0, 1536, 1080);
         this.drawerContainer.add(bgPlate);
 
-        const zoneTitle = zoneType === "defeated" ? "DEFEATED PILE" : "DISCARD CEMETERY PILE";
+        let zoneTitle;
+        switch (zoneType) {
+            case 'defeated':
+                zoneTitle = "DEFEATED PILE";
+                break;
+            case 'discard':
+                zoneTitle = 'DISCARD PILE';
+                break;
+            case 'extraDeck':
+                zoneTitle = 'EXTRA DECK';
+                break;
+        }
         const headerText = this.make.text({
             x: 40, y: 30,
             text: `${playerKey.toUpperCase()} ${zoneTitle} (${cardList.length} CARDS)`,
