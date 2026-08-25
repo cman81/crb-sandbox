@@ -392,88 +392,86 @@ class GameScene extends Phaser.Scene {
         }
     }
 
+    /**
+     * Sets up listeners for server events.
+     * Handles incoming state updates and runs tapping animation sequences.
+     */
     setupNetworkEventListeners() {
+        // 1. Core game state update listener
         this.socket.on("stateUpdate", sanitizedState => {
-            // 1. Hand off the incoming state array frame to your decoupled Motion Analyzer
-            const didTriggerAnimation = this.checkAndAnimateStateChanges(sanitizedState);
-
-            // 2. If a card flight (draw/discard/deploy) animation is running, yield early
-            if (didTriggerAnimation) return;
-
-            // 3. Fallback: Execute the definitive visual paint pass immediately
+            if (this.checkAndAnimateStateChanges(sanitizedState)) return;
+            
             this.lastReceivedState = sanitizedState;
             this.handleStateRenderingLoop(sanitizedState);
         });
 
+        // 2. Card tapping animation listener
         this.socket.on("cardTap", tapData => {
-            console.log(`📡 [NETWORK RECEIVE]: UUID cardTap caught for token: ${tapData.uuid}`);
+            console.log(`📡 [NETWORK RECEIVE]: Card tap for: ${tapData.uuid}`);
 
-            let matchedObject = null;
-            for (let i = 0; i < this.children.list.length; i++) {
-                const child = this.children.list[i];
-                if (child.data && child.data.get("uuid") === tapData.uuid && child.x <= 1536) {
-                    matchedObject = child;
-                    break; // Guard verified. Kill loop instantly to prevent preview hijack.
-                }
-            }
+            // Find the sprite matching our unique card token ID
+            const matchedObject = this.children.list.find(child => 
+                child.data && child.data.get("uuid") === tapData.uuid && child.x <= 1536
+            );
 
             if (!matchedObject) {
-                console.warn("⚠️ [ANIMATION ABORT]: Could not locate matching UUID asset: " + tapData.uuid);
+                console.warn(`⚠️ [ANIMATION ABORT]: Missing UUID asset: ${tapData.uuid}`);
                 return;
             }
 
-            // 1. LOCK VISIBILITY: Register this card's unique UUID as actively animating
+            // Lock sprite visibility and pop depth for the spin duration
             this.animatingUuids.push(tapData.uuid);
-
-            const finalAngle = tapData.isTapped ? -450 : 360;
-            const startAngle = tapData.isTapped ? 0 : -90;
-
-            matchedObject.setAngle(startAngle);
-            matchedObject.setDepth(3000); // Elevate above everything else while spinning
+            matchedObject.setDepth(3000);
+            matchedObject.setAngle(tapData.isTapped ? 0 : -90);
 
             this.tweens.add({
                 targets: matchedObject,
-                angle: finalAngle,
+                angle: tapData.isTapped ? -450 : 360,
                 duration: 500,
                 ease: 'Cubic.easeInOut',
                 onComplete: () => {
                     matchedObject.setAngle(tapData.isTapped ? -90 : 0);
 
-                    // Manually sync local cache data arrays to match the server model
-                    if (this.lastReceivedState && this.lastReceivedState[tapData.targetPlayer]) {
-                        const targetState = this.lastReceivedState[tapData.targetPlayer];
-                        const bZone = targetState.battleZone || {};
+                    // Update the state cache data using a clean helper function
+                    this.updateTappedStateInCache(tapData);
 
-                        if (tapData.zone === "fighterA" && bZone.fighterA && bZone.fighterA.card) {
-                            if (bZone.extraA) {
-                                bZone.extraA.isTapped = tapData.isTapped;
-                            } else {
-                                bZone.fighterA.card.isTapped = tapData.isTapped;
-                            }
-                        }
-                        else if (tapData.zone === "fighterB" && bZone.fighterB && bZone.fighterB.card) {
-                            if (bZone.extraB) {
-                                bZone.extraB.isTapped = tapData.isTapped;
-                            } else {
-                                bZone.fighterB.card.isTapped = tapData.isTapped;
-                            }
-                        }
-                        else if (tapData.zone === "stage" && bZone.stage) bZone.stage.isTapped = tapData.isTapped;
-                        else if (tapData.zone === "support" && Array.isArray(targetState.support) && targetState.support[tapData.supportIndex]) {
-                            targetState.support[tapData.supportIndex].isTapped = tapData.isTapped;
-                        }
-                    }
+                    // Unlock visibility tracking
+                    this.animatingUuids = this.animatingUuids.filter(id => id !== tapData.uuid);
 
-                    // 2. UNLOCK VISIBILITY: Remove the UUID from our lock list
-                    if (this.animatingUuids) {
-                        this.animatingUuids = this.animatingUuids.filter(id => id !== tapData.uuid);
-                    }
-
-                    // Force a clean visual paint pass so the real card shows back up at its perfect final position
+                    // Re-render the board using the fresh updated cache structure
                     this.handleStateRenderingLoop(this.lastReceivedState);
                 }
             });
         });
+    }
+
+    /**
+     * Safe helper function to locate and update a card's tap status inside the state cache.
+     *
+     * @param {Object} tapData - The card tap metadata payload received from the server.
+     */
+    updateTappedStateInCache(tapData) {
+        if (!this.lastReceivedState || !this.lastReceivedState[tapData.targetPlayer]) return;
+
+        const playerState = this.lastReceivedState[tapData.targetPlayer];
+        const bZone = playerState.battleZone || {};
+
+        // Route state updates cleanly based on the zone target name
+        if (tapData.zone === "fighterA" && bZone.fighterA && bZone.fighterA.card) {
+            const target = bZone.extraA || bZone.fighterA.card;
+            target.isTapped = tapData.isTapped;
+        } 
+        else if (tapData.zone === "fighterB" && bZone.fighterB && bZone.fighterB.card) {
+            const target = bZone.extraB || bZone.fighterB.card;
+            target.isTapped = tapData.isTapped;
+        } 
+        else if (tapData.zone === "stage" && bZone.stage) {
+            bZone.stage.isTapped = tapData.isTapped;
+        } 
+        else if (tapData.zone === "support" && Array.isArray(playerState.support)) {
+            const card = playerState.support[tapData.supportIndex];
+            if (card) card.isTapped = tapData.isTapped;
+        }
     }
 
     establishServerConnection() {
