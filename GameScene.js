@@ -296,14 +296,6 @@ class GameScene extends Phaser.Scene {
 
             // 1. Notify the server of our updated state identity
             this.socket.emit("joinTable", { tableId: this.tableId, role: this.role });
-            
-            // 2. Request a clean master state refresh payload from the server channel
-            this.socket.emit("getGameState", { tableId: this.tableId, role: this.role });
-
-            // 3. Force Phaser to clear and redraw everything from our new perspective angle
-            if (this.lastReceivedState) {
-                this.handleStateRenderingLoop(this.lastReceivedState);
-            }
         });
 
         // Various keys for moving a card from one zone to another:

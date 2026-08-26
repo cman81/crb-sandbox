@@ -475,16 +475,48 @@ async function moveFighterOrStageToZone(socket, tableId, targetPlayer, slot, toZ
 /**
  * Global clean-up handler that strips a disconnected or exiting client socket ID 
  * out of all active seating and spectator tracking arrays across all 8 tables.
- * This prevents dead session references from lingering in memory.
+ * Seamlessly loops through local memory tracking arrays and active production
+ * Redis database hashes to purge dead connectivity references.
  * 
  * @param {string} socketId - The unique connectivity identifier string of the departing socket.
+ * @returns {Promise<void>} Resolves when the multi-table persistence scrub transaction finishes.
  */
-function leaveAll(socketId) {
+async function leaveAll(socketId) {
+    // 🧹 Purge Step 1: Clean your local development fallback RAM tracking array
     tables.forEach(t => {
         t.playerA = t.playerA.filter(id => id !== socketId);
         t.playerB = t.playerB.filter(id => id !== socketId);
         t.spectators = t.spectators.filter(id => id !== socketId);
     });
+
+    // Early exit if running locally without a live production cluster attached
+    if (!isRedisConnected) return;
+
+    // 🧹 Purge Step 2: Clean your live persistent Redis cloud data layer rows
+    for (let i = 1; i <= 8; i++) {
+        const tableKey = `table:${i}:refs`;
+        const data = await redisClient.hGetAll(tableKey);
+        
+        // Skip table nodes that haven't been seeded or are completely missing
+        if (!data || Object.keys(data).length === 0) continue;
+
+        // Parse text properties into fresh operational JavaScript list arrays
+        const playerA = JSON.parse(data.playerA || "[]");
+        const playerB = JSON.parse(data.playerB || "[]");
+        const spectators = JSON.parse(data.spectators || "[]");
+
+        // Apply filters to strip the target socket ID out of the seating collections
+        const cleanA = playerA.filter(id => id !== socketId);
+        const cleanB = playerB.filter(id => id !== socketId);
+        const cleanSpec = spectators.filter(id => id !== socketId);
+
+        // Commit modifications back down to Redis to maintain active room slot vacancies
+        await redisClient.hSet(tableKey, {
+            playerA: JSON.stringify(cleanA),
+            playerB: JSON.stringify(cleanB),
+            spectators: JSON.stringify(cleanSpec)
+        });
+    }
 }
 
 io.on("connection", socket => {
@@ -501,7 +533,7 @@ io.on("connection", socket => {
         if (!table) return socket.emit("errorMsg", "Table not found.");
         
         // 1. Wipe this socket ID from all tables completely before seating it
-        leaveAll(socket.id);
+        await leaveAll(socket.id);
 
         // Re-fetch a fresh instance of the target table to capture the cleanup adjustments
         const updatedTable = await getTableContext(tableId);
@@ -530,13 +562,13 @@ io.on("connection", socket => {
         // Commit the seating adjustments down to our active hybrid persistence tier
         await saveTableContext(tableId, updatedTable);
 
-        // Deliver a dedicated, Fog of War compliant frame update to the calling client session
+        // Deliver a dedicated, perfectly masked state frame to the calling user session
         sendSanitizedState(socket, updatedTable, role);
     });
 
-    socket.on("leaveTable", () => leaveAll(socket.id));
+    socket.on("leaveTable", async () => await leaveAll(socket.id));
 
-    socket.on("disconnect", () => leaveAll(socket.id));
+    socket.on("disconnect", async () => await leaveAll(socket.id));
 
     /**
      * Parses inbound deck validation arrays and converts raw card configurations into 
