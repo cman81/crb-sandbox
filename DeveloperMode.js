@@ -128,11 +128,6 @@ class DeveloperMode extends Phaser.Scene {
                         <button id="deckShuffleBtn" style="flex: 1; background:#eab308; color:#000; font-weight:bold; font-size:13px; padding:10px; border:none; border-radius:6px; cursor:pointer;">⚡ SHUFFLE</button>
                         <button id="setupDraw6Btn" style="flex: 1; background:#10b981; color:#000; font-weight:bold; font-size:13px; padding:10px; border:none; border-radius:6px; cursor:pointer;">🎴 DRAW 6</button>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <label style="font-size: 12px; color: #94a3b8;">Hand Pos:</label>
-                        <input type="number" id="playHandIdx" min="0" value="0" style="width: 50px; background: #1e293b; color: #fff; border: 1px solid #334155; padding: 6px; border-radius: 6px; text-align: center;">
-                        <button id="setupPlayDownBtn" style="flex: 1; background:#06b6d4; color:#000; font-weight:bold; font-size:12px; padding:10px; border:none; border-radius:6px; cursor:pointer;">⬇️ PLAY FACE DOWN</button>
-                    </div>
                     <button id="setupFlipUpBtn" style="width:100%; background:#d946ef; color:#fff; font-weight:bold; font-size:12px; padding:10px; border:none; border-radius:6px; cursor:pointer;">👁️ FLIP FACE UP</button>
                 </div>
             </div>
@@ -156,9 +151,6 @@ class DeveloperMode extends Phaser.Scene {
                 </div>
 
                 <div style="background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid #334155; display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
-                    <button id="actionDrawBtn" style="width:100%; background:#00ff00; color:#000; font-weight:bold; font-size:12px; padding:8px; border:none; border-radius:6px; cursor:pointer;">🎴 DRAW 1 CARD</button>
-                    <button id="actionDrawSupportBtn" style="width:100%; background:#38bdf8; color:#000; font-weight:bold; font-size:12px; padding:8px; border:none; border-radius:6px; cursor:pointer;">🛡️ DRAW TO SUPPORT LANE</button>
-                    
                     <div style="display: flex; align-items: center; gap: 6px; margin-top: 4px;">
                         <label style="font-size:12px; color:#00ffff; font-weight:bold;">Stack target:</label>
                         <select id="actionStackSlot" style="width:110px; background:#1e293b; color:#fff; border:1px solid #334155; padding:4px; border-radius:6px;">
@@ -169,43 +161,6 @@ class DeveloperMode extends Phaser.Scene {
                     <div style="display: flex; gap: 6px;">
                         <button id="actionStackTopDeckBtn" style="flex:1; background:#06b6d4; color:#000; font-weight:bold; font-size:11px; padding:8px; border:none; border-radius:6px; cursor:pointer;">⬇️ STACK CARD</button>
                         <button id="actionFlipDiscardBtn" style="flex:1; background:#f97316; color:#000; font-weight:bold; font-size:11px; padding:8px; border:none; border-radius:6px; cursor:pointer;">🔥 FLIP & DISC</button>
-                    </div>
-                </div>
-
-                <div style="background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid #334155; display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
-                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px;">
-                        <label style="font-size:12px; color:#eab308; font-weight:bold;">Hand Actions:</label>
-                        <div>
-                            <label style="font-size:12px; color:#aaa;">Idx:</label>
-                            <input type="number" id="actionHandIdx" min="0" value="0" style="width:45px; background:#1e293b; color:#fff; border:1px solid #334155; padding:4px; border-radius:6px; text-align:center;">
-                        </div>
-                    </div>
-                    <div style="display: flex; gap: 6px;">
-                        <button id="actionPlaySupportBtn" style="flex:1; background:#eab308; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">🛡️ SUPPORT</button>
-                        <button id="actionDiscardBtn" style="flex:1; background:#64748b; color:#fff; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">🗑️ DISCARD</button>
-                    </div>
-                    <div style="display: flex; gap: 6px;">
-                        <button id="actionPlayFighterABtn" style="flex:1; background:#ff8800; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">⚔️ FIGHTER A</button>
-                        <button id="actionPlayFighterBBtn" style="flex:1; background:#ff5500; color:#fff; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">⚔️ FIGHTER B</button>
-                    </div>
-                    <div style="display: flex; gap: 6px;">
-                        <button id="actionToTopDeckBtn" style="flex:1; background:#10b981; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">🔝 TO TOP DECK</button>
-                        <button id="actionToBottomDeckBtn" style="flex:1; background:#059669; color:#fff; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">🔙 TO BOT DECK</button>
-                    </div>
-                    <button id="actionToStageBtn" style="width:100%; background:#a855f7; color:#fff; font-weight:bold; font-size:11px; padding:8px; border:none; border-radius:6px; cursor:pointer;">🎭 TO STAGE ZONE</button>
-                </div>
-
-                <div style="background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid #10b981; display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
-                    <div style="display: flex; align-items: center; justify-content: space-between;">
-                        <label style="font-size:12px; color:#10b981; font-weight:bold;">Support Actions:</label>
-                        <div>
-                            <label style="font-size:12px; color:#aaa;">Idx:</label>
-                            <input type="number" id="actionSupportIdx" min="0" value="0" style="width:45px; background:#1e293b; color:#fff; border:1px solid #334155; padding:4px; border-radius:6px; text-align:center;">
-                        </div>
-                    </div>
-                    <div style="display: flex; gap: 6px;">
-                        <button id="actionSupportToHandBtn" style="flex:1; background:#10b981; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">↩️ TO HAND</button>
-                        <button id="actionDiscardSupportBtn" style="flex:1; background:#ef4444; color:#fff; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">🗑️ DISCARD</button>
                     </div>
                 </div>
         `;
@@ -260,42 +215,16 @@ class DeveloperMode extends Phaser.Scene {
         // --- TAB PANEL 3: GAME ACTIONS PANEL (PART B) ---
         visualHtml += `
                 <div style="background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid #00ffcc; display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
-                    <div style="display: flex; align-items: center; justify-content: space-between;">
-                        <label style="font-size:12px; color:#00ffcc; font-weight:bold;">Discard Actions:</label>
-                        <div>
-                            <label style="font-size:12px; color:#aaa;">Idx:</label>
-                            <input type="number" id="actionDiscardIdx" min="0" value="0" style="width:45px; background:#1e293b; color:#fff; border:1px solid #334155; padding:4px; border-radius:6px; text-align:center;">
-                        </div>
-                    </div>
                     <div style="display: flex; gap: 6px;">
-                        <button id="actionDiscardToDefeatedBtn" style="flex:1; background:#ef4444; color:#fff; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">❌ DISC TO DEFEATED</button>
                         <button id="actionRecycleDiscardBtn" style="flex:1; background:#00ffcc; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">♻️ DISC TO DECK</button>
                     </div>
                 </div>
 
                 <div style="background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid #ef4444; display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px;">
                     <div style="display: flex; gap: 6px;">
-                        <button id="actionDefeatABtn" style="flex: 1; background:#ef4444; color:#fff; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">DEFEAT A</button>
-                        <button id="actionDefeatBBtn" style="flex: 1; background:#ef4444; color:#fff; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">DEFEAT B</button>
-                    </div>
-                    <div style="display: flex; gap: 6px;">
                         <button id="actionDefeatPlus1Btn" style="flex: 1; background:#10b981; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">DEFEAT +1</button>
                         <button id="actionDefeatMinus1Btn" style="flex: 1; background:#f59e0b; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">DEFEAT -1</button>
                     </div>
-                </div>
-
-                <div style="background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid #ff8800; display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;">
-                    <div style="display: flex; align-items: center; justify-content: space-between;">
-                        <label style="font-size:12px; color:#ff8800; font-weight:bold;">Fighter Relocation:</label>
-                        <div>
-                            <label style="font-size:12px; color:#aaa;">Slot:</label>
-                            <select id="actionFighterRelocateSlot" style="width:100px; background:#1e293b; color:#fff; border:1px solid #334155; padding:4px; border-radius:6px;">
-                                <option value="fighterA">Fighter A</option>
-                                <option value="fighterB">Fighter B</option>
-                            </select>
-                        </div>
-                    </div>
-                    <button id="actionFighterToSupportBtn" style="width:100%; background:#ff8800; color:#000; font-weight:bold; font-size:11px; padding:6px; border:none; border-radius:6px; cursor:pointer;">🛡️ MOVE FIGHTER TO SUPPORT</button>
                 </div>
 
                 <div style="background: #0f172a; padding: 8px; border-radius: 8px; border: 1px solid #eab308; display: flex; align-items: center; justify-content: space-between;">
@@ -410,31 +339,15 @@ class DeveloperMode extends Phaser.Scene {
             if (event.target.id === "deckLoadBtn") this.handleDeckLoad();
             if (event.target.id === "deckShuffleBtn") this.handleDeckShuffle();
             if (event.target.id === "setupDraw6Btn") this.handleDraw6Cards();
-            if (event.target.id === "setupPlayDownBtn") this.handlePlayCardFaceDown();
             if (event.target.id === "setupFlipUpBtn") this.handleFlipCardFaceUp();
 
             // Tab 3: Detailed macro operations buttons
-            if (event.target.id === "actionDrawBtn") this.handleDrawCard();
-            if (event.target.id === "actionDrawSupportBtn") this.handleDrawSupport();
             if (event.target.id === "actionRecycleDiscardBtn") this.handleRecycleDiscard();
-            if (event.target.id === "actionDiscardToDefeatedBtn") this.handleDiscardToDefeated();
             if (event.target.id === "actionStackTopDeckBtn") this.handlePlaceDeckToStack();
             if (event.target.id === "actionFlipDiscardBtn") this.handleFlipAndDiscardFromStack();
-            if (event.target.id === "actionPlaySupportBtn") this.handlePlayToSupport();
-            if (event.target.id === "actionDiscardBtn") this.handleDiscardFromHand();
-            if (event.target.id === "actionPlayFighterABtn") this.handlePlayToFighter("fighterA");
-            if (event.target.id === "actionPlayFighterBBtn") this.handlePlayToFighter("fighterB");
             if (event.target.id === "actionToggleTapBtn") this.handleToggleTapEmit();
-            if (event.target.id === "actionDefeatABtn") this.handleMoveToDefeatedEmit("fighterA");
-            if (event.target.id === "actionDefeatBBtn") this.handleMoveToDefeatedEmit("fighterB");
             if (event.target.id === "actionDefeatPlus1Btn") this.handleScoreAdjustmentEmit(1);
             if (event.target.id === "actionDefeatMinus1Btn") this.handleScoreAdjustmentEmit(-1);
-            if (event.target.id === "actionFighterToSupportBtn") this.handleMoveFighterToSupport();
-            if (event.target.id === "actionToTopDeckBtn") this.handlePlayToDeckEmit("top");
-            if (event.target.id === "actionToBottomDeckBtn") this.handlePlayToDeckEmit("bottom");
-            if (event.target.id === "actionToStageBtn") this.handlePlayToStageEmit();
-            if (event.target.id === "actionSupportToHandBtn") this.handleReturnSupportToHand();
-            if (event.target.id === "actionDiscardSupportBtn") this.handleDiscardSupport();
             if (event.target.id === "universalMoveTopBtn") this.handleUniversalMoveEmit(true);
             if (event.target.id === "universalMoveBotBtn") this.handleUniversalMoveEmit(false);
 
@@ -768,33 +681,11 @@ class DeveloperMode extends Phaser.Scene {
         this.socket.emit("getGameState", { tableId: parseInt(tableId, 10), role: role });
     }
 
-    handleDrawCard() {
-        const tableId = document.getElementById("actionTableId").value;
-        const targetPlayer = document.getElementById("actionTargetPlayer").value;
-        this.logToConsole(`>> Emitting drawCard: Table ${tableId} for ${targetPlayer}`);
-        this.socket.emit("drawCard", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer });
-    }
-
-    handleDrawSupport() {
-        const tableId = document.getElementById("actionTableId").value;
-        const targetPlayer = document.getElementById("actionTargetPlayer").value;
-        this.logToConsole(`>> Emitting drawSupport: Moving top deck card directly to support lane for ${targetPlayer}.`);
-        this.socket.emit("drawSupport", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer });
-    }
-
     handleDraw6Cards() {
         const tableId = document.getElementById("deckTableId").value;
         const targetPlayer = document.getElementById("deckTargetPlayer").value;
         this.logToConsole(`>> Emitting draw6Cards: Table ${tableId} for ${targetPlayer}`);
         this.socket.emit("draw6Cards", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer });
-    }
-
-    handlePlayCardFaceDown() {
-        const tableId = document.getElementById("deckTableId").value;
-        const targetPlayer = document.getElementById("deckTargetPlayer").value;
-        const handIndex = document.getElementById("playHandIdx").value;
-        this.logToConsole(`>> Emitting playCardFaceDown: Table ${tableId} via hand index ${handIndex} for ${targetPlayer}`);
-        this.socket.emit("playCardFaceDown", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, handIndex: parseInt(handIndex, 10) });
     }
 
     handleFlipCardFaceUp() {
@@ -812,14 +703,6 @@ class DeveloperMode extends Phaser.Scene {
         this.socket.emit("placeDeckCardToStack", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, targetSlot: targetSlot });
     }
 
-    handlePlayToSupport() {
-        const tableId = document.getElementById("actionTableId").value;
-        const targetPlayer = document.getElementById("actionTargetPlayer").value;
-        const handIndex = document.getElementById("actionHandIdx").value;
-        this.logToConsole(`>> Emitting playCardToSupport: Table ${tableId} moving hand index ${handIndex} to support lane for ${targetPlayer}.`);
-        this.socket.emit("playCardToSupport", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, handIndex: parseInt(handIndex, 10) });
-    }
-
     handleToggleTapEmit() {
         const tableId = document.getElementById("actionTableId").value;
         const targetPlayer = document.getElementById("actionTargetPlayer").value;
@@ -829,51 +712,11 @@ class DeveloperMode extends Phaser.Scene {
         this.socket.emit("toggleCardTap", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, zone: zone, supportIndex: parseInt(supportIndex, 10) });
     }
 
-    handlePlayToFighter(slotName) {
-        const tableId = document.getElementById("actionTableId").value;
-        const targetPlayer = document.getElementById("actionTargetPlayer").value;
-        const handIndex = document.getElementById("actionHandIdx").value;
-        this.logToConsole(`>> Emitting playCardToFighter: Table ${tableId} moving hand index ${handIndex} to ${slotName} for ${targetPlayer}.`);
-        this.socket.emit("playCardToFighter", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, handIndex: parseInt(handIndex, 10), targetSlot: slotName });
-    }
-
-    handleMoveToDefeatedEmit(slotName) {
-        const tableId = document.getElementById("actionTableId").value;
-        const targetPlayer = document.getElementById("actionTargetPlayer").value;
-        this.logToConsole(`>> Emitting moveFighterToDefeated: Table ${tableId} moving card in ${slotName} for ${targetPlayer} to defeated pile.`);
-        this.socket.emit("moveFighterToDefeated", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, slot: slotName });
-    }
-
     handleScoreAdjustmentEmit(pointDelta) {
         const tableId = document.getElementById("actionTableId").value;
         const targetPlayer = document.getElementById("actionTargetPlayer").value;
         this.logToConsole(`>> Emitting adjustDefeatedPoints: Table ${tableId} shifting ${targetPlayer}'s points by: ${pointDelta}.`);
         this.socket.emit("adjustDefeatedPoints", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, amount: pointDelta });
-    }
-
-    handleMoveFighterToSupport() {
-        const tableId = document.getElementById("actionTableId").value;
-        const targetPlayer = document.getElementById("actionTargetPlayer").value;
-        const selectedSlot = document.getElementById("actionFighterRelocateSlot").value;
-        this.logToConsole(`>> Emitting moveFighterToSupport: Transferring ${targetPlayer}'s active card from ${selectedSlot} to the Support Lane.`);
-        this.socket.emit("moveFighterToSupport", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, slot: selectedSlot });
-    }
-
-    handleDiscardFromHand() {
-        const tableId = document.getElementById("actionTableId").value;
-        const targetPlayer = document.getElementById("actionTargetPlayer").value;
-        const handIndex = document.getElementById("actionHandIdx").value;
-        this.logToConsole(`>> Emitting discardCardFromHand: Table ${tableId} moving hand index ${handIndex} to discard pile for ${targetPlayer}.`);
-        this.socket.emit("discardCardFromHand", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, handIndex: parseInt(handIndex, 10) });
-    }
-
-    handlePlayToDeckEmit(deckLocation) {
-        const tableId = document.getElementById("actionTableId").value;
-        const targetPlayer = document.getElementById("actionTargetPlayer").value;
-        const handIndex = document.getElementById("actionHandIdx").value;
-        const eventName = deckLocation === "top" ? "playHandToTopDeck" : "playHandToBottomDeck";
-        this.logToConsole(`>> Emitting ${eventName}: Table ${tableId} moving hand index ${handIndex} to deck ${deckLocation}.`);
-        this.socket.emit(eventName, { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, handIndex: parseInt(handIndex, 10) });
     }
 
     handleFlipAndDiscardFromStack() {
@@ -889,38 +732,6 @@ class DeveloperMode extends Phaser.Scene {
         const targetPlayer = document.getElementById("actionTargetPlayer").value;
         this.logToConsole(`>> Emitting recycleDiscardToDeck: Table ${tableId} recycling discard pile for ${targetPlayer}.`);
         this.socket.emit("recycleDiscardToDeck", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer });
-    }
-
-    handleDiscardToDefeated() {
-        const tableId = document.getElementById("actionTableId").value;
-        const targetPlayer = document.getElementById("actionTargetPlayer").value;
-        const discardIndex = document.getElementById("actionDiscardIdx").value;
-        this.logToConsole(`>> Emitting moveDiscardToDefeated: Table ${tableId} moving discard index ${discardIndex} to defeated zone for ${targetPlayer}.`);
-        this.socket.emit("moveDiscardToDefeated", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, discardIndex: parseInt(discardIndex, 10) });
-    }
-
-    handlePlayToStageEmit() {
-        const tableId = document.getElementById("actionTableId").value;
-        const targetPlayer = document.getElementById("actionTargetPlayer").value;
-        const handIndex = document.getElementById("actionHandIdx").value;
-        this.logToConsole(`>> [DEV ACTIONS]: Shifting hand card index ${handIndex} face up to Stage zone for ${targetPlayer} at Table ${tableId}.`);
-        this.socket.emit("playCardToStage", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, handIndex: parseInt(handIndex, 10) });
-    }
-
-    handleReturnSupportToHand() {
-        const tableId = document.getElementById("actionTableId").value;
-        const targetPlayer = document.getElementById("actionTargetPlayer").value;
-        const supportIndex = document.getElementById("actionSupportIdx").value;
-        this.logToConsole(`>> Emitting returnSupportToHand: Table ${tableId} returning support index ${supportIndex} to hand for ${targetPlayer}.`);
-        this.socket.emit("returnSupportToHand", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, supportIndex: parseInt(supportIndex, 10) });
-    }
-
-    handleDiscardSupport() {
-        const tableId = document.getElementById("actionTableId").value;
-        const targetPlayer = document.getElementById("actionTargetPlayer").value;
-        const supportIndex = document.getElementById("actionSupportIdx").value;
-        this.logToConsole(`>> Emitting discardSupport: Moving support index ${supportIndex} to discard pile for ${targetPlayer}.`);
-        this.socket.emit("discardSupport", { tableId: parseInt(tableId, 10), targetPlayer: targetPlayer, supportIndex: parseInt(supportIndex, 10) });
     }
 
     handleAdminSignalEnd() {

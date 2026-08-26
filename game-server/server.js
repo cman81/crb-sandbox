@@ -1,21 +1,101 @@
 const PORT = process.env.PORT || 3000;
-const io = require("socket.io")(process.env.PORT || 3000, {
+const { v4: uuidv4 } = require("uuid");
+const redis = require("redis");
+
+// Initialize Socket.io with optimized WebSocket fallback streams
+const io = require("socket.io")(PORT, {
     cors: {
         origin: [
-            "https://github.io",       // Your GHP URL
-            "http://localhost:8000",          // Standard Localhost port
-            "http://127.0.0.1:8000",          // Alternate loopback IP port
-            "http://localhost",               // Bare localhost address
+            "https://github.io",
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+            "http://localhost",
             "http://127.0.0.1"
         ],
         methods: ["GET", "POST"],
         credentials: true
     },
-    transports: ['websocket'] // Mirror the client setting on the server layer
+    transports: ["websocket"]
 });
 
+// Global tracking flag to determine our active hybrid persistence pipeline engine mode
+let isRedisConnected = false;
 
-const { v4: uuidv4 } = require('uuid');
+// Create our Redis client instance with an instant-fail local reconnect strategy
+const redisClient = redis.createClient({
+    url: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
+    socket: {
+        reconnectStrategy: false // Stop background retry loops immediately if database is missing locally
+    }
+});
+
+// Handle edge-case database failures gracefully without allowing thread crashes
+redisClient.on('error', (err) => {
+    // Suppress heavy console error flooding log strings when running locally in simulation mode
+    if (!process.env.REDIS_URL) return;
+    console.error('🔴 Redis persistent engine layer error:', err.message);
+});
+
+// Execute the async cloud connection thread handshake
+redisClient.connect().then(async () => {
+    console.log("🟢 Success: Cloud Redis stream engine successfully attached.");
+    isRedisConnected = true;
+
+    // Trigger our streamlined auditing utility pass
+    await auditProductionRegistry();
+}).catch(err => {
+    console.log("ℹ️ Local Notice: Redis URL not configured/running. Seamlessly defaulting to Memory Fallback Array.");
+    isRedisConnected = false;
+});
+
+/**
+ * Iterates through all standard room slots to verify that the target tables exist 
+ * within the live production database instance, initializing them if missing.
+ * Reduces cyclomatic complexity by abstracting row insertions into a single sub-task pass.
+ * 
+ * @returns {Promise<void>} Resolves when the entire production keys database audit loop finishes.
+ */
+async function auditProductionRegistry() {
+    console.log("⚙️ Auditing persistent room table records inside production registry...");
+    
+    for (let i = 1; i <= 8; i++) {
+        await provisioningTableSlot(i);
+    }
+    
+    console.log("✅ Complete: Production database cluster fully provisioned and ready for players.");
+}
+
+/**
+ * Checks a specific table index key map node inside Redis and seeds a clean 
+ * factory structural data string template if the registry node is currently empty.
+ * 
+ * @param {number} tableIndex - The target table identification number (1 through 8).
+ * @returns {Promise<void>} Resolves when the atomic database key map has been audited and verified.
+ */
+async function provisioningTableSlot(tableIndex) {
+    const tableKey = `table:${tableIndex}:refs`;
+    const tableExists = await redisClient.exists(tableKey);
+    
+    // Early exit if the table row has already been generated inside the Redis cluster memory
+    if (tableExists) return;
+
+    console.log(`📝 [PRODUCTION SCHEMA PROVISION]: Seeding factory references for Table ${tableIndex}`);
+    
+    // Extract the clean factory template straight out of your existing fallback array
+    const factoryTemplate = tables.find(t => t.id === tableIndex);
+    if (!factoryTemplate) return;
+
+    // Seed the Redis database hash fields with standard setup configuration strings
+    await redisClient.hSet(tableKey, {
+        id: factoryTemplate.id.toString(),
+        playerA: JSON.stringify(factoryTemplate.playerA),
+        playerB: JSON.stringify(factoryTemplate.playerB),
+        spectators: JSON.stringify(factoryTemplate.spectators),
+        endGameSignalA: factoryTemplate.endGameSignals.playerA.toString(),
+        endGameSignalB: factoryTemplate.endGameSignals.playerB.toString(),
+        gameState: JSON.stringify(factoryTemplate.gameState)
+    });
+}
 
 const tables = Array.from({ length: 8 }, (_, i) => ({
     id: i + 1,
@@ -46,6 +126,73 @@ const tables = Array.from({ length: 8 }, (_, i) => ({
         }
     }
 }));
+
+// =========================================================================
+// HYBRID DATA MAPPING PIPELINE HELPERS
+// =========================================================================
+
+/**
+ * Transparently recovers a room configuration object, prioritizing live Redis
+ * cloud fields but smoothly defaulting to your local memory array if offline.
+ * 
+ * @param {string|number} tableId - Target table database identifier reference.
+ * @returns {Promise<Object|null>} Restored operational table structure map context.
+ */
+async function getTableContext(tableId) {
+    const parsedId = parseInt(tableId, 10);
+
+    // Pipeline Engine Branch A: Redis Cloud Integration Mode
+    if (isRedisConnected) {
+        const data = await redisClient.hGetAll(`table:${parsedId}:refs`);
+        if (!data || Object.keys(data).length === 0) return null;
+        
+        return {
+            id: parseInt(data.id, 10),
+            playerA: JSON.parse(data.playerA || "[]"),
+            playerB: JSON.parse(data.playerB || "[]"),
+            spectators: JSON.parse(data.spectators || "[]"),
+            endGameSignals: {
+                playerA: data.endGameSignalA === "true",
+                playerB: data.endGameSignalB === "true"
+            },
+            gameState: JSON.parse(data.gameState || "{}")
+        };
+    }
+
+    // Pipeline Engine Branch B: Local Development Array Fallback Mode
+    const memoryTable = tables.find(t => t.id === parsedId);
+    return memoryTable || null;
+}
+
+/**
+ * Transparently serializes and commits updated table state structures down
+ * to either the active Redis database cluster or your local memory array.
+ * 
+ * @param {string|number} tableId - Target table destination layout key.
+ * @param {Object} tableObj - Active mutated server object context.
+ */
+async function saveTableContext(tableId, tableObj) {
+    const parsedId = parseInt(tableId, 10);
+
+    // Pipeline Engine Branch A: Committing straight down to Cloud Redis
+    if (isRedisConnected) {
+        await redisClient.hSet(`table:${parsedId}:refs`, {
+            playerA: JSON.stringify(tableObj.playerA),
+            playerB: JSON.stringify(tableObj.playerB),
+            spectators: JSON.stringify(tableObj.spectators),
+            endGameSignalA: tableObj.endGameSignals.playerA.toString(),
+            endGameSignalB: tableObj.endGameSignals.playerB.toString(),
+            gameState: JSON.stringify(tableObj.gameState)
+        });
+        return;
+    }
+
+    // Pipeline Engine Branch B: Overwriting the current item inside local RAM array
+    const matchIdx = tables.findIndex(t => t.id === parsedId);
+    if (matchIdx !== -1) {
+        tables[matchIdx] = tableObj;
+    }
+}
 
 function sendSanitizedState(socket, table, role){
     const maskCard = () => ({ name: "Card Back", isFaceDown: true });
@@ -110,8 +257,20 @@ function sendSanitizedState(socket, table, role){
     });
 }
 
-function moveCardToFighterOrStage(socket, tableId, targetPlayer, fromZone, fromIndex, toZone) {
-        const table = tables.find(t => t.id === parseInt(tableId));
+/**
+ * Splices a single card asset out of an un-shuffled pile array and transfers it directly 
+ * into an active field coordinate location, validating placement bounds to protect against overwriting slots.
+ * 
+ * @param {Object} socket - The active client Socket.io connectivity connection handle.
+ * @param {string|number} tableId - Target table array match slot key lookup.
+ * @param {string} targetPlayer - Player reference string indicating who owns the card asset data.
+ * @param {string} fromZone - Source storage bucket pile name ("hand", "discard", "deck", "extraDeck").
+ * @param {number|string} fromIndex - Array sorting index targeting the object item position.
+ * @param {string} toZone - Destination coordinate zone slot key ("fighterA", "fighterB", "stage").
+ * @returns {Promise<void>} Resolves when the operational state update transaction is complete.
+ */
+async function moveCardToFighterOrStage(socket, tableId, targetPlayer, fromZone, fromIndex, toZone) {
+        const table = await getTableContext(tableId);
         if (!table) return socket.emit("errorMsg", "Table not found.");
         if (fromZone == toZone) {
             return socket.emit("errorMsg", "Zones are the same, nothing to move.");
@@ -156,6 +315,8 @@ function moveCardToFighterOrStage(socket, tableId, targetPlayer, fromZone, fromI
             destinationBattleZone[toZone].card = cardToMove;
         }
 
+        await saveTableContext(tableId, table);
+
         // 2. Aggregate all multi-socket connections for this table instance
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
 
@@ -174,9 +335,12 @@ function moveCardToFighterOrStage(socket, tableId, targetPlayer, fromZone, fromI
         socket.emit("serverNotice", `Successfully moved card with index ${idx} from ${fromZone} to ${toZone}.`);
 }
 
-function moveCardToZone(socket, tableId, targetPlayer, fromZone, fromIndex, toZone, isPlaceOnTop = true) {
-        const table = tables.find(t => t.id === parseInt(tableId));
+async function moveCardToZone(socket, tableId, targetPlayer, fromZone, fromIndex, toZone, isPlaceOnTop = true, table = null) {
+        if (!table) {
+            table = await getTableContext(tableId);
+        }
         if (!table) return socket.emit("errorMsg", "Table not found.");
+
         if (fromZone == toZone) {
             return socket.emit("errorMsg", "Zones are the same, nothing to move.");
         }
@@ -196,7 +360,6 @@ function moveCardToZone(socket, tableId, targetPlayer, fromZone, fromIndex, toZo
         cardToMove.isTapped = false;
         switch (toZone) {
             case 'hand':
-            case 'extraDeck':
             case 'discard':
             case 'support':
             case 'defeated':
@@ -213,6 +376,9 @@ function moveCardToZone(socket, tableId, targetPlayer, fromZone, fromIndex, toZo
         } else {
             destinationArray.unshift(cardToMove);
         }
+
+        // Commit the state mutation and multi-cast update frames across the table room profile arrays
+        await saveTableContext(tableId, table);
 
         // 2. Aggregate all multi-socket connections for this table instance
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
@@ -232,8 +398,19 @@ function moveCardToZone(socket, tableId, targetPlayer, fromZone, fromIndex, toZo
         socket.emit("serverNotice", `Successfully moved card with index ${idx} from ${fromZone} to ${toZone}.`);
 }
 
-function moveFighterOrStageToZone(socket, tableId, targetPlayer, slot, toZone, isPlaceOnTop = true) {
-    const table = tables.find(t => t.id === parseInt(tableId));
+/**
+ * Removes a card from an active combat lane position slot and routes it back into a standard tracking array pile.
+ * 
+ * @param {Object} socket - The active client Socket.io connectivity connection handle.
+ * @param {string|number} tableId - Target table array match slot key lookup.
+ * @param {string} targetPlayer - Player reference string indicating who owns the card asset data.
+ * @param {string} slot - The active field coordinate target location ("fighterA", "fighterB", "stage", "extraA", "extraB").
+ * @param {string} toZone - Target storage collection matrix array name ("hand", "support", "discard", etc.).
+ * @param {boolean} [isPlaceOnTop=true] - Array placement orientation parameter flag.
+ * @returns {Promise<void>} Resolves when the operational state update transaction is complete.
+ */
+async function moveFighterOrStageToZone(socket, tableId, targetPlayer, slot, toZone, isPlaceOnTop = true) {
+    const table = await getTableContext(tableId);
     if (!table) return socket.emit("errorMsg", "Table not found.");
 
     const pState = table.gameState[targetPlayer];
@@ -280,6 +457,8 @@ function moveFighterOrStageToZone(socket, tableId, targetPlayer, slot, toZone, i
 
     console.log(`📡 [FIGHTER RELOCATION ENGINE]: Shifted tracking frame from active slot ${slot} to array zone ${toZone} for ${targetPlayer}.`);
 
+    await saveTableContext(tableId, table);
+
     // 4. Secure broadcast - individual FOW-masked state multi-cast sweep
     const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
     targetSockets.forEach(sockId => {
@@ -293,6 +472,13 @@ function moveFighterOrStageToZone(socket, tableId, targetPlayer, slot, toZone, i
     socket.emit("serverNotice", `Successfully moved card from active slot ${slot} to array zone ${toZone}.`);
 }
 
+/**
+ * Global clean-up handler that strips a disconnected or exiting client socket ID 
+ * out of all active seating and spectator tracking arrays across all 8 tables.
+ * This prevents dead session references from lingering in memory.
+ * 
+ * @param {string} socketId - The unique connectivity identifier string of the departing socket.
+ */
 function leaveAll(socketId) {
     tables.forEach(t => {
         t.playerA = t.playerA.filter(id => id !== socketId);
@@ -302,39 +488,68 @@ function leaveAll(socketId) {
 }
 
 io.on("connection", socket => {
-    socket.on("joinTable", ({tableId: tableId, role: role}) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
+    /**
+     * Handles table registration requests, routing connecting sockets to their selected
+     * seating array while clearing their old seat assignments across our hybrid data layer.
+     * 
+     * @param {Object} payload - Incoming network transaction packet.
+     * @param {string|number} payload.tableId - Target table layout identifier reference.
+     * @param {string} payload.role - Target viewing role configuration assignment ("playerA", "playerB", "spectator").
+     */
+    socket.on("joinTable", async ({tableId: tableId, role: role}) => {
+        const table = await getTableContext(tableId);
         if (!table) return socket.emit("errorMsg", "Table not found.");
         
         // 1. Wipe this socket ID from all tables completely before seating it
-        leaveAll(socket.id); 
+        leaveAll(socket.id);
+
+        // Re-fetch a fresh instance of the target table to capture the cleanup adjustments
+        const updatedTable = await getTableContext(tableId);
+        if (!updatedTable) return socket.emit("errorMsg", "Table context tracking dropped.");
 
         // 2. Clear out any ghost duplicates from this target seat list before pushing
         if (role === "playerA") {
-            table.playerA = table.playerA.filter(id => id !== socket.id);
-            table.playerA.push(socket.id);
+            updatedTable.playerA = updatedTable.playerA.filter(id => id !== socket.id);
+            updatedTable.playerA.push(socket.id);
         } else if (role === "playerB") {
-            table.playerB = table.playerB.filter(id => id !== socket.id);
-            table.playerB.push(socket.id);
+            updatedTable.playerB = updatedTable.playerB.filter(id => id !== socket.id);
+            updatedTable.playerB.push(socket.id);
         } else if (role === "spectator") {
-            table.spectators = table.spectators.filter(id => id !== socket.id);
-            table.spectators.push(socket.id);
+            updatedTable.spectators = updatedTable.spectators.filter(id => id !== socket.id);
+            updatedTable.spectators.push(socket.id);
         } else {
             return socket.emit("errorMsg", "Invalid role definition.");
         }
 
         if (role === "playerA" || role === "playerB") {
-            table.endGameSignals[role] = false;
+            updatedTable.endGameSignals[role] = false;
         }
-        console.log(`📡 [STAGE 2 SEAT]: Added socket ${socket.id} uniquely to the list for ${role}`);
+        
+        console.log(`📡 [HYBRID PERSISTENCE SEAT]: Added socket ${socket.id} uniquely to Table ${tableId} for ${role}`);
+
+        // Commit the seating adjustments down to our active hybrid persistence tier
+        await saveTableContext(tableId, updatedTable);
+
+        // Deliver a dedicated, Fog of War compliant frame update to the calling client session
+        sendSanitizedState(socket, updatedTable, role);
     });
 
     socket.on("leaveTable", () => leaveAll(socket.id));
 
     socket.on("disconnect", () => leaveAll(socket.id));
 
-    socket.on("loadDeck", ({tableId: tableId, targetPlayer: targetPlayer, deckList: deckList, extraDeckList: extraDeckList}) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
+    /**
+     * Parses inbound deck validation arrays and converts raw card configurations into 
+     * discrete sandbox objects, writing them to our verified hybrid persistence tier.
+     * 
+     * @param {Object} payload - Incoming data packet configuration reference.
+     * @param {string|number} payload.tableId - Target table database identifier reference.
+     * @param {string} payload.targetPlayer - Target player seat identification ("playerA" or "playerB").
+     * @param {Array<Object>} payload.deckList - Array of user main deck card profiles.
+     * @param {Array<Object>} payload.extraDeckList - Array of user side/extra deck card profiles.
+     */
+    socket.on("loadDeck", async ({tableId: tableId, targetPlayer: targetPlayer, deckList: deckList, extraDeckList: extraDeckList}) => {
+        const table = await getTableContext(tableId);
         if (!table) return socket.emit("errorMsg", "Table not found.");
         if (targetPlayer !== "playerA" && targetPlayer !== "playerB") return socket.emit("errorMsg", "Invalid target player.");
 
@@ -356,18 +571,29 @@ io.on("connection", socket => {
             uuid: uuidv4()
         }));
 
+        // Commit the deck data mapping configurations straight down to our active hybrid database layer
+        await saveTableContext(tableId, table);
+
         socket.emit("serverNotice", `Deck loaded with ${deckList.length} uniquely titled cards. Extra Deck: ${extraDeckList.length} entries.`);
     });
 
-    socket.on('getGameState', ({ tableId, role }) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
+    socket.on('getGameState', async ({ tableId, role }) => {
+        const table = await getTableContext(tableId);
         if (!table) return socket.emit('errorMsg', 'Table not found.');
 
         sendSanitizedState(socket, table, role);
     });
 
-    socket.on('shuffleDeck', ({ tableId, targetPlayer }) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
+    /**
+     * Shuffles a player's deck array inside our hybrid tier using a random UUID sort algorithm.
+     * Safely updates configuration tables to maintain absolute room parity across connections.
+     * 
+     * @param {Object} payload - Incoming data packet configuration reference.
+     * @param {string|number} payload.tableId - Target table database identifier reference.
+     * @param {string} payload.targetPlayer - Target player seat string identification ("playerA" or "playerB").
+     */
+    socket.on('shuffleDeck', async ({ tableId, targetPlayer }) => {
+        const table = await getTableContext(tableId);
         if (!table) return socket.emit('errorMsg', 'Table not found.');
 
         const deck = table.gameState[targetPlayer]?.deck;
@@ -385,19 +611,21 @@ io.on("connection", socket => {
             delete card.shuffleId; // Keep the game state payload clean
         });
 
+        // Commit the randomized stack order back down to our hybrid persistence layer
+        await saveTableContext(tableId, table);
+
         socket.emit('serverNotice', `Deck shuffled successfully using random UUID sort!`);
     });
 
-    socket.on("drawCard", ({tableId: tableId, targetPlayer: targetPlayer}) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
-        if (!table) return socket.emit("errorMsg", "Table not found.");
-        
-        const deck = table.gameState[targetPlayer]?.deck;
-        return moveCardToZone(socket, tableId, targetPlayer, 'deck', (deck.length - 1), 'hand');
-    });
-
-    socket.on("draw6Cards", ({tableId: tableId, targetPlayer: targetPlayer}) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
+    /**
+     * Draws exactly 6 cards from the top of the player's deck array to establish an opening hand.
+     * 
+     * @param {Object} payload - Incoming data packet configuration reference.
+     * @param {string|number} payload.tableId - Target table database identifier reference.
+     * @param {string} payload.targetPlayer - Target player seat string identification ("playerA" or "playerB").
+     */
+    socket.on("draw6Cards", async ({tableId: tableId, targetPlayer: targetPlayer}) => {
+        const table = await getTableContext(tableId);
         if (!table) return socket.emit("errorMsg", "Table not found.");
 
         const deck = table.gameState[targetPlayer]?.deck;
@@ -411,6 +639,9 @@ io.on("connection", socket => {
             drawnCard.isFaceDown = false;
             hand.push(drawnCard);
         }
+
+        // Commit the state mutation and multi-cast update frames across the table room profile arrays
+        await saveTableContext(tableId, table);
 
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
 
@@ -428,41 +659,8 @@ io.on("connection", socket => {
         socket.emit("serverNotice", `${targetPlayer} successfully drew a 6-card opening hand.`);
     });
 
-    socket.on("playCardFaceDown", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex}) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
-        if (!table) return socket.emit("errorMsg", "Table not found.");
-
-        const hand = table.gameState[targetPlayer]?.hand;
-        const bZone = table.gameState[targetPlayer]?.battleZone;
-        const idx = parseInt(handIndex);
-        
-        if (!hand || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid hand index selection.");
-
-        // 1. Execute the mutation directly on the server database
-        const [cardToPlay] = hand.splice(idx, 1);
-        cardToPlay.isFaceDown = true;
-        cardToPlay.isTapped = false;
-        
-        // Mount the trickery card face down specifically to fighterA
-        bZone.fighterA.card = cardToPlay;
-
-        // 2. Aggregate all multi-socket connections for this table instance
-        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
-
-        // 3. Dispatch individualized, secure views via your serialization engine
-        targetSockets.forEach(sockId => {
-            const sock = io.sockets.sockets.get(sockId);
-            if (sock) {
-                let viewerRole = "spectator";
-                if (table.playerA.includes(sockId)) viewerRole = "playerA";
-                if (table.playerB.includes(sockId)) viewerRole = "playerB";
-                sendSanitizedState(sock, table, viewerRole);
-            }
-        });
-    });
-
-    socket.on("flipCardFaceUp", ({tableId: tableId, targetPlayer: targetPlayer}) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
+    socket.on("flipCardFaceUp", async ({tableId: tableId, targetPlayer: targetPlayer}) => {
+        const table = await getTableContext(tableId);
         if (!table) return socket.emit("errorMsg", "Table not found.");
 
         const card = table.gameState[targetPlayer]?.battleZone?.fighterA?.card;
@@ -472,6 +670,8 @@ io.on("connection", socket => {
         card.isFaceDown = false;
 
         console.log(`📡 [DECOUPLED FLIP]: Fighter A card flipped face up for ${targetPlayer}. Broadcasting state...`);
+
+        await saveTableContext(tableId, table);
 
         // 2. Aggregate all multi-socket connections for this table instance
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
@@ -489,17 +689,8 @@ io.on("connection", socket => {
         });
     });
 
-    socket.on("playHandToTopDeck", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex}) => {
-        return moveCardToZone(socket, tableId, targetPlayer, 'hand', handIndex, 'deck');
-    });
-
-    socket.on("playHandToBottomDeck", ({ tableId, targetPlayer, handIndex }) => {
-        // Pass false as the 7th argument to force the card to the bottom (unshift)
-        return moveCardToZone(socket, tableId, targetPlayer, 'hand', handIndex, 'deck', false);
-    });
-
-    socket.on("toggleCardTap", ({ tableId, targetPlayer, zone, supportIndex }) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
+    socket.on("toggleCardTap", async ({ tableId, targetPlayer, zone, supportIndex }) => {
+        const table = await getTableContext(tableId);
         if (!table) return socket.emit("errorMsg", "Table not found.");
 
         const bZone = table.gameState[targetPlayer]?.battleZone;
@@ -529,6 +720,8 @@ io.on("connection", socket => {
             isTapped: targetCard.isTapped
         };
 
+        await saveTableContext(tableId, table);
+
         // 3. Broadcast the animation instruction
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
         targetSockets.forEach(sockId => {
@@ -536,44 +729,8 @@ io.on("connection", socket => {
         });
     });
 
-
-    socket.on("playCardToSupport", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex}) => {
-        return moveCardToZone(socket, tableId, targetPlayer, 'hand', handIndex, 'support');
-    });
-
-    socket.on("playCardToFighter", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex, targetSlot: targetSlot}) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
-        if (!table) return socket.emit("errorMsg", "Table not found.");
-
-        const hand = table.gameState[targetPlayer]?.hand;
-        const bZone = table.gameState[targetPlayer]?.battleZone;
-        const idx = parseInt(handIndex);
-        
-        if (!hand || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid hand index selection.");
-        if (bZone?.[targetSlot]?.card && Object.keys(bZone[targetSlot].card).length > 0) {
-            return socket.emit("errorMsg", `The ${targetSlot === 'fighterA' ? 'Fighter A' : 'Fighter B'} slot is already occupied!`);
-        }
-
-        const [cardToPlay] = hand.splice(idx, 1);
-        cardToPlay.isFaceDown = false;
-        cardToPlay.isTapped = false;
-        bZone[targetSlot].card = cardToPlay;
-
-        // Broadcast secure FOW states to all connections
-        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
-        targetSockets.forEach(sockId => {
-            const sock = io.sockets.sockets.get(sockId);
-            if (sock) {
-                let viewerRole = "spectator";
-                if (table.playerA.includes(sockId)) viewerRole = "playerA";
-                if (table.playerB.includes(sockId)) viewerRole = "playerB";
-                sendSanitizedState(sock, table, viewerRole);
-            }
-        });
-    });
-
-    socket.on("placeDeckCardToStack", ({ tableId, targetPlayer, targetSlot }) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
+    socket.on("placeDeckCardToStack", async ({ tableId, targetPlayer, targetSlot }) => {
+        const table = await getTableContext(tableId);
         if (!table) return socket.emit("errorMsg", "Table not found.");
 
         const deck = table.gameState[targetPlayer]?.deck;
@@ -586,6 +743,8 @@ io.on("connection", socket => {
         if (!bZone[targetSlot].faceDownStack) bZone[targetSlot].faceDownStack = [];
         bZone[targetSlot].faceDownStack.push(cardToStack);
 
+        await saveTableContext(tableId, table);
+
         // Secure broadcast
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
         targetSockets.forEach(sockId => {
@@ -597,8 +756,8 @@ io.on("connection", socket => {
         });
     });
 
-    socket.on("flipAndDiscardFromStack", ({ tableId, targetPlayer, targetSlot }) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
+    socket.on("flipAndDiscardFromStack", async ({ tableId, targetPlayer, targetSlot }) => {
+        const table = await getTableContext(tableId);
         if (!table) return socket.emit("errorMsg", "Table not found.");
 
         const bZone = table.gameState[targetPlayer]?.battleZone;
@@ -612,6 +771,8 @@ io.on("connection", socket => {
         poppedCard.isTapped = false;
         discard.push(poppedCard);
 
+        await saveTableContext(tableId, table);
+
         // Secure broadcast
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
         targetSockets.forEach(sockId => {
@@ -623,20 +784,8 @@ io.on("connection", socket => {
         });
     });
 
-    socket.on("moveFighterToDefeated", ({ tableId, targetPlayer, slot }) => {
-        return moveFighterOrStageToZone(socket, tableId, targetPlayer, slot, 'defeated');
-    });
-
-    socket.on("moveFighterToSupport", ({ tableId, targetPlayer, slot }) => {
-        return moveFighterOrStageToZone(socket, tableId, targetPlayer, slot, 'support');
-    });
-
-    socket.on("discardCardFromHand", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex}) => {
-        return moveCardToZone(socket, tableId, targetPlayer, 'hand', handIndex, 'discard');
-    });
-
-    socket.on("adjustDefeatedPoints", ({tableId: tableId, targetPlayer: targetPlayer, amount: amount}) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
+    socket.on("adjustDefeatedPoints", async ({tableId: tableId, targetPlayer: targetPlayer, amount: amount}) => {
+        const table = await getTableContext(tableId);
         if (!table) return socket.emit("errorMsg", "Table not found.");
 
         const pState = table.gameState[targetPlayer];
@@ -644,6 +793,8 @@ io.on("connection", socket => {
 
         // 1. Mutate the data model on the server
         pState.defeatedPoints = Math.max(0, pState.defeatedPoints + parseInt(amount));
+
+        await saveTableContext(tableId, table);
 
         // 2. Aggregate all multi-socket connections
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
@@ -660,8 +811,8 @@ io.on("connection", socket => {
         });
     });
 
-    socket.on("recycleDiscardToDeck", ({tableId: tableId, targetPlayer: targetPlayer}) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
+    socket.on("recycleDiscardToDeck", async ({tableId: tableId, targetPlayer: targetPlayer}) => {
+        const table = await getTableContext(tableId);
         if (!table) return socket.emit("errorMsg", "Table not found.");
 
         const playerState = table.gameState[targetPlayer];
@@ -689,6 +840,8 @@ io.on("connection", socket => {
         deck.sort((a, b) => a.shuffleId.localeCompare(b.shuffleId));
         deck.forEach(card => { delete card.shuffleId });
 
+        await saveTableContext(tableId, table);
+
         // Aggregate connections and dispatch individualized FOW updates
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
         targetSockets.forEach(sockId => {
@@ -704,8 +857,8 @@ io.on("connection", socket => {
         socket.emit("serverNotice", `Recycled all ${recycledCount} cards from discard to deck face down, and fully shuffled the deck!`);
     });
 
-    socket.on("checkTableStatus", ({tableId: tableId, role: role}) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
+    socket.on("checkTableStatus", async ({tableId: tableId, role: role}) => {
+        const table = await getTableContext(tableId);
         if (!table) return socket.emit("errorMsg", "Table not found.");
         
         // 🛡️ CRASH GUARD: Spectators go straight to table; they have no deck state to check
@@ -735,49 +888,8 @@ io.on("connection", socket => {
         socket.emit("tableStatusResponse", {tableId: table.id, role: role, hasDeckLoaded: hasDeckLoaded});
     });
 
-
-    socket.on("moveDiscardToDefeated", ({ tableId, targetPlayer, discardIndex }) => {
-        return moveCardToZone(socket, tableId, targetPlayer, 'discard', discardIndex, 'defeated');
-    });
-
-    socket.on("playCardToStage", ({tableId: tableId, targetPlayer: targetPlayer, handIndex: handIndex}) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
-        if (!table) return socket.emit("errorMsg", "Table not found.");
-
-        const hand = table.gameState[targetPlayer]?.hand;
-        const battleZone = table.gameState[targetPlayer]?.battleZone;
-        
-        if (!hand || hand.length === 0) return socket.emit("errorMsg", "Hand is completely empty!");
-
-        const idx = parseInt(handIndex);
-        if (isNaN(idx) || idx < 0 || idx >= hand.length) return socket.emit("errorMsg", "Invalid hand position index selection.");
-
-        // FIX: Safely verify occupancy without running Object.keys on null pointers
-        if (battleZone.stage && Object.keys(battleZone.stage).length > 0) {
-            return socket.emit("errorMsg", "The Stage zone position is already occupied!");
-        }
-
-        const [cardToStage] = hand.splice(idx, 1);
-        cardToStage.isFaceDown = false;
-        cardToStage.isTapped = false;
-        battleZone.stage = cardToStage;
-
-        const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
-        targetSockets.forEach(sockId => {
-            const sock = io.sockets.sockets.get(sockId);
-            if (sock) {
-                let viewerRole = "spectator";
-                if (table.playerA.includes(sockId)) viewerRole = "playerA";
-                if (table.playerB.includes(sockId)) viewerRole = "playerB";
-                sendSanitizedState(sock, table, viewerRole);
-            }
-        });
-
-        socket.emit("serverNotice", `Successfully placed card into stage position.`);
-    });
-
-    socket.on("signalEndGame", ({ tableId, targetPlayer }) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
+    socket.on("signalEndGame", async ({ tableId, targetPlayer }) => {
+        const table = await getTableContext(tableId);
         if (!table) return socket.emit("errorMsg", "Table not found.");
         if (targetPlayer !== "playerA" && targetPlayer !== "playerB") return socket.emit("errorMsg", "Invalid player role.");
 
@@ -807,6 +919,8 @@ io.on("connection", socket => {
             table.gameState.playerB = baselineState();
         }
 
+        await saveTableContext(tableId, table);
+
         // Direct, centralized broadcast to all multi-socket pointers
         targetSockets.forEach(sockId => {
             const sock = io.sockets.sockets.get(sockId);
@@ -819,12 +933,14 @@ io.on("connection", socket => {
         });
     });
 
-    socket.on("revokeEndGame", ({ tableId, targetPlayer }) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
+    socket.on("revokeEndGame", async ({ tableId, targetPlayer }) => {
+        const table = await getTableContext(tableId);
         if (!table) return socket.emit("errorMsg", "Table not found.");
         if (targetPlayer !== "playerA" && targetPlayer !== "playerB") return socket.emit("errorMsg", "Invalid player role.");
 
         table.endGameSignals[targetPlayer] = false;
+
+        await saveTableContext(tableId, table);
 
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
         targetSockets.forEach(sockId => {
@@ -834,22 +950,6 @@ io.on("connection", socket => {
                 sendSanitizedState(sock, table, viewerRole);
             }
         });
-    });
-
-    socket.on("returnSupportToHand", ({ tableId, targetPlayer, supportIndex }) => {
-        return moveCardToZone(socket, tableId, targetPlayer, 'support', supportIndex, 'hand');
-    });
-
-    socket.on("discardSupport", ({ tableId, targetPlayer, supportIndex }) => {
-        return moveCardToZone(socket, tableId, targetPlayer, 'support', supportIndex, 'discard');
-    });
-
-    socket.on("drawSupport", ({ tableId, targetPlayer }) => {
-        const table = tables.find(t => t.id === parseInt(tableId));
-        if (!table) return socket.emit("errorMsg", "Table not found.");
-        
-        const deck = table.gameState[targetPlayer]?.deck;
-        return moveCardToZone(socket, tableId, targetPlayer, 'deck', (deck.length - 1), 'support');
     });
 
     socket.on('requestCardMove', ({ tableId, targetPlayer, targetZone, targetIndex, destinationZone, isPlaceOnTop = true }) => {

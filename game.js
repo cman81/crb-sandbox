@@ -1,8 +1,17 @@
-// 1. Establish the single, global network connection first
-const globalSocket = io('https://crb-sandbox-production.up.railway.app', {
-    transports: ['websocket'],
+// 🚨 Comment this check out temporary to run a live cloud test pass from home:
+// const isLocalElectronRun = window.location.protocol === "file:" || window.location.hostname === "localhost";
+// const targetServerUrl = isLocalElectronRun ? "http://localhost:3000" : "https://crb-sandbox-production.up.railway.app";
+
+// For now, force it straight to the cloud:
+const targetServerUrl = "https://crb-sandbox-production.up.railway.app"; // Your active Railway URL
+
+const globalSocket = io(targetServerUrl, {
+    transports: ["websocket"],
     upgrade: false
 });
+
+
+console.log(`📡 Electron client routing active frame traffic to: ${targetServerUrl}`);
 
 // 2. Standard Phaser 3 configuration object
 const config = {

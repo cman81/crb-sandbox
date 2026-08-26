@@ -108,20 +108,25 @@ class GameScene extends Phaser.Scene {
      */
     sendCardPlayToServer(zoneKey, handIndex, gameObject) {
         const payload = { tableId: this.tableId, targetPlayer: this.role, handIndex: handIndex };
+        let params = {
+            tableId: this.tableId,
+            targetPlayer: this.role,
+            targetZone: 'hand',
+            targetIndex: handIndex,
+            destinationZone: zoneKey
+        };
 
         switch (zoneKey) {
             case "support":
-                this.socket.emit("playCardToSupport", payload);
+            case "discard":
+                this.socket.emit("requestCardMove", params);
                 break;
             case "fighterA":
             case "fighterB":
-                this.socket.emit("playCardToFighter", { ...payload, targetSlot: zoneKey });
-                break;
-            case "discard":
-                this.socket.emit("discardCardFromHand", payload);
+                this.socket.emit("requestCardToFighterOrStage", params);
                 break;
             case "stage":
-                this.socket.emit("playCardToStage", payload);
+                this.socket.emit("requestCardToFighterOrStage", params);
                 break;
             default:
                 // Fallback for invalid custom targets
@@ -188,7 +193,13 @@ class GameScene extends Phaser.Scene {
             pitch: Phaser.Math.FloatBetween(0.96, 1.04)
         });
 
-        this.socket.emit("drawCard", { tableId: this.tableId, targetPlayer: this.role });
+        this.socket.emit("requestCardMove", {
+            tableId: this.tableId,
+            targetPlayer: this.role,
+            targetZone: 'deck',
+            targetIndex: cardsRemaining - 1,
+            destinationZone: 'hand'
+        });
     }
 
     /**
@@ -1168,7 +1179,12 @@ class GameScene extends Phaser.Scene {
                     zoneKey = 'extraB';
                 }
 
-                this.socket.emit("moveFighterToDefeated", { tableId: this.tableId, targetPlayer: this.role, slot: zoneKey })
+                this.socket.emit("requestFighterOrStageToZone", {
+                    tableId: this.tableId,
+                    targetPlayer: this.role,
+                    targetZone: zoneKey,
+                    destinationZone: 'defeated'
+                });
             });
         }
 
@@ -2030,189 +2046,15 @@ class GameScene extends Phaser.Scene {
         if (!targetInfo || targetInfo.ownerId !== this.role || targetInfo.zoneName !== "hand") return;
 
         console.log(`📡 [DECOUPLED DECK MOVE EMIT]: Moving hand index ${targetInfo.index} to ${destination} of deck.`);
-        
-        const socketEvent = destination === "top" ? "playHandToTopDeck" : "playHandToBottomDeck";
-        this.socket.emit(socketEvent, {
+
+        this.socket.emit("requestCardMove", {
             tableId: this.tableId,
             targetPlayer: this.role,
-            handIndex: targetInfo.index
+            targetZone: 'hand',
+            targetIndex: targetInfo.index,
+            destinationZone: 'deck',
+            isPlaceOnTop: (destination === "top")
         });
-    }
-
-    handleKeyboardFaceDownAction(mouseX, mouseY) {
-        if (!this.lastReceivedState || !this.lastReceivedState[this.role]) return;
-        
-        const state = this.lastReceivedState;
-        const c = this.fieldCoordinates.local;
-        const hand = state[this.role].hand || [];
-
-        for (let index = hand.length - 1; index >= 0; index--) {
-            const layout = this.getHandCardLayout(index, hand.length, true);
-            const cardX = layout.x;
-            const cardY = c.handStart.y + layout.y;
-            const halfW = layout.width / 2;
-            const halfH = layout.height / 2;
-
-            if (mouseX >= cardX - halfW && mouseX <= cardX + halfW &&
-                mouseY >= cardY - halfH && mouseY <= cardY + halfH) {
-
-                const bZone = this.lastReceivedState?.[this.role]?.battleZone || {};
-                if (bZone.fighterA?.card && Object.keys(bZone.fighterA.card).length > 0) {
-                    console.log("❌ [LOCAL ALERT]: Fighter A position is already occupied.");
-                    return;
-                }
-                
-                console.log(`📡 [DECOUPLED TRICKERY EMIT]: Sending request to play hand index ${index} face down.`);
-                
-                // EMIT ONLY: Let the server process the transaction safely
-                this.socket.emit("playCardFaceDown", {
-                    tableId: this.tableId,
-                    targetPlayer: this.role,
-                    handIndex: index
-                });
-                return;
-            }
-        }
-    }
-
-    handleKeyboardToSupportAction(mouseX, mouseY) {
-        if (!this.lastReceivedState || !this.lastReceivedState[this.role]) return;
-        
-        const state = this.lastReceivedState;
-        const c = this.fieldCoordinates.local;
-        const halfW = this.cardWidth / 2;
-        const halfH = this.cardHeight / 2;
-        const myBZone = state[this.role]?.battleZone || {};
-        
-        // -----------------------------------------------------------------
-        // CONTEXT A: Hovering Over Fighter A -> Move Fighter to Support
-        // -----------------------------------------------------------------
-        if (myBZone.fighterA && myBZone.fighterA.card) {
-            const card = myBZone.fighterA.card;
-            // Dynamically adjust boundary detection sizes based on Rest Mode (isTapped) orientation
-            const hW = card.isTapped ? halfH : halfW;
-            const hH = card.isTapped ? halfW : halfH;
-            
-            if (mouseX >= c.fighterA.x - hW && mouseX <= c.fighterA.x + hW && mouseY >= c.fighterA.y - hH && mouseY <= c.fighterA.y + hH) {
-                console.log("📡 [SHORTCUT S EMIT]: Moving card from Fighter A slot to Support Lane...");
-                this.socket.emit("moveFighterToSupport", {
-                    tableId: this.tableId,
-                    targetPlayer: this.role,
-                    slot: "fighterA"
-                });
-                return; // Exit early
-            }
-        }
-
-        // -----------------------------------------------------------------
-        // CONTEXT B: Hovering Over Fighter B -> Move Fighter to Support
-        // -----------------------------------------------------------------
-        if (myBZone.fighterB && myBZone.fighterB.card) {
-            const card = myBZone.fighterB.card;
-            const hW = card.isTapped ? halfH : halfW;
-            const hH = card.isTapped ? halfW : halfH;
-            
-            if (mouseX >= c.fighterB.x - hW && mouseX <= c.fighterB.x + hW && mouseY >= c.fighterB.y - hH && mouseY <= c.fighterB.y + hH) {
-                console.log("📡 [SHORTCUT S EMIT]: Moving card from Fighter B slot to Support Lane...");
-                this.socket.emit("moveFighterToSupport", {
-                    tableId: this.tableId,
-                    targetPlayer: this.role,
-                    slot: "fighterB"
-                });
-                return; // Exit early
-            }
-        }
-
-        // -----------------------------------------------------------------
-        // CONTEXT C: Hovering Over The Deck -> Draw to Support
-        // -----------------------------------------------------------------
-        if (mouseX >= c.deck.x - halfW && mouseX <= c.deck.x + halfW && mouseY >= c.deck.y - halfH && mouseY <= c.deck.y + halfH) {
-            if (this.drawerState && this.drawerState.isOpen) return;
-            const myDeck = state[this.role].deck || [];
-            if (myDeck.length <= 0) return;
-            
-            console.log("📡 [SHORTCUT S EMIT]: Drawing card directly from deck into Support Lane...");
-            this.socket.emit("drawSupport", { tableId: this.tableId, targetPlayer: this.role });
-            return;
-        }
-
-        // -----------------------------------------------------------------
-        // CONTEXT D: Fallback (Hovering Over Hand) -> Existing Support Loop
-        // -----------------------------------------------------------------
-        const hand = state[this.role].hand || [];
-        for (let index = hand.length - 1; index >= 0; index--) {
-            const layout = this.getHandCardLayout(index, hand.length, true);
-            const cardX = layout.x;
-            const cardY = c.handStart.y + layout.y;
-            const handHalfW = layout.width / 2;
-            const handHalfH = layout.height / 2;
-            
-            if (mouseX >= cardX - handHalfW && mouseX <= cardX + handHalfW && mouseY >= cardY - handHalfH && mouseY <= cardY + handHalfH) {
-                console.log(`📡 [SHORTCUT S EMIT]: Redirecting hand index ${index} face up into the Support Lane...`);
-                this.socket.emit("playCardToSupport", { tableId: this.tableId, targetPlayer: this.role, handIndex: index });
-                return;
-            }
-        }
-    }
-
-    handleKeyboardHAction(mouseX, mouseY) {
-        if (!this.lastReceivedState || !this.lastReceivedState[this.role]) return;
-        
-        const state = this.lastReceivedState;
-        const c = this.fieldCoordinates.local;
-        const halfW = this.cardWidth / 2;
-        const halfH = this.cardHeight / 2;
-        
-        // ----------------------------------------------------
-        // CONTEXT A: Hovering Over The Local Deck -> Draw Card
-        // ----------------------------------------------------
-        if (mouseX >= c.deck.x - halfW && mouseX <= c.deck.x + halfW && mouseY >= c.deck.y - halfH && mouseY <= c.deck.y + halfH) {
-            if (this.drawerState && this.drawerState.isOpen) return;
-            
-            // Safety check to ensure deck has cards remaining
-            const myDeck = state[this.role].deck || [];
-            if (myDeck.length <= 0) {
-                console.log("⚠️ [SHORTCUT H ABORT]: Deck is empty. Suppressing draw event.");
-                return;
-            }
-            
-            console.log("🎲 [SHORTCUT H]: Clean draw card shortcut issued via keyboard context verification.");
-            
-            // Play draw sound with your dynamic pitch randomization config
-            this.sound.play("sound_draw", { 
-                volume: 0.8,
-                pitch: Phaser.Math.FloatBetween(0.96, 1.04) 
-            });
-            
-            this.socket.emit("drawCard", { tableId: this.tableId, targetPlayer: this.role });
-            return;
-        }
-        
-        // -----------------------------------------------------------
-        // CONTEXT B: Hovering Over A Support Card -> Return to Hand
-        // -----------------------------------------------------------
-        const support = state[this.role].support || [];
-        
-        // Iterate from front-to-back (reverse) to prioritize clicking overlapping cards accurately
-        for (let i = support.length - 1; i >= 0; i--) {
-            const card = support[i];
-            const shiftX = c.supportStart.x + i * c.supportOverlap;
-            
-            // Adjust hitbox orientation cleanly based on Rest Mode (isTapped) state
-            const hW = card.isTapped ? halfH : halfW;
-            const hH = card.isTapped ? halfW : halfH;
-            
-            if (mouseX >= shiftX - hW && mouseX <= shiftX + hW && mouseY >= c.supportStart.y - hH && mouseY <= c.supportStart.y + hH) {
-                console.log(`📡 [SHORTCUT H EMIT]: Reclaiming support index ${i} (${card.id}) back to hand array list.`);
-                                
-                this.socket.emit("returnSupportToHand", {
-                    tableId: this.tableId,
-                    targetPlayer: this.role,
-                    supportIndex: i
-                });
-                return;
-            }
-        }
     }
 
     animateCardFlight(startPos, endPos, cardData, isFaceDown = false, duration = 350, customStartPos = null) {

@@ -6,7 +6,9 @@
   "scripts": {
     "start": "electron .",
     "chromebook": "electron . --disable-gpu --disable-gpu-compositing",
-    "build": "electron-builder --win"
+    "build": "electron-builder --win",
+    "dev": "cross-env NODE_ENV=development electron .",
+    "devcb": "cross-env NODE_ENV=development electron . --disable-gpu --disable-gpu-compositing"
   },
   "keywords": [
     "game",
@@ -15,6 +17,7 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "cross-env": "^10.1.0",
     "electron": "^43.4.0",
     "electron-builder": "^26.15.3"
   },

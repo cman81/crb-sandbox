@@ -21,7 +21,7 @@ To prevent server crash state resets on Railway and eliminate Node.js memory lea
 
 ### 🔒 2. Mode Activation & The Timekeeper Lock
 * **State Toggle Engine:** Establish a table status toggle (`table.tbdActive = true/false`) and assign a lock string (`table.timekeeperSocketId = socket.id`).
-* **Input Intercept Guards:** Create a global verification helper function (`isTimeFrozen(table, socketId)`). Inject this guard onto the first line of all standard player interaction listeners (`playCardToFighter`, `toggleCardTap`, `discardCardFromHand`).
+* **Input Intercept Guards:** Create a global verification helper function (`isTimeFrozen(table, socketId)`). Inject this guard onto the first line of all standard player interaction listeners (`requestCardToFighterOrStage`, `toggleCardTap`, `requestCardMove`).
 * **Action Blocking:** If `tbdActive` is true, immediately short-circuit and emit an error payload to any socket attempt that does not match the initiating `timekeeper` player ID.
 * **Resilient Disconnection Recovery:** Map an execution hook to the server's global `leaveAll` / `disconnect` loops. If the socket matching `table.timekeeperSocketId` exits the room mid-pause, the server will **not** reset the match. Instead, it instantly forces `table.tbdActive = false`, releases the input lock, sets the table's current live state to whatever snapshot the playhead was resting on, and broadcasts a resumed state.
 
