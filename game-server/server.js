@@ -104,10 +104,11 @@ const tables = Array.from({ length: 8 }, (_, i) => ({
     spectators: [],
     endGameSignals: { playerA: false, playerB: false },
     isTbdActive: false,
-    timekeeperSocketId: "",
+    timekeeper: "",
     currentPlayhead: null,
     liveHead: null,
     gameState: {
+        battleLog: [], 
         playerA: {
             hand: [], deck: [], extraDeck: [], discard: [], support: [], defeated: [],
             defeatedPoints: 0, battleZone: {
@@ -186,59 +187,67 @@ async function getTableContext(tableId) {
 }
 
 /**
- * Saves a new table version and handles the Retcon Cut if a player acts in the past.
- * If the camera view (playhead) is behind the present day (live head) when a new action
- * happens, this function cuts off the old future and makes this turn the new present day.
+ * Saves a new table version and handles the Retcon Cut using clean player role strings.
+ * If the role matches "playerA" or "playerB" while viewing history, it cuts off the
+ * old future and makes this new move the official present day.
  *
  * @async
  * @param {string|number} tableId - The room number to save.
  * @param {Object} tableObj - The updated table data object from the server.
- * @param {string} [actingPlayerId="system"] - The socket ID of the player moving.
+ * @param {string} [actingRole="system"] - The role making the move ("playerA", "playerB", or "system").
+ * @param {string} [logMessage=""] - A text description of the gameplay action performed.
  * @returns {Promise<void>}
  */
-async function saveTableContext(tableId, tableObj, actingPlayerId = "system") {
+async function saveTableContext(tableId, tableObj, actingRole = "system", logMessage = "") {
     const parsedId = parseInt(tableId, 10);
 
     if (isRedisConnected) {
         const refsKey = `table:${parsedId}:refs`;
         const snapshotsKey = `table:${parsedId}:snapshots`;
 
-        // 1. Fetch current timeline pointers to see where the user is saving data
         const refs = await redisClient.hGetAll(refsKey);
         const oldPlayhead = refs.currentPlayhead || null;
         const oldLiveHead = refs.liveHead || null;
 
-        // 2. Generate a clean, short 8-character version key
         let shortNodeId = uuidv4().split('-')[0];
 
-        // 3. Duplicate Key Protection Loop
         let collisionCheck = await redisClient.hExists(snapshotsKey, shortNodeId);
         while (collisionCheck) {
             shortNodeId = uuidv4().split('-')[0];
             collisionCheck = await redisClient.hExists(snapshotsKey, shortNodeId);
         }
 
-        // 4. Create and save the new timeline history entry node
+        if (!tableObj.gameState.battleLog || !Array.isArray(tableObj.gameState.battleLog)) {
+            tableObj.gameState.battleLog = [];
+        }
+
+        if (logMessage) {
+            const timestamp = new Date().toLocaleTimeString();
+            tableObj.gameState.battleLog.push(`[${timestamp}] ${logMessage}`);
+            
+            if (tableObj.gameState.battleLog.length > 50) {
+                tableObj.gameState.battleLog.shift();
+            }
+        }
+
+        // ⏳ The node graph now records a clean, persistent role string identifier
         const timelineNode = {
             nodeId: shortNodeId,
-            parentId: oldPlayhead, // Links backward to create the historical chain
-            actionBy: actingPlayerId,
+            parentId: oldPlayhead,
+            actionBy: actingRole, // Stores "playerA", "playerB", or "system"
             timestamp: Date.now(),
             gameState: tableObj.gameState
         };
         await redisClient.hSet(snapshotsKey, shortNodeId, JSON.stringify(timelineNode));
 
-        // 5. 🔥 THE RETCON CUT LOGIC ENGINE:
-        // By default, a brand-new action advances both the playhead and the live present day
+        // 🔥 CLEAN ROLE RETCON GATEKEEPER:
+        // If an actual playing role moves a card, advance the live head to this new turn.
+        // If it is just a background configuration update ("system"), leave the future alone!
         let nextLiveHeadPointer = shortNodeId;
-
-        // If the player did NOT make a move and we are just modifying metadata strings 
-        // (like toggling endgame signals or changing user arrays), we keep the old future path intact
-        if (actingPlayerId === "system") {
+        if (actingRole === "system") {
             nextLiveHeadPointer = oldLiveHead || shortNodeId;
         }
 
-        // 6. Save all structural updates back to the Redis database hashes
         await redisClient.hSet(refsKey, {
             playerA: JSON.stringify(tableObj.playerA),
             playerB: JSON.stringify(tableObj.playerB),
@@ -247,13 +256,12 @@ async function saveTableContext(tableId, tableObj, actingPlayerId = "system") {
             endGameSignalB: tableObj.endGameSignals.playerB.toString(),
             isTbdActive: (tableObj.isTbdActive || false).toString(),
             timekeeper: tableObj.timekeeper || "",
-            currentPlayhead: shortNodeId, // The camera view always jumps to the newest action
-            liveHead: nextLiveHeadPointer // Snaps to the new turn if a retcon cut triggered
+            currentPlayhead: shortNodeId,
+            liveHead: nextLiveHeadPointer
         });
         return;
     }
 
-    // Local array fallback if Redis is offline during development
     const matchIdx = tables.findIndex(t => t.id === parsedId);
     if (matchIdx !== -1) {
         tables[matchIdx] = tableObj;
@@ -303,6 +311,7 @@ function sendSanitizedState(socket, table, role) {
     const canSeeA = isSpec || role === "playerA";
     const canSeeB = isSpec || role === "playerB";
     const state = table.gameState;
+    const sanitizedBattleLog = getSanitizedBattleLog(state, role);
 
     socket.emit("stateUpdate", {
         tableId: table.id,
@@ -313,6 +322,7 @@ function sendSanitizedState(socket, table, role) {
         timekeeper: table.timekeeper || null, 
         currentPlayhead: table.currentPlayhead,
         liveHead: table.liveHead,
+        gameState: { battleLog: sanitizedBattleLog },
 
         playerA: {
             hand: sanitizeZone(state.playerA.hand, canSeeA),
@@ -335,6 +345,46 @@ function sendSanitizedState(socket, table, role) {
             battleZone: sanitizeBattleZone(state.playerB.battleZone, "playerB", role)
         }
     });
+}
+
+/**
+ * Cleans the battle history logs based on who is viewing the game.
+ * It hides private opponent actions (like private card draws wrapped in bracket tags)
+ * and turns them into generic placeholders to preserve the game's Fog-of-War.
+ *
+ * @param {Object} state - The active game state object containing the raw battle log array.
+ * @param {string} role - The room seat identity of the client looking at the logs ("playerA", "playerB", or "spectator").
+ * @returns {Array<string>} A brand new, player-safe array of cleaned up history log strings.
+ */
+function getSanitizedBattleLog(state, role) {
+    let sanitizedBattleLog = [];
+
+    if (state.battleLog && Array.isArray(state.battleLog)) {
+        sanitizedBattleLog = state.battleLog.map(line => {
+            let processedLine = line;
+
+            // Pattern checking for Player A secrets: [A:Secret Text]
+            if (role === "playerB") {
+                // If the viewer is the enemy, mask Player A's private card info completely
+                processedLine = processedLine.replace(/\[A:.*?\]/g, "a card");
+                // Mask Player B's own secrets too if they are looking backwards, or leave simple tags
+                processedLine = processedLine.replace(/\[B:(.*?)\]/g, "$1");
+            } else if (role === "playerA") {
+                // If the viewer is the owner, strip the bracket tags but reveal the title text
+                processedLine = processedLine.replace(/\[A:(.*?)\]/g, "$1");
+                // Mask Player B's card choices for Player A
+                processedLine = processedLine.replace(/\[B:.*?\]/g, "a card");
+            } else {
+                // Spectators hold X-Ray vision privileges: reveal everything cleanly
+                processedLine = processedLine.replace(/\[A:(.*?)\]/g, "$1");
+                processedLine = processedLine.replace(/\[B:(.*?)\]/g, "$1");
+            }
+
+            return processedLine;
+        });
+    }
+
+    return sanitizedBattleLog;
 }
 
 /**
@@ -395,7 +445,8 @@ async function moveCardToFighterOrStage(socket, tableId, targetPlayer, fromZone,
         destinationBattleZone[toZone].card = cardToMove;
     }
 
-    await saveTableContext(tableId, table);
+    const logText = `${targetPlayer} moved [${(targetPlayer == 'playerA') ? 'A' : 'B'}:${cardToMove.name}] from ${fromZone} to ${toZone}`;
+    await saveTableContext(tableId, table, targetPlayer, logText);
 
     // 2. Aggregate all multi-socket connections for this table instance
     const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
@@ -458,7 +509,8 @@ async function moveCardToZone(socket, tableId, targetPlayer, fromZone, fromIndex
     }
 
     // Commit the state mutation and multi-cast update frames across the table room profile arrays
-    await saveTableContext(tableId, table);
+    const logText = `${targetPlayer} moved [${(targetPlayer == 'playerA') ? 'A' : 'B'}:${cardToMove.name}] from ${fromZone} to ${toZone}`;
+    await saveTableContext(tableId, table, targetPlayer, logText);
 
     // 2. Aggregate all multi-socket connections for this table instance
     const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
@@ -535,9 +587,9 @@ async function moveFighterOrStageToZone(socket, tableId, targetPlayer, slot, toZ
     }
 
 
-    console.log(`📡 [FIGHTER RELOCATION ENGINE]: Shifted tracking frame from active slot ${slot} to array zone ${toZone} for ${targetPlayer}.`);
-
-    await saveTableContext(tableId, table);
+    const logText = `📡 [FIGHTER RELOCATION ENGINE]: Shifted tracking frame from active slot ${slot} to array zone ${toZone} for ${targetPlayer}.`;
+    console.log(logText);
+    await saveTableContext(tableId, table, targetPlayer, logText);
 
     // 4. Secure broadcast - individual FOW-masked state multi-cast sweep
     const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
@@ -637,10 +689,10 @@ io.on("connection", socket => {
             updatedTable.endGameSignals[role] = false;
         }
 
-        console.log(`📡 [HYBRID PERSISTENCE SEAT]: Added socket ${socket.id} uniquely to Table ${tableId} for ${role}`);
-
         // Commit the seating adjustments down to our active hybrid persistence tier
-        await saveTableContext(tableId, updatedTable);
+        const logText = `📡 [HYBRID PERSISTENCE SEAT]: Added socket ${socket.id} uniquely to Table ${tableId} for ${role}`;
+        console.log(logText);
+        await saveTableContext(tableId, updatedTable, role, logText);
 
         // Deliver a dedicated, perfectly masked state frame to the calling user session
         sendSanitizedState(socket, updatedTable, role);
@@ -684,7 +736,8 @@ io.on("connection", socket => {
         }));
 
         // Commit the deck data mapping configurations straight down to our active hybrid database layer
-        await saveTableContext(tableId, table);
+        const logText = `${targetPlayer} loaded their deck with ${deckList.length} uniquely titled cards. Extra Deck: ${extraDeckList.length} entries.`;
+        await saveTableContext(tableId, table, targetPlayer, logText);
 
         socket.emit("serverNotice", `Deck loaded with ${deckList.length} uniquely titled cards. Extra Deck: ${extraDeckList.length} entries.`);
     });
@@ -724,7 +777,8 @@ io.on("connection", socket => {
         });
 
         // Commit the randomized stack order back down to our hybrid persistence layer
-        await saveTableContext(tableId, table);
+        const logText = `${targetPlayer}'s deck shuffled successfully`;
+        await saveTableContext(tableId, table, targetPlayer, logText);
 
         socket.emit('serverNotice', `Deck shuffled successfully using random UUID sort!`);
     });
@@ -753,7 +807,8 @@ io.on("connection", socket => {
         }
 
         // Commit the state mutation and multi-cast update frames across the table room profile arrays
-        await saveTableContext(tableId, table);
+        const logText = `${targetPlayer.toUpperCase()} successfully drew a 6-card opening hand.`;
+        await saveTableContext(tableId, table, targetPlayer, logText);
 
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
 
@@ -781,9 +836,9 @@ io.on("connection", socket => {
         // 1. Permanently remove the face-down mask condition on the server model
         card.isFaceDown = false;
 
-        console.log(`📡 [DECOUPLED FLIP]: Fighter A card flipped face up for ${targetPlayer}. Broadcasting state...`);
-
-        await saveTableContext(tableId, table);
+        const logText = `📡 [DECOUPLED FLIP]: ${targetPlayer} card flipped face up for ${targetPlayer}. Broadcasting state...`;
+        console.log(logText);
+        await saveTableContext(tableId, table, targetPlayer, logText);
 
         // 2. Aggregate all multi-socket connections for this table instance
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
@@ -832,7 +887,11 @@ io.on("connection", socket => {
             isTapped: targetCard.isTapped
         };
 
-        await saveTableContext(tableId, table);
+        // 📝 Build your descriptive action message string
+        const stateLabel = targetCard.isTapped ? "TAPPED" : "UNTAPPED";        
+        const logText = `${targetPlayer.toUpperCase()} shifted card in ${zone} to ${stateLabel}.`;
+
+        await saveTableContext(tableId, table, targetPlayer, logText);
 
         // 3. Broadcast the animation instruction
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
@@ -855,7 +914,8 @@ io.on("connection", socket => {
         if (!bZone[targetSlot].faceDownStack) bZone[targetSlot].faceDownStack = [];
         bZone[targetSlot].faceDownStack.push(cardToStack);
 
-        await saveTableContext(tableId, table);
+        const logText = `${targetPlayer} moved a card from their deck to the top of their face-down stack for ${targetSlot}`;
+        await saveTableContext(tableId, table, targetPlayer, logText);
 
         // Secure broadcast
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
@@ -883,7 +943,8 @@ io.on("connection", socket => {
         poppedCard.isTapped = false;
         discard.push(poppedCard);
 
-        await saveTableContext(tableId, table);
+        const logText = `${targetPlayer} flipped up a card from the face-down stack of ${targetSlot} and discarded it`;
+        await saveTableContext(tableId, table, targetPlayer, logText);
 
         // Secure broadcast
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
@@ -906,7 +967,8 @@ io.on("connection", socket => {
         // 1. Mutate the data model on the server
         pState.defeatedPoints = Math.max(0, pState.defeatedPoints + parseInt(amount));
 
-        await saveTableContext(tableId, table);
+        const logText = `${targetPlayer} adjusted their defeated points by ${amount}`
+        await saveTableContext(tableId, table, 'system', logText);
 
         // 2. Aggregate all multi-socket connections
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
@@ -952,7 +1014,8 @@ io.on("connection", socket => {
         deck.sort((a, b) => a.shuffleId.localeCompare(b.shuffleId));
         deck.forEach(card => { delete card.shuffleId });
 
-        await saveTableContext(tableId, table);
+        const logText = `${targetPlayer} moved all discards to the deck and shuffled the deck`;
+        await saveTableContext(tableId, table, targetPlayer, logText);
 
         // Aggregate connections and dispatch individualized FOW updates
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
@@ -1031,7 +1094,8 @@ io.on("connection", socket => {
             table.gameState.playerB = baselineState();
         }
 
-        await saveTableContext(tableId, table);
+        const logText = `${targetPlayer} wants to end the game`;
+        await saveTableContext(tableId, table, 'system', logText);
 
         // Direct, centralized broadcast to all multi-socket pointers
         targetSockets.forEach(sockId => {
@@ -1052,7 +1116,8 @@ io.on("connection", socket => {
 
         table.endGameSignals[targetPlayer] = false;
 
-        await saveTableContext(tableId, table);
+        const logText = `${targetPlayer} no longer wants to end the game`;
+        await saveTableContext(tableId, table, 'system', logText);
 
         const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
         targetSockets.forEach(sockId => {

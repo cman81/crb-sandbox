@@ -325,8 +325,8 @@ class DeveloperMode extends Phaser.Scene {
         `;
 
         // --- COLUMN 3: RIGHT SIDE HIGH-DENSITY CARD LOOKUP MATRIX ---
-        masterOverlayHtml += `
-            <div style="width: 320px; background: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box; display: flex; flex-direction: column; height: 100%;">
+         masterOverlayHtml += `
+            <div style="width: 320px; background: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box; display: flex; flex-direction: column; height: calc(50% - 10px);">
                 <h3 style="margin-top:0; color:#eab308; font-size: 18px; margin-bottom: 12px; border-bottom: 1px solid #334155; padding-bottom: 6px;">📋 HAND MATRIX</h3>
                 <div style="flex-grow: 1; overflow-y: auto; width: 100%;">
                     <table style="width: 100%; border-collapse: collapse; text-align: left;">
@@ -340,6 +340,14 @@ class DeveloperMode extends Phaser.Scene {
                             <tr><td colspan="2" style="padding: 20px; text-align: center; color: #475569; font-style: italic;">[No Hand Data Loaded]</td></tr>
                         </tbody>
                     </table>
+                </div>
+            </div>
+
+            <!-- ⏳ INJECTED TIMELINE LOG BLOCK: Positioned safely outside the hand matrix wrapper -->
+            <div style="width: 320px; background: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box; display: flex; flex-direction: column; height: calc(50% - 10px); margin-top: 15px;">
+                <h3 style="margin-top:0; color:#fbbf24; font-size: 16px; margin-bottom: 12px; border-bottom: 1px solid #334155; padding-bottom: 6px;">📜 TIMELINE SNAPSHOT LOG</h3>
+                <div id="devTimelineLogBox" style="flex-grow: 1; overflow-y: auto; width: 100%; font-size: 12px; color: #fbbf24; font-family: monospace; display: flex; flex-direction: column; gap: 6px;">
+                    <span style="color: #475569; font-style: italic;">[No Timeline Actions Recorded]</span>
                 </div>
             </div>
         `;
@@ -438,6 +446,7 @@ class DeveloperMode extends Phaser.Scene {
         // 1. Core State Snapshot Synchronizer
         this.socket.on("stateUpdate", sanitizedState => {
             this.logToConsole(`[RECEIVED stateUpdate]:\n${JSON.stringify(sanitizedState, null, 2)}`);
+            this.refreshBattleLog(sanitizedState);
             const activeTargetPlayer = document.getElementById("actionTargetPlayer")?.value || "playerA";
             const handData = sanitizedState[activeTargetPlayer]?.hand || [];
             this.refreshHandMatrixTable(handData);
@@ -515,6 +524,23 @@ class DeveloperMode extends Phaser.Scene {
         this.socket.on("discardToDefeatedUpdate", defeatEvent => {
             this.logToConsole(`[LIVE FIELD EVENT] [DISCARD RETIRED]\nPlayer ${defeatEvent.targetPlayer} retired a card out of discard into defeated zone!\nRetired Card: ${JSON.stringify(defeatEvent.card)}\nDiscard Count: ${defeatEvent.discardCount}\nDefeated Pile Count: ${defeatEvent.defeatedCount}`);
         });
+    }
+
+    refreshBattleLog(sanitizedState) {
+        const logBox = document.getElementById("devTimelineLogBox");
+        if (logBox) {
+            logBox.innerHTML = "";
+            const historyLines = sanitizedState.gameState?.battleLog || [];
+
+            if (historyLines.length === 0) {
+                logBox.innerHTML = `<span style="color: #475569; font-style: italic;">[No Timeline Actions Recorded]</span>`;
+            } else {
+                // Render actions backward so the freshest move is always at the top of the box
+                historyLines.slice().reverse().forEach(line => {
+                    logBox.innerHTML += `<div style="border-bottom: 1px solid #2d3748; padding-bottom: 4px; line-height: 1.4;">${line}</div>`;
+                });
+            }
+        }
     }
 
     setupCrossTabSynchronizer() {
