@@ -137,8 +137,7 @@ const tables = Array.from({ length: 8 }, (_, i) => ({
 
 /**
  * Pulls the latest data for a specific table from the database or local memory.
- * It looks up which turn the playhead is currently pointing to and extracts
- * the correct game board state for that exact moment in time.
+ * It reads the timekeeper role tracking strings directly to prevent null states.
  *
  * @async
  * @param {string|number} tableId - The room number to look up.
@@ -173,24 +172,23 @@ async function getTableContext(tableId) {
                 playerA: refs.endGameSignalA === "true",
                 playerB: refs.endGameSignalB === "true"
             },
-            // ⏳ Return our new tracking variables
+            // ⏳ Timeline Tracking Data Maps
             isTbdActive: refs.isTbdActive === "true",
-            timekeeperSocketId: refs.timekeeperSocketId || "",
+            timekeeper: refs.timekeeper || "", 
             currentPlayhead: playheadId || null,
             liveHead: refs.liveHead || null,
             gameState: activeGameState
         };
     }
 
-    // Local array fallback if Redis is offline during development
     const memoryTable = tables.find(t => t.id === parsedId);
     return memoryTable || null;
 }
 
 /**
- * Saves the table state and creates a new timeline version entry.
- * It generates an 8-character ID for the new turn, saves the full game board
- * layout to history, and updates the active playhead references in Redis.
+ * Saves a new table version and handles the Retcon Cut if a player acts in the past.
+ * If the camera view (playhead) is behind the present day (live head) when a new action
+ * happens, this function cuts off the old future and makes this turn the new present day.
  *
  * @async
  * @param {string|number} tableId - The room number to save.
@@ -205,9 +203,10 @@ async function saveTableContext(tableId, tableObj, actingPlayerId = "system") {
         const refsKey = `table:${parsedId}:refs`;
         const snapshotsKey = `table:${parsedId}:snapshots`;
 
-        // 1. Get the current playhead position to link this new turn backward
+        // 1. Fetch current timeline pointers to see where the user is saving data
         const refs = await redisClient.hGetAll(refsKey);
         const oldPlayhead = refs.currentPlayhead || null;
+        const oldLiveHead = refs.liveHead || null;
 
         // 2. Generate a clean, short 8-character version key
         let shortNodeId = uuidv4().split('-')[0];
@@ -219,17 +218,27 @@ async function saveTableContext(tableId, tableObj, actingPlayerId = "system") {
             collisionCheck = await redisClient.hExists(snapshotsKey, shortNodeId);
         }
 
-        // 4. Create and save the new timeline history entry
+        // 4. Create and save the new timeline history entry node
         const timelineNode = {
             nodeId: shortNodeId,
-            parentId: oldPlayhead,
+            parentId: oldPlayhead, // Links backward to create the historical chain
             actionBy: actingPlayerId,
             timestamp: Date.now(),
             gameState: tableObj.gameState
         };
         await redisClient.hSet(snapshotsKey, shortNodeId, JSON.stringify(timelineNode));
 
-        // 5. Update the main table routing pointers
+        // 5. 🔥 THE RETCON CUT LOGIC ENGINE:
+        // By default, a brand-new action advances both the playhead and the live present day
+        let nextLiveHeadPointer = shortNodeId;
+
+        // If the player did NOT make a move and we are just modifying metadata strings 
+        // (like toggling endgame signals or changing user arrays), we keep the old future path intact
+        if (actingPlayerId === "system") {
+            nextLiveHeadPointer = oldLiveHead || shortNodeId;
+        }
+
+        // 6. Save all structural updates back to the Redis database hashes
         await redisClient.hSet(refsKey, {
             playerA: JSON.stringify(tableObj.playerA),
             playerB: JSON.stringify(tableObj.playerB),
@@ -237,10 +246,9 @@ async function saveTableContext(tableId, tableObj, actingPlayerId = "system") {
             endGameSignalA: tableObj.endGameSignals.playerA.toString(),
             endGameSignalB: tableObj.endGameSignals.playerB.toString(),
             isTbdActive: (tableObj.isTbdActive || false).toString(),
-            timekeeperSocketId: tableObj.timekeeperSocketId || "",
-            // Move both pointers forward to this new version entry
-            currentPlayhead: shortNodeId,
-            liveHead: shortNodeId
+            timekeeper: tableObj.timekeeper || "",
+            currentPlayhead: shortNodeId, // The camera view always jumps to the newest action
+            liveHead: nextLiveHeadPointer // Snaps to the new turn if a retcon cut triggered
         });
         return;
     }
@@ -1094,13 +1102,16 @@ io.on("connection", socket => {
         const table = await getTableContext(tableId);
         if (!table) return socket.emit("errorMsg", "Table not found.");
 
-        // Block if another role has already locked this sandbox room down
-        if (table.isTbdActive && table.timekeeper !== role) {
-            return socket.emit("errorMsg", `Timeline is already frozen by ${table.timekeeper}.`);
+        // Clean safety wrapper: format empty database values down to an empty text string
+        const currentLockHolder = table.timekeeper || "";
+
+        // ⏳ Updated Guard: Only block if time is active AND a different role owns the lock
+        if (table.isTbdActive && currentLockHolder !== "" && currentLockHolder !== role) {
+            return socket.emit("errorMsg", `Timeline is already frozen by ${currentLockHolder}.`);
         }
 
         table.isTbdActive = true;
-        table.timekeeper = role; // Saves "playerA" or "playerB" straight into memory
+        table.timekeeper = role;
 
         await redisClient.hSet(`table:${tableId}:refs`, {
             isTbdActive: "true",
@@ -1112,15 +1123,16 @@ io.on("connection", socket => {
     });
 
     /**
-     * Shifts the active board state backward by one turn history entry.
-     * It reads the parent ID of the current turn and updates the playhead.
+     * Shifts the active board state backward or forward through the match history logs.
+     * When moving forward, it looks for the next turn link leading toward the present edge.
      */
-    socket.on("stepTimeline", async ({ tableId, direction }) => {
+    socket.on("stepTimeline", async ({ tableId, direction, role }) => {
         const table = await getTableContext(tableId);
         if (!table) return socket.emit("errorMsg", "Table not found.");
 
-        if (isTimeFrozen(table, socket.id)) {
-            return socket.emit("errorMsg", "Action blocked: You are not the active Timekeeper role.");
+        // ⏳ Simplified check: verify the role parameter matches the current lock holder string
+        if (table.isTbdActive && table.timekeeper !== role) {
+            return socket.emit("errorMsg", `Action blocked: Only ${table.timekeeper} can control the timeline right now.`);
         }
 
         const refsKey = `table:${tableId}:refs`;
@@ -1133,9 +1145,32 @@ io.on("connection", socket => {
                 const node = JSON.parse(nodeRaw);
                 if (node.parentId) {
                     await redisClient.hSet(refsKey, "currentPlayhead", node.parentId);
+                    console.log(`◀ [PLAYHEAD SHIFT]: Moved backward to parent [${node.parentId}]`);
                 } else {
                     return socket.emit("errorMsg", "Already resting at the absolute genesis match turn.");
                 }
+            }
+        } else if (direction === "forward") {
+            if (currentPlayheadId === table.liveHead) {
+                return socket.emit("errorMsg", "Cannot step forward. You are already looking at the present day.");
+            }
+
+            const allSnapshots = await redisClient.hGetAll(snapshotsKey);
+            let nextForwardNodeId = null;
+
+            for (const id in allSnapshots) {
+                const node = JSON.parse(allSnapshots[id]);
+                if (node.parentId === currentPlayheadId) {
+                    nextForwardNodeId = id;
+                    break;
+                }
+            }
+
+            if (nextForwardNodeId) {
+                await redisClient.hSet(refsKey, "currentPlayhead", nextForwardNodeId);
+                console.log(`▶ [PLAYHEAD SHIFT]: Moved forward to child turn [${nextForwardNodeId}]`);
+            } else {
+                return socket.emit("errorMsg", "Could not discover a forward history path.");
             }
         }
 
@@ -1144,21 +1179,21 @@ io.on("connection", socket => {
     });
 
     /**
-     * Unfreezes time and settles the live game at the current historical turn.
-     * This turns off the lock and lets card interaction loops run normally again.
+     * Turns off the time freeze lock and returns the room to active live tracking.
+     * It leaves the live head pointer alone so future turns are never accidentally erased.
      */
-    socket.on("resumeTimeline", async ({ tableId }) => {
+    socket.on("resumeTimeline", async ({ tableId, role }) => {
         const table = await getTableContext(tableId);
         if (!table) return socket.emit("errorMsg", "Table not found.");
 
-        if (isTimeFrozen(table, socket.id)) {
-            return socket.emit("errorMsg", "Action blocked: You do not own the active Timekeeper lock.");
+        // ⏳ Check the role argument string
+        if (table.isTbdActive && table.timekeeper !== role) {
+            return socket.emit("errorMsg", `Action blocked: Only ${table.timekeeper} can unlock the timeline.`);
         }
 
         await redisClient.hSet(`table:${tableId}:refs`, {
             isTbdActive: "false",
-            timekeeper: "", // Clears out the timekeeper tracking string
-            liveHead: table.currentPlayhead
+            timekeeper: ""
         });
 
         console.log(`🟢 [TIMELINE RESUMED]: Match unfrozen on Table ${tableId}. Reality set to version [${table.currentPlayhead}]`);

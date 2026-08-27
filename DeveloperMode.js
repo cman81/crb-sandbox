@@ -276,16 +276,16 @@ class DeveloperMode extends Phaser.Scene {
                         </select>
                     </div>
 
-                    <!-- Navigation Action Row -->
+                    <!-- 🌟 ROW 1: MASTER TIME RECONCILIATION TOGGLES -->
                     <div style="display: flex; gap: 8px;">
-                        <button id="devControlTimeBtn" style="background: #fbbf24; color: #000; font-weight: bold; font-size: 12px; padding: 8px 12px; border: none; border-radius: 6px; cursor: pointer;">🧊 FREEZE TIME</button>
-                        <button id="devTimelineResumeBtn" style="flex: 1; background: #047857; color: #fff; font-family: monospace; font-size: 12px; font-weight: bold; padding: 10px; border: none; border-radius: 6px; cursor: pointer;">⏳ RESUME TIME</button>
+                        <button id="devControlTimeBtn" style="flex: 1; background: #fbbf24; color: #000; font-weight: bold; font-size: 12px; padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-family: monospace;">🧊 FREEZE TIME</button>
+                        <button id="devTimelineResumeBtn" style="flex: 1; background: #047857; color: #fff; font-weight: bold; font-size: 12px; padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-family: monospace;">⏳ RESUME TIME</button>
                     </div>
-                    
-                    <!-- Navigation Action Row -->
-                    <div style="display: flex; gap: 8px;">
+
+                    <!-- 🌟 ROW 2: HISTORY SCRUBBING NAVIGATION BUTTONS -->
+                    <div style="display: flex; gap: 8px; width: 100%;">
                         <button id="devTimelineStepBackBtn" style="flex: 1; background: #334155; color: #fff; font-family: monospace; font-size: 12px; font-weight: bold; padding: 10px; border: 1px solid #475569; border-radius: 6px; cursor: pointer;">◀ STEP BACKWARD</button>
-                        <button id="devTimelineResumeBtn" style="flex: 1; background: #047857; color: #fff; font-family: monospace; font-size: 12px; font-weight: bold; padding: 10px; border: none; border-radius: 6px; cursor: pointer; display: none;">▶ RESUME PLAY</button>
+                        <button id="devTimelineStepForwardBtn" style="flex: 1; background: #06b6d4; color: #000; font-family: monospace; font-size: 12px; font-weight: bold; padding: 10px; border: none; border-radius: 6px; cursor: pointer;">▶ STEP FORWARD</button>
                     </div>
                 </div>
 
@@ -389,6 +389,7 @@ class DeveloperMode extends Phaser.Scene {
             if (event.target.id === "adminRevokeBtn") this.handleAdminRevokeEnd();
             if (event.target.id === "devControlTimeBtn") { this.handleTimeLockRequest(); }
             if (event.target.id === "devTimelineStepBackBtn") { this.handleTimelineStep("backward"); }
+            if (event.target.id === "devTimelineStepForwardBtn") { this.handleTimelineStep("forward"); }
             if (event.target.id === "devTimelineResumeBtn") { this.handleTimelineResumeExecution(); }
         });
     }
@@ -848,31 +849,39 @@ class DeveloperMode extends Phaser.Scene {
     }
 
     /**
-     * Tells the server to shift the game history backward by one turn.
-     * This updates the active playhead to load the previous board layout.
+     * Tells the server to shift the game history backward or forward by one turn.
+     * It appends the selected timekeeper role so the server can authorize the step.
      *
-     * @param {string} direction - The direction to move (always "backward" for now).
+     * @param {string} direction - The timeline scrub direction ("backward" or "forward").
      */
     handleTimelineStep(direction) {
         const tableId = document.getElementById("adminTableId").value;
-        this.logToConsole(`⏳ [TIMEKEEPER ACTION]: Stepping timeline [${direction.toUpperCase()}] on Table ${tableId}.`);
+        const chosenTimekeeperRole = document.getElementById("devTimekeeperRole").value;
+
+        this.logToConsole(`⏳ [TIMEKEEPER ACTION]: Stepping timeline [${direction.toUpperCase()}] on Table ${tableId} as ${chosenTimekeeperRole.toUpperCase()}.`);
         
+        // Pass the tableId, direction, and chosen role context string to the server
         this.socket.emit("stepTimeline", {
             tableId: parseInt(tableId, 10),
-            direction: direction
+            direction: direction,
+            role: chosenTimekeeperRole
         });
     }
 
     /**
-     * Tells the server to unfreeze time and turn off the timeline lock.
-     * This opens up the table so players can click and move cards normally again.
+     * Tells the server to unlock time and turn off the freeze lock.
+     * It appends the selected timekeeper role to pass authorization gates.
      */
     handleTimelineResumeExecution() {
         const tableId = document.getElementById("adminTableId").value;
-        this.logToConsole(`⏳ [TIMEKEEPER ACTION]: Sending request to unlock timeline on Table ${tableId}.`);
+        const chosenTimekeeperRole = document.getElementById("devTimekeeperRole").value;
+
+        this.logToConsole(`⏳ [TIMEKEEPER ACTION]: Sending request to unlock timeline on Table ${tableId} as ${chosenTimekeeperRole.toUpperCase()}.`);
         
+        // Pass the tableId and role string context
         this.socket.emit("resumeTimeline", {
-            tableId: parseInt(tableId, 10)
+            tableId: parseInt(tableId, 10),
+            role: chosenTimekeeperRole
         });
     }
 
