@@ -252,6 +252,14 @@ async function saveTableContext(tableId, tableObj, actingPlayerId = "system") {
     }
 }
 
+/**
+ * Sanitizes and sends the table state to a specific player or spectator socket.
+ * It hides face-down or private opponent cards while appending the timeline variables.
+ *
+ * @param {Object} socket - The individual player's connected socket instance.
+ * @param {Object} table - The active table data object loaded from the database.
+ * @param {string} role - The connection's visibility lens ("playerA", "playerB", or "spectator").
+ */
 function sendSanitizedState(socket, table, role) {
     const maskCard = () => ({ name: "Card Back", isFaceDown: true });
     const sanitizeZone = (zone, isVisible) => {
@@ -279,7 +287,7 @@ function sendSanitizedState(socket, table, role) {
                 faceDownStack: isSpec ? battleZone.fighterB.faceDownStack : battleZone.fighterB.faceDownStack.map(maskCard)
             },
             extraA: battleZone.extraA,
-            extraB: battleZone.extraB,
+            extraB: battleZone.extraB
         };
     };
 
@@ -288,10 +296,16 @@ function sendSanitizedState(socket, table, role) {
     const canSeeB = isSpec || role === "playerB";
     const state = table.gameState;
 
-    // Standardized Payload: Includes FOW cards AND absolute match parameters
     socket.emit("stateUpdate", {
         tableId: table.id,
-        endGameSignals: table.endGameSignals, // Explicitly unified here
+        endGameSignals: table.endGameSignals,
+        
+        // ⏳ New Timeline variables added to the main payload loop
+        isTbdActive: table.isTbdActive,
+        timekeeper: table.timekeeper || null, 
+        currentPlayhead: table.currentPlayhead,
+        liveHead: table.liveHead,
+
         playerA: {
             hand: sanitizeZone(state.playerA.hand, canSeeA),
             deck: sanitizeZone(state.playerA.deck, isSpec),
@@ -1070,6 +1084,89 @@ io.on("connection", socket => {
         return moveFighterOrStageToZone(socket, tableId, targetPlayer, targetZone, destinationZone, isPlaceOnTop);
     })
 
+    // --- TBD TIMELINE REGISTRY LISTENERS ---
+
+    /**
+     * Freezes time for a table and assigns lock ownership to a chosen role.
+     * It checks which socket belongs to that role and gives them control.
+     */
+    socket.on("requestTimeFreeze", async ({ tableId, role }) => {
+        const table = await getTableContext(tableId);
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+
+        // Block if another role has already locked this sandbox room down
+        if (table.isTbdActive && table.timekeeper !== role) {
+            return socket.emit("errorMsg", `Timeline is already frozen by ${table.timekeeper}.`);
+        }
+
+        table.isTbdActive = true;
+        table.timekeeper = role; // Saves "playerA" or "playerB" straight into memory
+
+        await redisClient.hSet(`table:${tableId}:refs`, {
+            isTbdActive: "true",
+            timekeeper: role
+        });
+
+        console.log(`⏳ [TIMELINE LOCK]: Table ${tableId} frozen by Timekeeper role: ${role}`);
+        broadcastTableStateToRoom(table);
+    });
+
+    /**
+     * Shifts the active board state backward by one turn history entry.
+     * It reads the parent ID of the current turn and updates the playhead.
+     */
+    socket.on("stepTimeline", async ({ tableId, direction }) => {
+        const table = await getTableContext(tableId);
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+
+        if (isTimeFrozen(table, socket.id)) {
+            return socket.emit("errorMsg", "Action blocked: You are not the active Timekeeper role.");
+        }
+
+        const refsKey = `table:${tableId}:refs`;
+        const snapshotsKey = `table:${tableId}:snapshots`;
+        const currentPlayheadId = table.currentPlayhead;
+
+        if (direction === "backward") {
+            const nodeRaw = await redisClient.hGet(snapshotsKey, currentPlayheadId);
+            if (nodeRaw) {
+                const node = JSON.parse(nodeRaw);
+                if (node.parentId) {
+                    await redisClient.hSet(refsKey, "currentPlayhead", node.parentId);
+                } else {
+                    return socket.emit("errorMsg", "Already resting at the absolute genesis match turn.");
+                }
+            }
+        }
+
+        const updatedTable = await getTableContext(tableId);
+        broadcastTableStateToRoom(updatedTable);
+    });
+
+    /**
+     * Unfreezes time and settles the live game at the current historical turn.
+     * This turns off the lock and lets card interaction loops run normally again.
+     */
+    socket.on("resumeTimeline", async ({ tableId }) => {
+        const table = await getTableContext(tableId);
+        if (!table) return socket.emit("errorMsg", "Table not found.");
+
+        if (isTimeFrozen(table, socket.id)) {
+            return socket.emit("errorMsg", "Action blocked: You do not own the active Timekeeper lock.");
+        }
+
+        await redisClient.hSet(`table:${tableId}:refs`, {
+            isTbdActive: "false",
+            timekeeper: "", // Clears out the timekeeper tracking string
+            liveHead: table.currentPlayhead
+        });
+
+        console.log(`🟢 [TIMELINE RESUMED]: Match unfrozen on Table ${tableId}. Reality set to version [${table.currentPlayhead}]`);
+
+        const updatedTable = await getTableContext(tableId);
+        broadcastTableStateToRoom(updatedTable);
+    });
+
 });
 
 /**
@@ -1119,6 +1216,49 @@ async function provisioningTableSlot(tableIndex) {
         currentPlayhead: genesisNodeId,
         liveHead: genesisNodeId
     });
+}
+
+/**
+ * Finds all sockets connected to a table and sends them their sanitized state updates.
+ *
+ * @param {Object} table - The active table data object loaded from the database.
+ */
+function broadcastTableStateToRoom(table) {
+    const targetSockets = [table.playerA, table.playerB, ...table.spectators].filter(Boolean).flat();
+    
+    targetSockets.forEach(sockId => {
+        const sock = io.sockets.sockets.get(sockId);
+        if (sock) {
+            let viewerRole = "spectator";
+            if (table.playerA.includes(sockId)) viewerRole = "playerA";
+            if (table.playerB.includes(sockId)) viewerRole = "playerB";
+            
+            // Invoke the clean core handler directly
+            sendSanitizedState(sock, table, viewerRole);
+        }
+    });
+}
+
+/**
+ * Checks if the game room is currently frozen by a timeline session.
+ * It identifies the role of the moving player and returns true if they
+ * do not match the assigned timekeeper role holding the lock.
+ *
+ * @param {Object} table - The active table object loaded from the database.
+ * @param {string} socketId - The unique socket ID of the player attempting to act.
+ * @returns {boolean} True if the player is locked out, false if their action is allowed.
+ */
+function isTimeFrozen(table, socketId) {
+    if (table && table.isTbdActive) {
+        // If time is frozen, identify which slot this incoming socket occupies
+        let actingRole = null;
+        if (table.playerA.includes(socketId)) actingRole = "playerA";
+        if (table.playerB.includes(socketId)) actingRole = "playerB";
+
+        // Block the move if their current role does not match the active timekeeper string
+        return table.timekeeper !== actingRole;
+    }
+    return false;
 }
 
 console.log(`TCG Server on ${process.env.RAILWAY_PUBLIC_DOMAIN}`);

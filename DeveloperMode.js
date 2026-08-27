@@ -243,22 +243,52 @@ class DeveloperMode extends Phaser.Scene {
         `;
         // --- TAB PANEL 4: TABLE ADMINISTRATION ---
         visualHtml += `
-            <div id="panelTableAdmin" style="display: none; background: #1e293b; padding: 24px; border-radius: 12px; border: 1px solid #334155; height: 100%; box-sizing: border-box;">
-                <h3 style="margin-top:0; color:#ef4444; font-size: 20px; margin-bottom: 20px;">4. Table Administration</h3>
-                <div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
+            <div id="panelTableAdmin" style="display: none; background: #1e293b; padding: 24px; border-radius: 12px; border: 1px solid #334155; height: 100%; box-sizing: border-box; display: flex; flex-direction: column;">
+                <h3 style="margin-top:0; color:#ef4444; font-size: 20px; margin-bottom: 20px;">4. Table Administration</h3>                
+                <div style="margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;">
                     <label style="color: #94a3b8;">Table ID (1-8):</label>
                     <select id="adminTableId" style="width: 160px; font-size: 16px; padding: 6px; background: #0f172a; color: #fff; border: 1px solid #334155; border-radius: 6px; font-family: monospace;">
                         <option value="1">Table 1</option><option value="2">Table 2</option><option value="3">Table 3</option><option value="4">Table 4</option>
                         <option value="5">Table 5</option><option value="6">Table 6</option><option value="7">Table 7</option><option value="8">Table 8</option>
                     </select>
                 </div>
-                <div style="margin-bottom: 40px; display: flex; justify-content: space-between; align-items: center;">
+                <div style="margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center;">
                     <label style="color: #94a3b8;">Select Role:</label>
                     <select id="adminRole" style="width: 160px; font-size: 16px; padding: 6px; background: #0f172a; color: #fff; border: 1px solid #334155; border-radius: 6px; font-family: monospace;">
                         <option value="playerA">Player A</option>
                         <option value="playerB">Player B</option>
                     </select>
                 </div>
+
+                <!-- ⏳ INJECTED TIMEKEEPER CONTROLS AREA -->
+                <div style="background: #0f172a; padding: 16px; border-radius: 8px; border: 1px solid #fbbf24; display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;">
+                    <span style="font-weight: bold; color: #fbbf24; font-size: 14px;">⏱️ TIMEKEEPER CONTROLS</span>
+                    
+                    <div style="display: flex; justify-content: space-between; align-items: center; background: #1e293b; padding: 8px; border-radius: 6px; border: 1px solid #334155;">
+                        <span id="devTimelinePlayheadTag" style="font-size: 12px; color: #38bdf8;">STATUS: LIVE PRESENT</span>
+                    </div>
+
+                    <!-- Lock Control Row -->
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <select id="devTimekeeperRole" style="flex: 1; font-size: 13px; padding: 8px; background: #1e293b; color: #fff; border: 1px solid #334155; border-radius: 6px; font-family: monospace;">
+                            <option value="playerA">Control as Player A</option>
+                            <option value="playerB">Control as Player B</option>
+                        </select>
+                    </div>
+
+                    <!-- Navigation Action Row -->
+                    <div style="display: flex; gap: 8px;">
+                        <button id="devControlTimeBtn" style="background: #fbbf24; color: #000; font-weight: bold; font-size: 12px; padding: 8px 12px; border: none; border-radius: 6px; cursor: pointer;">🧊 FREEZE TIME</button>
+                        <button id="devTimelineResumeBtn" style="flex: 1; background: #047857; color: #fff; font-family: monospace; font-size: 12px; font-weight: bold; padding: 10px; border: none; border-radius: 6px; cursor: pointer;">⏳ RESUME TIME</button>
+                    </div>
+                    
+                    <!-- Navigation Action Row -->
+                    <div style="display: flex; gap: 8px;">
+                        <button id="devTimelineStepBackBtn" style="flex: 1; background: #334155; color: #fff; font-family: monospace; font-size: 12px; font-weight: bold; padding: 10px; border: 1px solid #475569; border-radius: 6px; cursor: pointer;">◀ STEP BACKWARD</button>
+                        <button id="devTimelineResumeBtn" style="flex: 1; background: #047857; color: #fff; font-family: monospace; font-size: 12px; font-weight: bold; padding: 10px; border: none; border-radius: 6px; cursor: pointer; display: none;">▶ RESUME PLAY</button>
+                    </div>
+                </div>
+
                 <div style="display: flex; flex-direction: column; gap: 15px; margin-top: auto;">
                     <button id="adminSignalBtn" style="background: #991b1b; color: #fff; font-weight: bold; font-size: 16px; padding: 14px; border: 1px solid #ef4444; border-radius: 6px; cursor: pointer;">🚨 SIGNAL END GAME</button>
                     <button id="adminRevokeBtn" style="background: #334155; color: #fff; font-weight: bold; font-size: 16px; padding: 14px; border: 1px solid #475569; border-radius: 6px; cursor: pointer;">↩️ REVOKE END GAME</button>
@@ -357,6 +387,9 @@ class DeveloperMode extends Phaser.Scene {
             // Tab 4: System table closure commands
             if (event.target.id === "adminSignalBtn") this.handleAdminSignalEnd();
             if (event.target.id === "adminRevokeBtn") this.handleAdminRevokeEnd();
+            if (event.target.id === "devControlTimeBtn") { this.handleTimeLockRequest(); }
+            if (event.target.id === "devTimelineStepBackBtn") { this.handleTimelineStep("backward"); }
+            if (event.target.id === "devTimelineResumeBtn") { this.handleTimelineResumeExecution(); }
         });
     }
     switchTab(tabNum) {
@@ -793,6 +826,53 @@ class DeveloperMode extends Phaser.Scene {
             targetIndex: parseInt(targetIndex, 10),
             destinationZone: destinationZone,
             isPlaceOnTop: isPlaceOnTop 
+        });
+    }
+
+    /**
+     * Tells the server to freeze time for the active table.
+     * It sends the table number and the chosen player role (Player A or Player B)
+     * so the server knows who is locking the game board.
+     */
+    handleTimeLockRequest() {
+        const tableId = document.getElementById("adminTableId").value;
+        const chosenTimekeeperRole = document.getElementById("devTimekeeperRole").value;
+
+        this.logToConsole(`⏳ [TIMEKEEPER ACTION]: Requesting time freeze lock for Table ${tableId} as ${chosenTimekeeperRole.toUpperCase()}...`);
+        
+        // Emits freeze signal to server handler
+        this.socket.emit("requestTimeFreeze", {
+            tableId: parseInt(tableId, 10),
+            role: chosenTimekeeperRole
+        });
+    }
+
+    /**
+     * Tells the server to shift the game history backward by one turn.
+     * This updates the active playhead to load the previous board layout.
+     *
+     * @param {string} direction - The direction to move (always "backward" for now).
+     */
+    handleTimelineStep(direction) {
+        const tableId = document.getElementById("adminTableId").value;
+        this.logToConsole(`⏳ [TIMEKEEPER ACTION]: Stepping timeline [${direction.toUpperCase()}] on Table ${tableId}.`);
+        
+        this.socket.emit("stepTimeline", {
+            tableId: parseInt(tableId, 10),
+            direction: direction
+        });
+    }
+
+    /**
+     * Tells the server to unfreeze time and turn off the timeline lock.
+     * This opens up the table so players can click and move cards normally again.
+     */
+    handleTimelineResumeExecution() {
+        const tableId = document.getElementById("adminTableId").value;
+        this.logToConsole(`⏳ [TIMEKEEPER ACTION]: Sending request to unlock timeline on Table ${tableId}.`);
+        
+        this.socket.emit("resumeTimeline", {
+            tableId: parseInt(tableId, 10)
         });
     }
 
