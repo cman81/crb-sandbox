@@ -48,6 +48,11 @@ class GameScene extends Phaser.Scene {
     registerMouseInteractionListeners() {
         // 1. Handle Active Dragging Movements
         this.input.on("drag", (pointer, gameObject, dragX, dragY) => {
+            if (this.isTimekeeperActive) {
+                if (gameObject) this.resetCardPosition(gameObject);
+                return;
+            }
+
             gameObject.x = dragX;
             gameObject.y = dragY;
             gameObject.setDepth(1000);
@@ -62,6 +67,11 @@ class GameScene extends Phaser.Scene {
 
         // 3. Handle Dropping Cards onto Drop Zones
         this.input.on("drop", (pointer, gameObject, dropZone) => {
+            if (this.isTimekeeperActive) {
+                if (gameObject) this.resetCardPosition(gameObject);
+                return;
+            }
+
             const handIndex = gameObject.data.get("handIndex");
             const zoneKey = dropZone.data.get("zoneKey");
 
@@ -89,6 +99,7 @@ class GameScene extends Phaser.Scene {
 
         // 4. Handle Deck Clicking Interactions
         this.input.on("pointerdown", pointer => {
+            if (this.isTimekeeperActive && !this.isPointerOverTimeControls(pointer.x, pointer.y)) return;
             if (this.role === "spectator" || !this.lastReceivedState) return;
             if (this.drawerState?.isOpen) return;
 
@@ -225,11 +236,21 @@ class GameScene extends Phaser.Scene {
     registerKeyboardShortcuts() {
         // Spacebar triggers a quick card preview on the right panel
         this.input.keyboard.on("keydown-SPACE", () => {
+            if (this.isTimekeeperActive) {
+                console.log("⏳ [SYSTEM BLOCK]: General board keystrokes suspended during timeline analysis.");
+                return;
+            }
+
             this.scanCardHitboxesForPreview();
         });
 
         // Enter triggers a full-sized card inspection modal zoom overlay
         this.input.keyboard.on("keydown-ENTER", () => {
+            if (this.isTimekeeperActive) {
+                console.log("⏳ [SYSTEM BLOCK]: General board keystrokes suspended during timeline analysis.");
+                return;
+            }
+
             this.scanCardHitboxesForPreview();
             
             if (this.selectedPreviewCard) {
@@ -239,8 +260,12 @@ class GameScene extends Phaser.Scene {
 
         // Bind the 'T' key to trigger a real-time card tap/untap state change
         this.input.keyboard.on('keydown-T', () => {
-            if (this.role === 'spectator') return; // Spectators cannot manipulate card objects
+            if (this.isTimekeeperActive) {
+                console.log("⏳ [SYSTEM BLOCK]: General board keystrokes suspended during timeline analysis.");
+                return;
+            }
 
+            if (this.role === 'spectator') return; // Spectators cannot manipulate card objects
 
             // Grab the current spatial viewport coordinates of the mouse cursor pointer
             const mouseX = this.input.activePointer.x;
@@ -252,6 +277,11 @@ class GameScene extends Phaser.Scene {
         });
 
         this.input.keyboard.on("keydown-E", () => {
+            if (this.isTimekeeperActive) {
+                console.log("⏳ [SYSTEM BLOCK]: General board keystrokes suspended during timeline analysis.");
+                return;
+            }
+
             if (this.role === "spectator") return;
             const mouseX = this.input.activePointer.x;
             const mouseY = this.input.activePointer.y;
@@ -278,6 +308,11 @@ class GameScene extends Phaser.Scene {
 
         // 🧪 SEAT-SWAP SANDBOX CHEAT CODE: Press [K] to toggle between Player A and Player B seats instantly
         this.input.keyboard.on("keydown-K", () => {
+            if (this.isTimekeeperActive) {
+                console.log("⏳ [SYSTEM BLOCK]: General board keystrokes suspended during timeline analysis.");
+                return;
+            }
+
             const oldRole = this.role;
             // Swap the string variable seamlessly
             switch (oldRole) {
@@ -301,6 +336,11 @@ class GameScene extends Phaser.Scene {
         // Various keys for moving a card from one zone to another:
         // (H)and, (S)upport, (D)iscard, De(f)eated, D(e)ck
         this.input.keyboard.on("keydown", event => {
+            if (this.isTimekeeperActive) {
+                console.log("⏳ [SYSTEM BLOCK]: General board keystrokes suspended during timeline analysis.");
+                return;
+            }
+
             if (this.role === "spectator") return;
 
             const key = event.key.toLowerCase();
@@ -325,6 +365,12 @@ class GameScene extends Phaser.Scene {
                 this.executeKeyboardZoneTransfer(targetInfo, destinationZone, mouseX, mouseY, key);
             }
         });
+
+        // Toggle Timekeeper Mode when pressing the Tilde (~) / Backtick (`) key
+        this.input.keyboard.on("keydown-BACKTICK", () => {
+            this.toggleTimekeeperMode();
+        });
+
     }
 
     /**
@@ -838,6 +884,12 @@ class GameScene extends Phaser.Scene {
 
     // --- SUB-ROUTINE 1: LAYER RESET ---
     resetRenderLayer() {
+        // Append this inside your resetRenderLayer method:
+        if (this.timekeeperUiContainer && (child === this.timekeeperUiContainer || this.timekeeperUiContainer.exists(child))) {
+            return; // Protect timeline control panel and nested boxes from automated screen recycling sweeps
+        }
+
+
         if (this.fieldGraphics) {
             this.fieldGraphics.clear();
         } else {
@@ -985,6 +1037,7 @@ class GameScene extends Phaser.Scene {
 
         // Bind input tracker to slide out the matching player asset lane
         extraDeckBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+            if (this.isTimekeeperActive && !this.isPointerOverTimeControls(pointer.x, pointer.y)) return;
             this.toggleStackDrawer(stateKey, "extraDeck");
         });
     }
@@ -1065,6 +1118,7 @@ class GameScene extends Phaser.Scene {
                     if (isLocalSeat && this.role !== "spectator") {
                         this[overlayPropName].setInteractive({ useHandCursor: true });
                         this[overlayPropName].on("pointerdown", () => {
+                            if (this.isTimekeeperActive && !this.isPointerOverTimeControls(pointer.x, pointer.y)) return;
                             console.log("👁️ [LOCAL TRICKERY]: Flipping card face up...");
                             if (battleZone.fighterA && battleZone.fighterA.card) {
                                 battleZone.fighterA.card.isFaceDown = false;
@@ -1148,6 +1202,7 @@ class GameScene extends Phaser.Scene {
             const addBtn = this.add.text(point.x - 30, btnY, "+1", btnStyle).setOrigin(0.5);
             this.drawButtonOutline(addBtn);
             addBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+                if (this.isTimekeeperActive && !this.isPointerOverTimeControls(pointer.x, pointer.y)) return;
                 this.socket.emit("placeDeckCardToStack", { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
             });
 
@@ -1155,6 +1210,7 @@ class GameScene extends Phaser.Scene {
             this.drawButtonOutline(remBtn);
             this.fieldGraphics.strokeRect(remBtn.x - remBtn.width / 2, remBtn.y - remBtn.height / 2, remBtn.width, remBtn.height);
             remBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+                if (this.isTimekeeperActive && !this.isPointerOverTimeControls(pointer.x, pointer.y)) return;
                 this.socket.emit("flipAndDiscardFromStack", { tableId: this.tableId, targetPlayer: this.role, targetSlot: zoneKey });
             });
 
@@ -1163,6 +1219,7 @@ class GameScene extends Phaser.Scene {
             this.fieldGraphics.lineStyle(1, 15680580, .6);
             this.fieldGraphics.strokeRect(defeatBtn.x - defeatBtn.width / 2, defeatBtn.y - defeatBtn.height / 2, defeatBtn.width, defeatBtn.height);
             defeatBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+                if (this.isTimekeeperActive && !this.isPointerOverTimeControls(pointer.x, pointer.y)) return;
                 const myBattleZone = this.lastReceivedState[this.role].battleZone;
                 if (zoneKey == 'fighterA' && myBattleZone.extraA) {
                     zoneKey = 'extraA';
@@ -1237,6 +1294,8 @@ class GameScene extends Phaser.Scene {
         this[clickHitName].setDepth(150);
 
         this[clickHitName].on("pointerdown", pointer => {
+            if (this.isTimekeeperActive && !this.isPointerOverTimeControls(pointer.x, pointer.y)) return;
+
             // Prevent opening the drawer view if the user is currently dragging a card
             if (this.input.dragactive) return;
             
@@ -1323,6 +1382,7 @@ class GameScene extends Phaser.Scene {
             const untapAllBtn = this.add.text(point.x - 75, point.y + countYOffset, "UNTAP ALL", untapStyle).setOrigin(0.5);
             this.drawButtonOutline(untapAllBtn, 1096065); 
             untapAllBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+                if (this.isTimekeeperActive && !this.isPointerOverTimeControls(pointer.x, pointer.y)) return;
                 this.executeUntapAllMacro();
             });
         }
@@ -1357,12 +1417,14 @@ class GameScene extends Phaser.Scene {
             const incPtBtn = this.add.text(defeatedPoint.x - 30, ptBtnY, "+1", ptBtnStyle).setOrigin(0.5);
             this.drawButtonOutline(incPtBtn, 6583435);
             incPtBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+                if (this.isTimekeeperActive && !this.isPointerOverTimeControls(pointer.x, pointer.y)) return;
                 this.socket.emit("adjustDefeatedPoints", { tableId: this.tableId, targetPlayer: this.role, amount: 1 });
             });
 
             const decPtBtn = this.add.text(defeatedPoint.x + 30, ptBtnY, "-1", ptBtnStyle).setOrigin(0.5);
             this.drawButtonOutline(decPtBtn, 6583435);
             decPtBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+                if (this.isTimekeeperActive && !this.isPointerOverTimeControls(pointer.x, pointer.y)) return;
                 this.socket.emit("adjustDefeatedPoints", { tableId: this.tableId, targetPlayer: this.role, amount: -1 });
             });
         }
@@ -1384,6 +1446,7 @@ class GameScene extends Phaser.Scene {
             
             this.endGameActionBtn = this.add.text(960, 45, "🚨 PROPOSE END GAME", endMatchStyle).setOrigin(0.5);
             this.endGameActionBtn.setInteractive({ useHandCursor: true }).on("pointerdown", () => {
+                if (this.isTimekeeperActive && !this.isPointerOverTimeControls(pointer.x, pointer.y)) return;
                 this.socket.emit("signalEndGame", { tableId: this.tableId, targetPlayer: this.role });
                 this.displayThanksModal();
             });
@@ -1754,7 +1817,10 @@ class GameScene extends Phaser.Scene {
             style: { fontSize: "15px", fontFamily: "monospace", fill: "#ef4444", fontWeight: "bold", backgroundColor: "#1e293b", padding: { x: 12, y: 6 } }
         }).setOrigin(1, 0);
         closeBtn.setInteractive({ useHandCursor: true });
-        closeBtn.on("pointerdown", () => this.toggleStackDrawer(null));
+        closeBtn.on("pointerdown", () => {
+            if (this.isTimekeeperActive && !this.isPointerOverTimeControls(pointer.x, pointer.y)) return;
+            this.toggleStackDrawer(null);
+        });
         this.drawerContainer.add(closeBtn);
 
         if (cardList.length > 0 && isOwner && !isDefeatedView && this.role !== "spectator") {
@@ -1765,6 +1831,7 @@ class GameScene extends Phaser.Scene {
             });
             recycleBtn.setInteractive({ useHandCursor: true });
             recycleBtn.on("pointerdown", () => {
+                if (this.isTimekeeperActive && !this.isPointerOverTimeControls(pointer.x, pointer.y)) return;
                 this.sound.play("sound_recycle", { 
                     volume: 0.85,
                     pitch: Phaser.Math.FloatBetween(0.98, 1.02) 
@@ -2243,6 +2310,8 @@ class GameScene extends Phaser.Scene {
 
         // 2. Track rapid double-clicks using precise engine delta timing
         displayObject.on("pointerdown", (pointer) => {
+            if (this.isTimekeeperActive && !this.isPointerOverTimeControls(pointer.x, pointer.y)) return;
+
             const clickDelay = pointer.time - (displayObject.lastClickTime || 0);
             displayObject.lastClickTime = pointer.time;
 
@@ -2357,6 +2426,7 @@ class GameScene extends Phaser.Scene {
 
         // 7. TEARDOWN DISMISS LISTENER HANDSHAKE
         this.modalActiveBlocker.on("pointerdown", () => {
+            if (this.isTimekeeperActive && !this.isPointerOverTimeControls(pointer.x, pointer.y)) return;
             this.input.keyboard.enabled = true; // Restore keystrokes
 
             // Clean up the blur filter on main camera pipeline
@@ -2645,5 +2715,110 @@ class GameScene extends Phaser.Scene {
             textButton.height
         );
     }
+
+    /**
+     * Toggles Timekeeper Mode status. Applies a full-screen monochrome WebGL
+     * color matrix filter to the active field layer and calls the timeline 
+     * navigational controls display sequence when enabled.
+     */
+    toggleTimekeeperMode() {
+        this.isTimekeeperActive = !this.isTimekeeperActive;
+        console.log(`⏳ [TIMELINE SYSTEM]: Timekeeper mode toggled to: ${this.isTimekeeperActive}`);
+
+        if (this.isTimekeeperActive) {
+            if (this.cameras.main.postFX) {
+                this.timekeeperGrayscaleFilter = this.cameras.main.postFX.addColorMatrix().grayscale(1);
+            }
+            this.renderTimekeeperControls();
+        } else {
+            this.exitTimekeeperMode();
+        }
+    }
+
+    /**
+     * Renders the custom text-based visual timeline navigation overlay buttons
+     * (Rewind, Play, and Fast-Forward macro arrows) inside the lower-right quadrant 
+     * of the screen canvas and assigns pointer click listener behaviors.
+     */
+    renderTimekeeperControls() {
+        this.destroyTimekeeperControls();
+
+        const centerX = 1728; 
+        const anchorY = 1010; 
+        const buttonSpacing = 65;
+
+        const controlStyle = {
+            fontFamily: "monospace",
+            fontSize: "20px",
+            fill: "#f8fafc",
+            backgroundColor: "#1e293b",
+            padding: { x: 12, y: 8 },
+            fontWeight: "bold"
+        };
+
+        this.timekeeperUiContainer = this.add.container(0, 0);
+        this.timekeeperUiContainer.setDepth(4000);
+
+        const buttonConfig = [
+            { id: "rewind", char: "⏪", x: centerX - buttonSpacing, style: controlStyle, stroke: 0x475569, click: () => console.log("◀ [TIMELINE STUB]: Rewind action clicked.") },
+            { id: "play", char: "▶", x: centerX, style: { ...controlStyle, fill: "#10b981", backgroundColor: "#064e3b" }, stroke: 0x10b981, click: () => this.toggleTimekeeperMode() },
+            { id: "ff", char: "⏩", x: centerX + buttonSpacing, style: controlStyle, stroke: 0x475569, click: () => console.log("▶ [TIMELINE STUB]: Fast-forward action clicked.") }
+        ];
+
+        buttonConfig.forEach(cfg => {
+            const textBtn = this.add.text(cfg.x, anchorY, cfg.char, cfg.style).setOrigin(0.5);
+            textBtn.setInteractive({ useHandCursor: true }).on("pointerdown", cfg.click);
+            
+            const outlineBox = this.add.graphics();
+            outlineBox.lineStyle(1, cfg.stroke, 0.6);
+            outlineBox.strokeRect(textBtn.x - textBtn.width / 2, textBtn.y - textBtn.height / 2, textBtn.width, textBtn.height);
+            
+            this.timekeeperUiContainer.add([textBtn, outlineBox]);
+        });
+    }
+
+    /**
+     * Gracefully deactivates Timekeeper Mode. Hard-purges the monochrome postFX matrix
+     * pipeline overlay to restore standard match colors and sweeps away lingering UI control nodes.
+     */
+    exitTimekeeperMode() {
+        this.isTimekeeperActive = false;
+
+        if (this.timekeeperGrayscaleFilter && this.cameras.main.postFX) {
+            this.cameras.main.postFX.remove(this.timekeeperGrayscaleFilter);
+            this.timekeeperGrayscaleFilter = null;
+        }
+
+        this.destroyTimekeeperControls();
+    }
+
+    /**
+     * Safely removes and completely destroys the structural interactive timeline 
+     * text button instances from the screen canvas tracking groups to prevent texture leakage.
+     */
+    destroyTimekeeperControls() {
+        if (this.timekeeperUiContainer) {
+            this.timekeeperUiContainer.destroy();
+            this.timekeeperUiContainer = null;
+        }
+    }
+
+    /**
+     * Checks if a given coordinate point falls within the interactive 
+     * bounding bounds of any timekeeper UI control overlay child elements.
+     * 
+     * @param {number} x - The horizontal canvas screen position coordinate.
+     * @param {number} y - The vertical canvas screen position coordinate.
+     * @returns {boolean} True if the cursor coordinates intersect a control element.
+     */
+    isPointerOverTimeControls(x, y) {
+        if (!this.timekeeperUiContainer) return false;
+        
+        // Scans your container's list items for active spatial intersections
+        return this.timekeeperUiContainer.list.some(child => 
+            child.getBounds && child.getBounds().contains(x, y)
+        );
+    }
+
 
 }
