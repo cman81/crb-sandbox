@@ -187,16 +187,15 @@ async function getTableContext(tableId) {
 }
 
 /**
- * Saves a new table version and handles the Retcon Cut using clean player role strings.
- * If the role matches "playerA" or "playerB" while viewing history, it cuts off the
- * old future and makes this new move the official present day.
- *
- * @async
+ * Saves the current table state to Redis as a new snapshot version.
+ * If the acting player is currently viewing past history, this function
+ * automatically deletes the abandoned future timeline branch before 
+ * writing the new snapshot state.
+ * 
  * @param {string|number} tableId - The room number to save.
  * @param {Object} tableObj - The updated table data object from the server.
  * @param {string} [actingRole="system"] - The role making the move ("playerA", "playerB", or "system").
- * @param {string} [logMessage=""] - A text description of the gameplay action performed.
- * @returns {Promise<void>}
+ * @param {string} [logMessage=""] - The descriptive string added to the battle log.
  */
 async function saveTableContext(tableId, tableObj, actingRole = "system", logMessage = "") {
     const parsedId = parseInt(tableId, 10);
@@ -208,6 +207,32 @@ async function saveTableContext(tableId, tableObj, actingRole = "system", logMes
         const refs = await redisClient.hGetAll(refsKey);
         const oldPlayhead = refs.currentPlayhead || null;
         const oldLiveHead = refs.liveHead || null;
+
+        // --- AUTOMATIC FUTURE PRUNING ENGINE ---
+        // Verify Redis is actively running before executing database history checks
+        if (isRedisConnected && oldPlayhead && oldLiveHead && oldPlayhead !== oldLiveHead) {
+            console.log(`🪓 [TIMELINE BRANCH DETECTED]: Pruning abandoned future nodes...`);
+            
+            let currentScrubId = oldLiveHead;
+            const nodesToDelete = [];
+
+            // Walk backward from the live head, gathering nodes until we hit our current past position
+            while (currentScrubId && currentScrubId !== oldPlayhead) {
+                const nodeRaw = await redisClient.hGet(snapshotsKey, currentScrubId);
+                if (!nodeRaw) break;
+                
+                const node = JSON.parse(nodeRaw);
+                nodesToDelete.push(currentScrubId);
+                currentScrubId = node.parent; // Step backward to the previous parent node
+            }
+
+            // Drop all gathered future snapshots from the Redis Hash map
+            if (nodesToDelete.length > 0) {
+                await redisClient.hDel(snapshotsKey, ...nodesToDelete);
+                console.log(`🧼 Successfully vaporized ${nodesToDelete.length} future node versions.`);
+            }
+        }
+        // ----------------------------------------
 
         let shortNodeId = uuidv4().split('-')[0];
 
@@ -230,7 +255,7 @@ async function saveTableContext(tableId, tableObj, actingRole = "system", logMes
             }
         }
 
-        // ⏳ The node graph now records a clean, persistent role string identifier
+        // Create the new snapshot node linked to the current historical position
         const timelineNode = {
             nodeId: shortNodeId,
             parentId: oldPlayhead,
@@ -240,13 +265,8 @@ async function saveTableContext(tableId, tableObj, actingRole = "system", logMes
         };
         await redisClient.hSet(snapshotsKey, shortNodeId, JSON.stringify(timelineNode));
 
-        // 🔥 CLEAN ROLE RETCON GATEKEEPER:
-        // If an actual playing role moves a card, advance the live head to this new turn.
-        // If it is just a background configuration update ("system"), leave the future alone!
+        // Advance the live head to this newly created present state
         let nextLiveHeadPointer = shortNodeId;
-        if (actingRole === "system") {
-            nextLiveHeadPointer = oldLiveHead || shortNodeId;
-        }
 
         await redisClient.hSet(refsKey, {
             playerA: JSON.stringify(tableObj.playerA),
@@ -1063,6 +1083,14 @@ io.on("connection", socket => {
         socket.emit("tableStatusResponse", { tableId: table.id, role: role, hasDeckLoaded: hasDeckLoaded });
     });
 
+    /**
+     * Handles endgame signaling. If both players agree, it completely wipes 
+     * the Redis history logs for this table, kicks players to spectators, 
+     * and resets the board to a clean state for the next game.
+     * 
+     * @param {string} tableId - The ID of the table to reset.
+     * @param {string} targetPlayer - Either "playerA" or "playerB".
+     */
     socket.on("signalEndGame", async ({ tableId, targetPlayer }) => {
         const table = await getTableContext(tableId);
         if (!table) return socket.emit("errorMsg", "Table not found.");
