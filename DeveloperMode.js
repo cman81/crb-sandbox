@@ -61,12 +61,19 @@ class DeveloperMode extends Phaser.Scene {
                 </div>
 
                 <!-- TAB ROW SELECTOR MATRIX -->
-                <div style="display: flex; gap: 10px;">
-                    <button id="devTabBtn1" style="background: #222; color: #00ff00; font-family: monospace; font-size: 14px; font-weight: bold; padding: 10px 20px; border: 1px solid #00ff00; border-radius: 6px; cursor: pointer;">[ TAB 1: LOBBY ]</button>
-                    <button id="devTabBtn2" style="background: #111; color: #fff; font-family: monospace; font-size: 14px; font-weight: bold; padding: 10px 20px; border: 1px solid #334155; border-radius: 6px; cursor: pointer;">[ TAB 2: DECK LOADER ]</button>
-                    <button id="devTabBtn3" style="background: #111; color: #fff; font-family: monospace; font-size: 14px; font-weight: bold; padding: 10px 20px; border: 1px solid #334155; border-radius: 6px; cursor: pointer;">[ TAB 3: ACTIONS ]</button>
-                    <button id="devTabBtn4" style="background: #111; color: #fff; font-family: monospace; font-size: 14px; font-weight: bold; padding: 10px 20px; border: 1px solid #334155; border-radius: 6px; cursor: pointer;">[ TAB 4: TABLE ADMIN ]</button>
+                <div style="display: flex; gap: 10px; justify-content: space-between; align-items: center; width: 100%;">
+                    <!-- Left-aligned selector block -->
+                    <div style="display: flex; gap: 10px;">
+                        <button id="devTabBtn1" style="background: #222; color: #00ff00; font-family: monospace; font-size: 14px; font-weight: bold; padding: 10px 20px; border: 1px solid #00ff00; border-radius: 6px; cursor: pointer;">[ TAB 1: LOBBY ]</button>
+                        <button id="devTabBtn2" style="background: #111; color: #fff; font-family: monospace; font-size: 14px; font-weight: bold; padding: 10px 20px; border: 1px solid #334155; border-radius: 6px; cursor: pointer;">[ TAB 2: DECK LOADER ]</button>
+                        <button id="devTabBtn3" style="background: #111; color: #fff; font-family: monospace; font-size: 14px; font-weight: bold; padding: 10px 20px; border: 1px solid #334155; border-radius: 6px; cursor: pointer;">[ TAB 3: ACTIONS ]</button>
+                        <button id="devTabBtn4" style="background: #111; color: #fff; font-family: monospace; font-size: 14px; font-weight: bold; padding: 10px 20px; border: 1px solid #334155; border-radius: 6px; cursor: pointer;">[ TAB 4: TABLE ADMIN ]</button>
+                    </div>
+
+                    <!-- Right-aligned escape button -->
+                    <button id="devExitBtn" style="background: #7f1d1d; color: #ef4444; font-family: monospace; font-size: 14px; font-weight: bold; padding: 10px 20px; border: 1px solid #ef4444; border-radius: 6px; cursor: pointer;">🛑 EXIT DEV MODE</button>
                 </div>
+
 
                 <!-- THREE-COLUMN RESPONSIVE WORKING FIELD GRID -->
                 /* 🌟 CHANGED: flex-grow expands your middle log text area to swallow all 
@@ -325,8 +332,9 @@ class DeveloperMode extends Phaser.Scene {
         `;
 
         // --- COLUMN 3: RIGHT SIDE HIGH-DENSITY CARD LOOKUP MATRIX ---
-         masterOverlayHtml += `
-            <div style="width: 320px; background: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box; display: flex; flex-direction: column; height: calc(50% - 10px);">
+        masterOverlayHtml += `
+            <!-- 📋 HAND MATRIX PANEL (Full Height) -->
+            <div style="width: 320px; background: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box; display: flex; flex-direction: column; height: 100%;">
                 <h3 style="margin-top:0; color:#eab308; font-size: 18px; margin-bottom: 12px; border-bottom: 1px solid #334155; padding-bottom: 6px;">📋 HAND MATRIX</h3>
                 <div style="flex-grow: 1; overflow-y: auto; width: 100%;">
                     <table style="width: 100%; border-collapse: collapse; text-align: left;">
@@ -343,8 +351,8 @@ class DeveloperMode extends Phaser.Scene {
                 </div>
             </div>
 
-            <!-- ⏳ INJECTED TIMELINE LOG BLOCK: Positioned safely outside the hand matrix wrapper -->
-            <div style="width: 320px; background: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box; display: flex; flex-direction: column; height: calc(50% - 10px); margin-top: 15px;">
+            <!-- ⏳ INJECTED TIMELINE LOG BLOCK (Full Height + Left Margin Spacer) -->
+            <div style="width: 320px; background: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #444; box-shadow: 0px 4px 15px rgba(0,0,0,0.5); box-sizing: border-box; display: flex; flex-direction: column; height: 100%; margin-left: 15px;">
                 <h3 style="margin-top:0; color:#fbbf24; font-size: 16px; margin-bottom: 12px; border-bottom: 1px solid #334155; padding-bottom: 6px;">📜 TIMELINE SNAPSHOT LOG</h3>
                 <div id="devTimelineLogBox" style="flex-grow: 1; overflow-y: auto; width: 100%; font-size: 12px; color: #fbbf24; font-family: monospace; display: flex; flex-direction: column; gap: 6px;">
                     <span style="color: #475569; font-style: italic;">[No Timeline Actions Recorded]</span>
@@ -368,6 +376,7 @@ class DeveloperMode extends Phaser.Scene {
             if (event.target.id === "devTabBtn2") this.switchTab(2);
             if (event.target.id === "devTabBtn3") this.switchTab(3);
             if (event.target.id === "devTabBtn4") this.switchTab(4);
+            if (event.target.id === "devExitBtn") this.exitDevMode();
 
             // Tab 1: Lobby triggers
             if (event.target.id === "lobbyJoinBtn") this.handleJoin();
@@ -401,6 +410,17 @@ class DeveloperMode extends Phaser.Scene {
             if (event.target.id === "devTimelineResumeBtn") { this.handleTimelineResumeExecution(); }
         });
     }
+    
+    exitDevMode() {
+        console.log("Leaving Developer Scene Workspace Frame... Routing to Lobby.");
+
+        // Remove or destroy any lingering DOM elements so they don't leak over the UI
+        this.masterDevConsoleDom.destroy();
+
+        // Boot up the normal LobbyScene environment
+        this.scene.start("LobbyScene");
+    }
+
     switchTab(tabNum) {
         const btn1 = document.getElementById("devTabBtn1");
         const btn2 = document.getElementById("devTabBtn2");
