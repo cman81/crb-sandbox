@@ -452,6 +452,10 @@ class GameScene extends Phaser.Scene {
             
             this.lastReceivedState = sanitizedState;
             this.handleStateRenderingLoop(sanitizedState);
+
+            if (this.isTimekeeperActive) {
+                this.renderTimekeeperControls();
+            }
         });
 
         // 2. Card tapping animation listener
@@ -2780,6 +2784,37 @@ class GameScene extends Phaser.Scene {
 
         this.timekeeperUiContainer = this.add.container(0, 0);
         this.timekeeperUiContainer.setDepth(4000);
+
+        // --- DYNAMIC HISTORICAL BATTLE LOG OVERLAY ---
+        // Extract the battle log array for this snapshot frame
+        const logArray = this.lastReceivedState?.gameState?.battleLog || [];
+        
+        // Grab the last 3 entries to prevent screen cluttering
+        const recentLogs = logArray.slice(-3); 
+        const logDisplayString = recentLogs.length > 0 
+            ? recentLogs.join("\n") 
+            : "[ No Actions Logged for this Snapshot ]";
+
+        const logTextStyle = {
+            fontFamily: "monospace",
+            fontSize: "12px",
+            fill: "#fbbf24", // Gold tint accent color matching developer layouts
+            backgroundColor: "rgba(15, 23, 42, 0.85)", // Translucent backdrop plates
+            padding: { x: 12, y: 8 },
+            wordWrap: { width: 300 },
+            align: "left"
+        };
+
+        // Render the log box precisely above the control arrow cluster pad
+        const logDisplayElement = this.add.text(centerX, anchorY - 90, logDisplayString, logTextStyle).setOrigin(0.5, 0.5);
+        
+        // Add a structural dark outline accent around the log window block
+        const logOutlineBox = this.add.graphics();
+        logOutlineBox.lineStyle(1, 0x334155, 0.8);
+        logOutlineBox.strokeRect(logDisplayElement.x - logDisplayElement.width / 2, logDisplayElement.y - logDisplayElement.height / 2, logDisplayElement.width, logDisplayElement.height);
+
+        this.timekeeperUiContainer.add([logDisplayElement, logOutlineBox]);
+        // ----------------------------------------------
 
         const buttonConfig = [
             {
