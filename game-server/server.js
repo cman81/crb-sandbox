@@ -1074,26 +1074,74 @@ io.on("connection", socket => {
 
         // Check if mutual consent is achieved
         if (table.endGameSignals.playerA && table.endGameSignals.playerB) {
-            console.log(`🧼 [SYSTEM RESET]: Mutual consent achieved on Table ${tableId}. Resetting board...`);
+            console.log(`🧼 [SYSTEM RESET & PURGE]: Mutual consent achieved on Table ${tableId}. Wiping Redis history logs...`);
 
-            // Flatten multi-socket arrays securely into spectators list
-            if (Array.isArray(table.playerA)) table.spectators.push(...table.playerA);
-            if (Array.isArray(table.playerB)) table.spectators.push(...table.playerB);
+            const refsKey = `table:${tableId}:refs`;
+            const snapshotsKey = `table:${tableId}:snapshots`;
 
-            // Sanitize seats back to baseline state arrays
-            table.playerA = [];
-            table.playerB = [];
-            table.endGameSignals.playerA = false;
-            table.endGameSignals.playerB = false;
+            // 1. Completely delete the snapshots hash table from Redis
+            if (isRedisConnected) {
+                await redisClient.del(snapshotsKey);
+            }
 
+            // 2. Generate a clean baseline game state
             const baselineState = () => ({
-                hand: [], deck: [], extraDeck: [], discard: [], support: [], defeated: [], defeatedPoints: 0,
-                battleZone: { fighterA: { card: null, faceDownStack: [] }, fighterB: { card: null, faceDownStack: [] }, stage: null }
+                battleLog: [],
+                playerA: { hand: [], deck: [], extraDeck: [], discard: [], support: [], defeated: [], defeatedPoints: 0, battleZone: { fighterA: { card: null, faceDownStack: [] }, fighterB: { card: null, faceDownStack: [] }, extraA: null, extraB: null, stage: null } },
+                playerB: { hand: [], deck: [], extraDeck: [], discard: [], support: [], defeated: [], defeatedPoints: 0, battleZone: { fighterA: { card: null, faceDownStack: [] }, fighterB: { card: null, faceDownStack: [] }, extraA: null, extraB: null, stage: null } }
             });
-            table.gameState.playerA = baselineState();
-            table.gameState.playerB = baselineState();
+
+            // 3. Create a fresh Genesis snapshot node for the new table instance
+            const genesisNodeId = uuidv4().split("-")[0];
+            const initialTimelineNode = {
+                nodeId: genesisNodeId,
+                parentId: null,
+                actionBy: "system",
+                timestamp: Date.now(),
+                gameState: baselineState()
+            };
+
+            if (isRedisConnected) {
+                // Commit the clean genesis node to the newly wiped snapshots space
+                await redisClient.hSet(snapshotsKey, genesisNodeId, JSON.stringify(initialTimelineNode));
+
+                // 4. Overwrite Redis references, kicking players to spectators and emptying seats
+                const nextSpectators = [...(table.spectators || []), ...(table.playerA || []), ...(table.playerB || [])];
+                
+                await redisClient.hSet(refsKey, {
+                    playerA: JSON.stringify([]),
+                    playerB: JSON.stringify([]),
+                    spectators: JSON.stringify(nextSpectators),
+                    endGameSignalA: "false",
+                    endGameSignalB: "false",
+                    isTbdActive: "false",
+                    timekeeper: "",
+                    currentPlayhead: genesisNodeId,
+                    liveHead: genesisNodeId
+                });
+            }
+
+            // 5. Update local memory fallback state variable arrays to stay synced
+            const matchIdx = tables.findIndex(t => t.id === parseInt(tableId, 10));
+            if (matchIdx !== -1) {
+                tables[matchIdx].playerA = [];
+                tables[matchIdx].playerB = [];
+                tables[matchIdx].spectators = [...(table.spectators || []), ...(table.playerA || []), ...(table.playerB || [])];
+                tables[matchIdx].endGameSignals = { playerA: false, playerB: false };
+                tables[matchIdx].isTbdActive = false;
+                tables[matchIdx].timekeeper = "";
+                tables[matchIdx].currentPlayhead = genesisNodeId;
+                tables[matchIdx].liveHead = genesisNodeId;
+                tables[matchIdx].gameState = baselineState();
+            }
+
+            // 6. Broadcast the freshly wiped state down to the game client room
+            const updatedTable = await getTableContext(tableId);
+            broadcastTableStateToRoom(updatedTable);
+            return;
         }
 
+        // If mutual consent isn't met yet, just save the single signal flag
         const logText = `${targetPlayer} wants to end the game`;
         await saveTableContext(tableId, table, 'system', logText);
 
