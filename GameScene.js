@@ -448,7 +448,7 @@ class GameScene extends Phaser.Scene {
     setupNetworkEventListeners() {
         // 1. Core game state update listener
         this.socket.on("stateUpdate", sanitizedState => {
-            if (this.checkAndAnimateStateChanges(sanitizedState)) return;
+            // if (this.checkAndAnimateStateChanges(sanitizedState)) return;
             
             this.lastReceivedState = sanitizedState;
             this.handleStateRenderingLoop(sanitizedState);
@@ -491,6 +491,23 @@ class GameScene extends Phaser.Scene {
                     this.handleStateRenderingLoop(this.lastReceivedState);
                 }
             });
+        });
+
+        /**
+         * Network communications listener node.
+         * Intercepts general inbound server anomalies and maps them out to standard alerts.
+         */
+        this.socket.on("errorMsg", (errorMessage) => {
+            console.error(`🔴 [SERVER ERROR]: ${errorMessage}`);
+            
+            // Check if the server error text matches an edge-of-timeline boundaries condition block
+            if (errorMessage.includes("genesis match turn") || errorMessage.includes("present day")) {
+                alert(`⏳ Timeline Boundary: ${errorMessage}`);
+                return;
+            }
+            
+            // Fallback error routing for general card or placement issues...
+            alert(`System Alert: ${errorMessage}`);
         });
     }
 
@@ -884,12 +901,6 @@ class GameScene extends Phaser.Scene {
 
     // --- SUB-ROUTINE 1: LAYER RESET ---
     resetRenderLayer() {
-        // Append this inside your resetRenderLayer method:
-        if (this.timekeeperUiContainer && (child === this.timekeeperUiContainer || this.timekeeperUiContainer.exists(child))) {
-            return; // Protect timeline control panel and nested boxes from automated screen recycling sweeps
-        }
-
-
         if (this.fieldGraphics) {
             this.fieldGraphics.clear();
         } else {
@@ -906,6 +917,13 @@ class GameScene extends Phaser.Scene {
             if (child.data && child.data.get("isPendingServer") === true) {
                 return;
             }
+
+            // 🌟 FIX: Specifically protect your control UI container from being destroyed,
+            // but let the system sweep away and recreate all card sprites behind it!
+            if (this.timekeeperUiContainer && (child === this.timekeeperUiContainer || this.timekeeperUiContainer.exists(child))) {
+                return; // Protect timeline control panel and nested boxes from automated screen recycling sweeps
+            }
+
             if (child.type === "Text" || child.type === "Image") {
                 childrenToDestroy.push(child);
             }
@@ -2193,6 +2211,10 @@ class GameScene extends Phaser.Scene {
      * @returns {boolean} True if an animation sequence was successfully initialized.
      */
     checkAndAnimateStateChanges(sanitizedState) {
+        if (this.isTimekeeperActive) {
+            return false;
+        }
+        
         if (!this.lastReceivedState) return false;
 
         const rolesToCheck = ["playerA", "playerB"];
@@ -2760,9 +2782,26 @@ class GameScene extends Phaser.Scene {
         this.timekeeperUiContainer.setDepth(4000);
 
         const buttonConfig = [
-            { id: "rewind", char: "⏪", x: centerX - buttonSpacing, style: controlStyle, stroke: 0x475569, click: () => console.log("◀ [TIMELINE STUB]: Rewind action clicked.") },
-            { id: "play", char: "▶", x: centerX, style: { ...controlStyle, fill: "#10b981", backgroundColor: "#064e3b" }, stroke: 0x10b981, click: () => this.toggleTimekeeperMode() },
-            { id: "ff", char: "⏩", x: centerX + buttonSpacing, style: controlStyle, stroke: 0x475569, click: () => console.log("▶ [TIMELINE STUB]: Fast-forward action clicked.") }
+            {
+                id: "rewind", char: "⏪", x: centerX - buttonSpacing, style: controlStyle, stroke: 0x475569,
+                click: () => {
+                    console.log("◀ [TIMELINE EMIT]: Stepping historical state backward.");
+                    this.socket.emit("stepTimeline", { tableId: this.tableId, direction: "backward", role: this.role });
+                }
+            },
+            {
+                id: "play", char: "▶", x: centerX,
+                style: { ...controlStyle, fill: "#10b981", backgroundColor: "#064e3b" },
+                stroke: 0x10b981,
+                click: () => this.toggleTimekeeperMode()
+            },
+            {
+                id: "ff", char: "⏩", x: centerX + buttonSpacing, style: controlStyle, stroke: 0x475569,
+                click: () => {
+                    console.log("▶ [TIMELINE EMIT]: Stepping historical state forward.");
+                    this.socket.emit("stepTimeline", { tableId: this.tableId, direction: "forward", role: this.role });
+                }
+            }
         ];
 
         buttonConfig.forEach(cfg => {
